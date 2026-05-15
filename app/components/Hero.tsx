@@ -121,18 +121,18 @@ export default function Hero() {
             </p>
           </div>
 
-          {/* Mascot */}
+          {/* Mascot — placed inside a white card so the non-transparent PNG background reads as intentional */}
           <div className="flex-shrink-0 flex justify-center">
             <div
-              className="relative animate-float"
-              style={{ filter: "drop-shadow(0 20px 40px rgba(245,200,75,0.25))" }}
+              className="animate-float rounded-[2rem] bg-white shadow-2xl shadow-[#F5C84B]/20 p-6 sm:p-8"
+              style={{ boxShadow: "0 24px 60px rgba(245,200,75,0.22), 0 4px 20px rgba(0,0,0,0.18)" }}
             >
               <Image
                 src="/brand/mascot.png"
                 alt="Mascota Wapy — W con cara y brazos dando un pulgar arriba"
                 width={380}
                 height={380}
-                className="w-56 sm:w-72 md:w-80 lg:w-[380px] h-auto"
+                className="w-44 sm:w-60 md:w-72 lg:w-[320px] h-auto block"
                 priority
               />
             </div>

@@ -47,20 +47,11 @@ export default function HowItWorks() {
 
         {/* Steps grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {steps.map((step, i) => (
+          {steps.map((step) => (
             <div
               key={step.number}
               className="relative group flex flex-col p-8 rounded-[1.5rem] bg-white border-2 border-[#F5C84B]/20 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden"
             >
-              {/* Big number background watermark */}
-              <span
-                aria-hidden
-                className="absolute -top-4 -right-2 text-[8rem] font-extrabold leading-none text-[#F5C84B]/10 select-none pointer-events-none"
-                style={{ fontFamily: "var(--font-agbalumo)" }}
-              >
-                {i + 1}
-              </span>
-
               {/* Step badge */}
               <div
                 className={`w-16 h-16 rounded-2xl ${step.accent} flex items-center justify-center mb-6 shadow-md`}

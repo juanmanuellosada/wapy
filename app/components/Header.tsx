@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useState, useEffect } from "react";
 import { Menu, X } from "lucide-react";
 
@@ -26,19 +25,21 @@ export default function Header() {
     ? "bg-[#16222E]/97 backdrop-blur-md shadow-lg"
     : "bg-transparent";
 
+  // Logo text color: always white — readable over the navy hero (transparent state)
+  // and over the solid navy background (scrolled state).
+  const logoTextColor = "text-white";
+
   return (
     <header className={`${headerBase} ${headerBg}`}>
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-        {/* Wordmark */}
+        {/* Wordmark — text-based so it is always crisp regardless of header state */}
         <a href="/" className="flex-shrink-0 cursor-pointer" aria-label="Wapy inicio">
-          <Image
-            src="/brand/wordmark.png"
-            alt="Wapy"
-            width={90}
-            height={36}
-            className="h-9 w-auto brightness-0 invert"
-            priority
-          />
+          <span
+            className={`text-2xl font-bold leading-none ${logoTextColor}`}
+            style={{ fontFamily: "var(--font-agbalumo)" }}
+          >
+            wapy
+          </span>
         </a>
 
         {/* Desktop nav */}
