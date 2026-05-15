@@ -1,5 +1,3 @@
-import Image from "next/image";
-
 const navLinks = [
   { href: "#como-funciona", label: "Cómo funciona" },
   { href: "#features", label: "Funcionalidades" },
@@ -20,13 +18,12 @@ export default function Footer() {
         <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-8 mb-10">
           {/* Brand */}
           <div className="flex flex-col items-center md:items-start gap-3">
-            <Image
-              src="/brand/wordmark.png"
-              alt="Wapy"
-              width={90}
-              height={36}
-              className="h-9 w-auto brightness-0 invert"
-            />
+            <span
+              className="text-2xl font-bold leading-none text-white"
+              style={{ fontFamily: "var(--font-agbalumo)" }}
+            >
+              wapy
+            </span>
             <p className="text-white/35 text-sm text-center md:text-left max-w-xs">
               Menos vueltas, más pedidos.
             </p>
