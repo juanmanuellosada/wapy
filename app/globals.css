@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand colors */
+  --color-yellow: #F5C84B;
+  --color-yellow-light: #FAE08A;
+  --color-yellow-dark: #D9A92A;
+  --color-navy: #16222E;
+  --color-navy-light: #253545;
+  --color-navy-lighter: #3A4F63;
+
+  /* Semantic aliases */
+  --color-primary: var(--color-yellow);
+  --color-primary-dark: var(--color-yellow-dark);
+  --color-ink: var(--color-navy);
+
+  /* Typography */
+  --font-display: var(--font-agbalumo), cursive;
+  --font-body: var(--font-nunito-sans), "Nunito Sans", sans-serif;
+
+  /* Radius */
+  --radius-brand: 1rem;
+  --radius-brand-lg: 1.5rem;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: var(--color-navy);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+}
