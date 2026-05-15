@@ -4,10 +4,16 @@
   /* Brand colors */
   --color-yellow: #F5C84B;
   --color-yellow-light: #FAE08A;
+  --color-yellow-pale: #FEF6D8;
   --color-yellow-dark: #D9A92A;
   --color-navy: #16222E;
   --color-navy-light: #253545;
   --color-navy-lighter: #3A4F63;
+  --color-navy-deep: #0E1820;
+
+  /* Page backgrounds */
+  --color-cream: #FBF7EC;
+  --color-cream-dark: #F5EED8;
 
   /* Semantic aliases */
   --color-primary: var(--color-yellow);
@@ -21,15 +27,179 @@
   /* Radius */
   --radius-brand: 1rem;
   --radius-brand-lg: 1.5rem;
+  --radius-brand-xl: 2rem;
 }
 
 :root {
-  --background: #ffffff;
-  --foreground: var(--color-navy);
+  --background: #FBF7EC;
+  --foreground: #16222E;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-body);
+}
+
+/* Floating mascot animation */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-14px); }
+}
+
+.animate-float {
+  animation: float 3.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float {
+    animation: none;
+  }
+}
+
+/* Scroll-reveal utility */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  animation: fade-up 0.5s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation: none;
+  }
+}
+
+/* Focus ring — landing */
+:focus-visible {
+  outline: 3px solid #F5C84B;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ─── Store scope ────────────────────────────────────────────────────────────
+   All store styles are scoped under .store-scope so they cannot bleed into
+   the landing and landing theme variables cannot bleed into the store.
+   The store background, font, and color are set fresh here.
+───────────────────────────────────────────────────────────────────────────── */
+.store-scope {
+  /* Store neutral palette */
+  --store-bg: #FAFAF8;
+  --store-surface: #FFFFFF;
+  --store-border: #E8E5E0;
+  --store-border-strong: #D4CFC8;
+  --store-ink: #1A1714;
+  --store-ink-secondary: #5C5651;
+  --store-ink-muted: #9E9890;
+  --store-shadow-sm: 0 1px 3px 0 rgba(0,0,0,0.06), 0 1px 2px -1px rgba(0,0,0,0.04);
+  --store-shadow-md: 0 4px 12px 0 rgba(0,0,0,0.08), 0 2px 4px -2px rgba(0,0,0,0.05);
+  --store-shadow-lg: 0 8px 24px 0 rgba(0,0,0,0.10), 0 4px 8px -4px rgba(0,0,0,0.06);
+
+  background: var(--store-bg);
+  color: var(--store-ink);
+  font-family: var(--font-rubik, "Rubik"), var(--font-nunito-sans, "Nunito Sans"), sans-serif;
+  min-height: 100dvh;
+}
+
+/* Override the global focus ring inside the store scope */
+.store-scope :focus-visible {
+  outline: 2px solid var(--store-accent, #2D6A4F);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Store modal slide-up animation */
+@keyframes store-modal-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes store-modal-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.store-modal-enter {
+  animation: store-modal-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.store-modal-backdrop {
+  animation: store-modal-backdrop-in 0.2s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .store-modal-enter,
+  .store-modal-backdrop {
+    animation: none;
+  }
+}
+
+/* ─── Store hover states ─────────────────────────────────────────────────────
+   All color-change hovers are handled here so JS handlers stay out of TSX.
+   Transform/opacity hovers (card lift, image zoom) live as Tailwind utilities
+   on the elements themselves.
+───────────────────────────────────────────────────────────────────────────── */
+
+/* Header section nav links */
+.store-scope .store-nav-link:hover,
+.store-scope .store-nav-link:focus-visible {
+  color: var(--store-ink);
+  background: var(--store-border);
+}
+
+/* Icon-only buttons that show a filled bg on hover (close, qty +/-) */
+.store-scope .store-icon-btn:hover,
+.store-scope .store-icon-btn:focus-visible {
+  background: var(--store-border);
+}
+
+/* Modal close button (dark overlay bg) */
+.store-scope .store-modal-close:hover,
+.store-scope .store-modal-close:focus-visible {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+/* Remove-item button turns red on hover */
+.store-scope .store-remove-btn:hover,
+.store-scope .store-remove-btn:focus-visible {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.08);
+}
+
+/* Product card: lift + shadow on hover */
+.store-scope .store-card {
+  box-shadow: var(--store-shadow-sm);
+  transition: transform 220ms ease, box-shadow 220ms ease;
+}
+.store-scope .store-card:hover {
+  box-shadow: var(--store-shadow-md);
+  transform: translateY(-3px);
+}
+
+/* Image zoom inside product card */
+.store-scope .store-card-image {
+  transition: transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.store-scope .store-card:hover .store-card-image {
+  transform: scale(1.06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .store-scope .store-card,
+  .store-scope .store-card-image {
+    transition: none;
+  }
+  .store-scope .store-card:hover {
+    transform: none;
+  }
+  .store-scope .store-card:hover .store-card-image {
+    transform: none;
+  }
 }

@@ -1,44 +1,64 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { Menu, X } from "lucide-react";
 
 export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setScrolled(window.scrollY > 40);
+    window.addEventListener("scroll", handler, { passive: true });
+    return () => window.removeEventListener("scroll", handler);
+  }, []);
+
+  const navLinks = [
+    { href: "#como-funciona", label: "Cómo funciona" },
+    { href: "#features", label: "Funcionalidades" },
+    { href: "#precios", label: "Precios" },
+  ];
+
+  const headerBase =
+    "sticky top-0 z-50 transition-all duration-300";
+  const headerBg = scrolled
+    ? "bg-[#16222E]/97 backdrop-blur-md shadow-lg"
+    : "bg-transparent";
 
   return (
-    <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-sm border-b border-gray-100 shadow-sm">
-      <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+    <header className={`${headerBase} ${headerBg}`}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         {/* Wordmark */}
-        <a href="/" className="flex-shrink-0">
+        <a href="/" className="flex-shrink-0 cursor-pointer" aria-label="Wapy inicio">
           <Image
             src="/brand/wordmark.png"
             alt="Wapy"
             width={90}
             height={36}
-            className="h-9 w-auto"
+            className="h-9 w-auto brightness-0 invert"
             priority
           />
         </a>
 
         {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-8 text-sm font-semibold text-[#16222E]">
-          <a href="#como-funciona" className="hover:text-[#F5C84B] transition-colors">
-            Cómo funciona
-          </a>
-          <a href="#features" className="hover:text-[#F5C84B] transition-colors">
-            Funcionalidades
-          </a>
-          <a href="#precios" className="hover:text-[#F5C84B] transition-colors">
-            Precios
-          </a>
+        <nav className="hidden md:flex items-center gap-8 text-sm font-bold">
+          {navLinks.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              className="text-white/80 hover:text-[#F5C84B] transition-colors duration-200 cursor-pointer"
+            >
+              {link.label}
+            </a>
+          ))}
         </nav>
 
-        {/* CTA */}
+        {/* Desktop CTA */}
         <div className="flex items-center gap-3">
           <a
             href="#precios"
-            className="hidden md:inline-flex items-center px-5 py-2 rounded-full bg-[#F5C84B] text-[#16222E] font-bold text-sm hover:bg-[#D9A92A] transition-colors shadow-sm"
+            className="hidden md:inline-flex items-center px-5 py-2.5 rounded-full bg-[#F5C84B] text-[#16222E] font-extrabold text-sm hover:bg-[#D9A92A] transition-all duration-200 shadow-md hover:shadow-lg cursor-pointer"
           >
             Crear mi tienda
           </a>
@@ -46,32 +66,36 @@ export default function Header() {
           {/* Mobile hamburger */}
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="md:hidden p-2 rounded-lg hover:bg-gray-100 transition-colors"
-            aria-label="Abrir menú"
+            className="md:hidden p-2 rounded-xl text-white hover:bg-white/10 transition-colors duration-200 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
+            aria-label={menuOpen ? "Cerrar menú" : "Abrir menú"}
+            aria-expanded={menuOpen}
           >
-            <span className="block w-5 h-0.5 bg-[#16222E] mb-1.5" />
-            <span className="block w-5 h-0.5 bg-[#16222E] mb-1.5" />
-            <span className="block w-5 h-0.5 bg-[#16222E]" />
+            {menuOpen ? (
+              <X className="w-5 h-5" />
+            ) : (
+              <Menu className="w-5 h-5" />
+            )}
           </button>
         </div>
       </div>
 
       {/* Mobile menu */}
       {menuOpen && (
-        <div className="md:hidden bg-white border-t border-gray-100 px-4 py-4 flex flex-col gap-4">
-          <a href="#como-funciona" onClick={() => setMenuOpen(false)} className="text-[#16222E] font-semibold">
-            Cómo funciona
-          </a>
-          <a href="#features" onClick={() => setMenuOpen(false)} className="text-[#16222E] font-semibold">
-            Funcionalidades
-          </a>
-          <a href="#precios" onClick={() => setMenuOpen(false)} className="text-[#16222E] font-semibold">
-            Precios
-          </a>
+        <div className="md:hidden bg-[#16222E] border-t border-white/10 px-4 py-4 flex flex-col gap-1">
+          {navLinks.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              onClick={() => setMenuOpen(false)}
+              className="text-white/80 font-bold py-3 px-2 rounded-xl hover:bg-white/10 hover:text-[#F5C84B] transition-colors duration-200 cursor-pointer min-h-[44px] flex items-center"
+            >
+              {link.label}
+            </a>
+          ))}
           <a
             href="#precios"
             onClick={() => setMenuOpen(false)}
-            className="inline-flex items-center justify-center px-5 py-3 rounded-full bg-[#F5C84B] text-[#16222E] font-bold text-sm"
+            className="mt-2 inline-flex items-center justify-center px-5 py-3.5 rounded-full bg-[#F5C84B] text-[#16222E] font-extrabold text-sm hover:bg-[#D9A92A] transition-colors duration-200 cursor-pointer min-h-[44px]"
           >
             Crear mi tienda
           </a>
