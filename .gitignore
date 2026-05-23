@@ -14,3 +14,8 @@ node_modules/
 *.pem
 npm-debug.log*
 .vercel
+
+# Claude Code (keep project config, ignore local-only)
+.claude/settings.local.json
+**/__pycache__/
+*.pyc
