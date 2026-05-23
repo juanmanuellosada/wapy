@@ -1,8 +1,5 @@
 import Image from "next/image";
-import { ArrowRight, ExternalLink } from "lucide-react";
-
-const DEMO_URL =
-  process.env.NEXT_PUBLIC_DEMO_URL ?? "http://demo.localhost:3000";
+import { ArrowRight } from "lucide-react";
 
 export default function Hero() {
   return (
@@ -105,13 +102,6 @@ export default function Hero() {
               >
                 Crear mi tienda gratis
                 <ArrowRight className="w-4 h-4" />
-              </a>
-              <a
-                href={DEMO_URL}
-                className="inline-flex items-center justify-center gap-2 px-7 py-4 rounded-full border-2 border-white/30 text-white font-bold text-base hover:border-[#F5C84B] hover:text-[#F5C84B] transition-all duration-200 cursor-pointer min-h-[52px]"
-              >
-                Ver tienda de ejemplo
-                <ExternalLink className="w-4 h-4" />
               </a>
             </div>
 

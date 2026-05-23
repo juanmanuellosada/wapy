@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 // Note: hover affordances are CSS-driven via .store-scope rules in globals.css
 import {
   ShoppingBag,
@@ -10,8 +10,13 @@ import {
   Minus,
   Trash2,
   ChevronRight,
+  MapPin,
+  Clock,
+  Search,
+  Sun,
+  Moon,
 } from "lucide-react";
-import type { Product, Section, Store } from "../../../lib/stores";
+import type { Contact, Product, Section, Store } from "../../../lib/stores";
 import { useCart } from "./CartContext";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -23,6 +28,36 @@ function formatARS(amount: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
+}
+
+// Normalize a string for accent- and case-insensitive matching
+function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
+
+// Instagram SVG (not available in this version of lucide-react)
+function InstagramIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      style={style}
+      aria-hidden="true"
+    >
+      <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
 }
 
 // WhatsApp SVG (not in lucide-react)
@@ -40,28 +75,76 @@ function WhatsAppIcon({ className }: { className?: string }) {
   );
 }
 
+// ─── Dark Mode Hook ───────────────────────────────────────────────────────────
+
+function useDarkMode(slug: string) {
+  const storageKey = `wapy-theme-${slug}`;
+  const scopeId = `store-scope-${slug}`;
+
+  // Read initial theme from the DOM (set by the inline no-flash script)
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    if (typeof document === "undefined") return false;
+    const el = document.getElementById(scopeId);
+    return el?.getAttribute("data-theme") === "dark";
+  });
+
+  const toggle = useCallback(() => {
+    setIsDark((prev) => {
+      const next = !prev;
+      const el = document.getElementById(scopeId);
+      if (el) {
+        if (next) el.setAttribute("data-theme", "dark");
+        else el.removeAttribute("data-theme");
+      }
+      try {
+        localStorage.setItem(storageKey, next ? "dark" : "light");
+      } catch {
+        // Ignore storage errors
+      }
+      return next;
+    });
+  }, [scopeId, storageKey]);
+
+  return { isDark, toggle };
+}
+
 // ─── Store Header ─────────────────────────────────────────────────────────────
 
 function StoreHeader({
   store,
   sections,
+  searchQuery,
+  onSearchChange,
 }: {
   store: Store;
   sections: Section[];
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
 }) {
   const { totalItems, openCart } = useCart();
+  const { isDark, toggle } = useDarkMode(store.slug);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const mobileInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus mobile search input when opened
+  useEffect(() => {
+    if (mobileSearchOpen) mobileInputRef.current?.focus();
+  }, [mobileSearchOpen]);
+
+  // Close mobile search panel when query is cleared externally
+  useEffect(() => {
+    if (!searchQuery) setMobileSearchOpen(false);
+  }, [searchQuery]);
+
+  function clearSearch() {
+    onSearchChange("");
+    setMobileSearchOpen(false);
+  }
 
   return (
-    <header
-      className="sticky top-0 z-40"
-      style={{
-        background: "rgba(250,250,248,0.92)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        borderBottom: "1px solid var(--store-border)",
-      }}
-    >
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 sm:px-6 h-14 gap-4">
+    <header className="sticky top-0 z-40 store-header-bg">
+      {/* Main header row */}
+      <div className="mx-auto flex max-w-6xl items-center px-4 sm:px-6 h-14 gap-2 sm:gap-3">
         {/* Store name */}
         <span
           className="text-base font-semibold tracking-tight shrink-0"
@@ -70,9 +153,9 @@ function StoreHeader({
           {store.name}
         </span>
 
-        {/* Section nav — desktop */}
+        {/* Section nav — desktop (md+) */}
         <nav
-          className="hidden sm:flex items-center gap-0.5 flex-1 justify-center"
+          className="hidden md:flex items-center gap-0.5 flex-1 justify-center"
           aria-label="Secciones de la tienda"
         >
           {sections.map((s) => (
@@ -85,52 +168,165 @@ function StoreHeader({
               {s.name}
             </a>
           ))}
+          <a
+            href="#contacto"
+            className="store-nav-link shrink-0 px-3 py-1.5 text-sm font-medium rounded-full transition-colors cursor-pointer"
+            style={{ color: "var(--store-ink-secondary)" }}
+          >
+            Contacto
+          </a>
         </nav>
 
-        {/* Cart button */}
-        <button
-          onClick={openCart}
-          className="relative flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-opacity hover:opacity-80 cursor-pointer shrink-0"
-          style={{
-            background: store.accentColor,
-            color: store.accentForeground,
-          }}
-          aria-label={`Carrito${totalItems > 0 ? `, ${totalItems} producto${totalItems !== 1 ? "s" : ""}` : ""}`}
-        >
-          <ShoppingBag className="h-4 w-4" aria-hidden="true" />
-          <span className="hidden sm:inline text-sm">Carrito</span>
-          {totalItems > 0 && (
-            <span
-              className="flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold"
-              style={{ background: "rgba(255,255,255,0.25)", color: store.accentForeground }}
+        {/* Right controls: search + theme toggle + cart */}
+        <div className="flex items-center gap-1.5 sm:gap-2 ml-auto shrink-0">
+          {/* Desktop search input (sm+) */}
+          <div className="relative hidden sm:flex items-center">
+            <Search
+              className="absolute left-3 h-3.5 w-3.5 pointer-events-none"
               aria-hidden="true"
-            >
-              {totalItems}
-            </span>
-          )}
-        </button>
+              style={{ color: "var(--store-ink-muted)" }}
+            />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Buscar..."
+              className="store-search-input pl-8 pr-3 py-1.5 text-sm w-36 focus:w-48 transition-all duration-200"
+              aria-label="Buscar productos"
+            />
+            {searchQuery && (
+              <button
+                onClick={clearSearch}
+                className="absolute right-2 store-icon-btn flex items-center justify-center h-5 w-5 rounded-full cursor-pointer"
+                aria-label="Limpiar búsqueda"
+                style={{ color: "var(--store-ink-muted)" }}
+              >
+                <X className="h-3 w-3" aria-hidden="true" />
+              </button>
+            )}
+          </div>
+
+          {/* Mobile search icon button (below sm) */}
+          <button
+            className="sm:hidden store-theme-btn flex h-9 w-9 items-center justify-center rounded-full cursor-pointer transition-colors"
+            style={{ color: (mobileSearchOpen || searchQuery) ? "var(--store-ink)" : "var(--store-ink-secondary)" }}
+            onClick={() => setMobileSearchOpen((v) => !v)}
+            aria-label={mobileSearchOpen ? "Cerrar búsqueda" : "Buscar productos"}
+            aria-expanded={mobileSearchOpen}
+            aria-controls="mobile-search-bar"
+          >
+            {mobileSearchOpen ? (
+              <X className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Search className="h-4 w-4" aria-hidden="true" />
+            )}
+          </button>
+
+          {/* Dark mode toggle */}
+          <button
+            onClick={toggle}
+            className="store-theme-btn flex h-9 w-9 items-center justify-center rounded-full cursor-pointer transition-colors"
+            style={{ color: "var(--store-ink-secondary)" }}
+            aria-label={isDark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
+            aria-pressed={isDark}
+          >
+            {isDark ? (
+              <Sun className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Moon className="h-4 w-4" aria-hidden="true" />
+            )}
+          </button>
+
+          {/* Cart button */}
+          <button
+            onClick={openCart}
+            className="relative flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-opacity hover:opacity-80 cursor-pointer shrink-0"
+            style={{
+              background: store.accentColor,
+              color: store.accentForeground,
+            }}
+            aria-label={`Carrito${totalItems > 0 ? `, ${totalItems} producto${totalItems !== 1 ? "s" : ""}` : ""}`}
+          >
+            <ShoppingBag className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline text-sm">Carrito</span>
+            {totalItems > 0 && (
+              <span
+                className="flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold"
+                style={{ background: "rgba(255,255,255,0.25)", color: store.accentForeground }}
+                aria-hidden="true"
+              >
+                {totalItems}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Mobile section nav */}
-      <div
-        className="sm:hidden flex gap-1.5 overflow-x-auto px-4 pb-3 scrollbar-none"
-        style={{ scrollbarWidth: "none" }}
-        role="navigation"
-        aria-label="Secciones"
-      >
-        {sections.map((s) => (
+      {/* Mobile secondary row: section nav + optional search bar */}
+      <div className="md:hidden">
+        {/* Mobile search bar — shown when toggled */}
+        {mobileSearchOpen && (
+          <div id="mobile-search-bar" className="px-4 pb-2">
+            <div className="relative">
+              <Search
+                className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none"
+                aria-hidden="true"
+                style={{ color: "var(--store-ink-muted)" }}
+              />
+              <input
+                ref={mobileInputRef}
+                type="search"
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Buscar productos..."
+                className="store-search-input w-full pl-9 pr-9 py-2 text-sm"
+                aria-label="Buscar productos"
+              />
+              {searchQuery && (
+                <button
+                  onClick={clearSearch}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 store-icon-btn flex items-center justify-center h-6 w-6 rounded-full cursor-pointer"
+                  aria-label="Limpiar búsqueda"
+                  style={{ color: "var(--store-ink-muted)" }}
+                >
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Mobile section nav */}
+        <div
+          className="flex gap-1.5 overflow-x-auto px-4 pb-3 scrollbar-none"
+          style={{ scrollbarWidth: "none" }}
+          role="navigation"
+          aria-label="Secciones"
+        >
+          {sections.map((s) => (
+            <a
+              key={s.id}
+              href={`#${s.id}`}
+              className="shrink-0 px-3 py-1 text-xs font-medium rounded-full cursor-pointer whitespace-nowrap"
+              style={{
+                background: "var(--store-border)",
+                color: "var(--store-ink-secondary)",
+              }}
+            >
+              {s.name}
+            </a>
+          ))}
           <a
-            key={s.id}
-            href={`#${s.id}`}
+            href="#contacto"
             className="shrink-0 px-3 py-1 text-xs font-medium rounded-full cursor-pointer whitespace-nowrap"
             style={{
               background: "var(--store-border)",
               color: "var(--store-ink-secondary)",
             }}
           >
-            {s.name}
+            Contacto
           </a>
-        ))}
+        </div>
       </div>
     </header>
   );
@@ -723,6 +919,246 @@ function SectionBlock({
   );
 }
 
+// ─── Search Results ───────────────────────────────────────────────────────────
+
+function SearchResults({
+  query,
+  results,
+  accentColor,
+  accentForeground,
+  onOpenModal,
+  onClear,
+}: {
+  query: string;
+  results: Product[];
+  accentColor: string;
+  accentForeground: string;
+  onOpenModal: (p: Product) => void;
+  onClear: () => void;
+}) {
+  return (
+    <section aria-label="Resultados de búsqueda">
+      {/* Result header */}
+      <div className="flex items-center justify-between gap-3 mb-6 sm:mb-8">
+        <div className="flex items-center gap-3 min-w-0">
+          <h2
+            className="text-xl sm:text-2xl font-bold truncate"
+            style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
+          >
+            Resultados
+          </h2>
+          <span
+            className="shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold"
+            style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
+          >
+            {results.length} {results.length === 1 ? "producto" : "productos"}
+          </span>
+        </div>
+        <button
+          onClick={onClear}
+          className="shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold cursor-pointer transition-opacity hover:opacity-80"
+          style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
+          aria-label="Limpiar búsqueda y ver todos los productos"
+        >
+          <X className="h-3 w-3" aria-hidden="true" />
+          Limpiar
+        </button>
+      </div>
+
+      {/* Query pill */}
+      <p className="text-sm mb-6" style={{ color: "var(--store-ink-secondary)" }}>
+        Buscando:{" "}
+        <span
+          className="font-semibold px-2 py-0.5 rounded-full"
+          style={{ background: "var(--store-border)", color: "var(--store-ink)" }}
+        >
+          {query}
+        </span>
+      </p>
+
+      {results.length === 0 ? (
+        /* Empty state */
+        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+          <div
+            className="flex h-16 w-16 items-center justify-center rounded-full"
+            style={{ background: "var(--store-border)" }}
+          >
+            <Search className="h-7 w-7" aria-hidden="true" style={{ color: "var(--store-ink-muted)" }} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <p className="font-semibold text-base" style={{ color: "var(--store-ink)" }}>
+              Sin resultados
+            </p>
+            <p className="text-sm max-w-xs" style={{ color: "var(--store-ink-secondary)" }}>
+              No encontramos productos que coincidan con tu búsqueda.
+            </p>
+          </div>
+          <button
+            onClick={onClear}
+            className="mt-2 rounded-full px-5 py-2.5 text-sm font-semibold cursor-pointer transition-opacity hover:opacity-80"
+            style={{ background: accentColor, color: accentForeground }}
+          >
+            Ver todos los productos
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5">
+          {results.map((p) => (
+            <ProductCard
+              key={p.id}
+              product={p}
+              accentColor={accentColor}
+              accentForeground={accentForeground}
+              onOpenModal={onOpenModal}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── Contact Section ──────────────────────────────────────────────────────────
+
+function ContactSection({
+  store,
+  contact,
+}: {
+  store: Store;
+  contact: Contact;
+}) {
+  const instagramHandle = contact.instagram.replace(/^@/, "");
+  const mapsEmbedUrl = `https://maps.google.com/maps?q=${encodeURIComponent(contact.mapsQuery)}&z=15&output=embed`;
+
+  return (
+    <section
+      id="contacto"
+      className="scroll-mt-24"
+      aria-labelledby="contacto-heading"
+      style={{ borderTop: "1px solid var(--store-border)" }}
+    >
+      {/* Section header — matches SectionBlock style */}
+      <div className="flex items-center gap-3 mb-6 sm:mb-8">
+        <h2
+          id="contacto-heading"
+          className="text-xl sm:text-2xl font-bold"
+          style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
+        >
+          Contacto
+        </h2>
+        <div
+          className="h-px flex-1"
+          style={{ background: "var(--store-border)" }}
+          aria-hidden="true"
+        />
+        <ChevronRight
+          className="h-4 w-4 shrink-0"
+          aria-hidden="true"
+          style={{ color: "var(--store-border-strong)" }}
+        />
+      </div>
+
+      {/* Two-column layout: info left, map right */}
+      <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
+        {/* Info column */}
+        <div className="flex flex-col gap-6 lg:w-72 shrink-0">
+          {/* Store identity */}
+          <div className="flex flex-col gap-1">
+            <p
+              className="text-2xl font-bold tracking-tight"
+              style={{ color: store.accentColor, fontFamily: "var(--font-rubik, Rubik)" }}
+            >
+              {store.name}
+            </p>
+            <p className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>
+              {store.tagline}
+            </p>
+          </div>
+
+          {/* Address */}
+          <div className="flex gap-3 items-start">
+            <MapPin
+              className="h-4 w-4 mt-0.5 shrink-0"
+              aria-hidden="true"
+              style={{ color: store.accentColor }}
+            />
+            <p className="text-sm leading-relaxed" style={{ color: "var(--store-ink)" }}>
+              {contact.address}
+            </p>
+          </div>
+
+          {/* Hours */}
+          <div className="flex gap-3 items-start">
+            <Clock
+              className="h-4 w-4 mt-0.5 shrink-0"
+              aria-hidden="true"
+              style={{ color: store.accentColor }}
+            />
+            <ul className="flex flex-col gap-1" aria-label="Horarios de atención">
+              {contact.hours.map((h) => (
+                <li key={h.days} className="flex gap-2 text-sm">
+                  <span
+                    className="font-medium w-40 shrink-0"
+                    style={{ color: "var(--store-ink)" }}
+                  >
+                    {h.days}
+                  </span>
+                  <span style={{ color: "var(--store-ink-secondary)" }}>{h.time}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Instagram */}
+          <a
+            href={`https://instagram.com/${instagramHandle}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2.5 self-start rounded-full px-4 py-2 text-sm font-semibold transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 cursor-pointer"
+            style={{
+              background: "var(--store-border)",
+              color: "var(--store-ink)",
+            }}
+            aria-label={`Seguinos en Instagram: ${contact.instagram}`}
+          >
+            <InstagramIcon
+              className="h-4 w-4"
+              style={{ color: store.accentColor }}
+            />
+            {contact.instagram}
+          </a>
+        </div>
+
+        {/* Map */}
+        <div
+          className="flex-1 overflow-hidden rounded-2xl"
+          style={{
+            border: "1px solid var(--store-border)",
+            boxShadow: "var(--store-shadow)",
+          }}
+        >
+          <div style={{ position: "relative", paddingBottom: "56.25%", height: 0 }}>
+            <iframe
+              src={mapsEmbedUrl}
+              title={`Mapa de ubicación de ${store.name}`}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: "100%",
+                border: 0,
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ─── Store Footer ─────────────────────────────────────────────────────────────
 
 function StoreFooter({ store }: { store: Store }) {
@@ -742,10 +1178,20 @@ function StoreFooter({ store }: { store: Store }) {
           Tienda impulsada por{" "}
           <a
             href="/"
-            className="font-semibold hover:underline cursor-pointer transition-opacity hover:opacity-75"
+            className="inline-flex items-baseline hover:opacity-75 cursor-pointer transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 rounded-sm"
             style={{ color: "var(--store-ink-secondary)" }}
+            aria-label="Wapy — ir al sitio de Wapy"
           >
-            Wapy
+            <span
+              style={{
+                fontFamily: "var(--font-agbalumo, cursive)",
+                fontSize: "1.1em",
+                lineHeight: 1,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              wapy
+            </span>
           </a>
         </p>
       </div>
@@ -786,18 +1232,38 @@ function FloatingCartButton({
 
 export default function StoreClient({ store }: { store: Store }) {
   const [modalProduct, setModalProduct] = useState<Product | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const productsBySection = new Map<string, Product[]>();
-  for (const s of store.sections) {
-    productsBySection.set(
-      s.id,
-      store.products.filter((p) => p.sectionId === s.id)
+  const productsBySection = useMemo(() => {
+    const map = new Map<string, Product[]>();
+    for (const s of store.sections) {
+      map.set(
+        s.id,
+        store.products.filter((p) => p.sectionId === s.id)
+      );
+    }
+    return map;
+  }, [store.sections, store.products]);
+
+  // Filter products by name and description — accent- and case-insensitive
+  const filteredProducts = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = normalize(searchQuery.trim());
+    return store.products.filter(
+      (p) => normalize(p.name).includes(q) || normalize(p.description).includes(q)
     );
-  }
+  }, [searchQuery, store.products]);
+
+  const hasQuery = searchQuery.trim().length > 0;
 
   return (
     <>
-      <StoreHeader store={store} sections={store.sections} />
+      <StoreHeader
+        store={store}
+        sections={store.sections}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
 
       <StoreHero store={store} />
 
@@ -805,16 +1271,33 @@ export default function StoreClient({ store }: { store: Store }) {
         className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-14 flex flex-col gap-14 sm:gap-20"
         id="main-content"
       >
-        {store.sections.map((s) => (
-          <SectionBlock
-            key={s.id}
-            section={s}
-            products={productsBySection.get(s.id) ?? []}
+        {hasQuery ? (
+          <SearchResults
+            query={searchQuery}
+            results={filteredProducts}
             accentColor={store.accentColor}
             accentForeground={store.accentForeground}
             onOpenModal={setModalProduct}
+            onClear={() => setSearchQuery("")}
           />
-        ))}
+        ) : (
+          <>
+            {store.sections.map((s) => (
+              <SectionBlock
+                key={s.id}
+                section={s}
+                products={productsBySection.get(s.id) ?? []}
+                accentColor={store.accentColor}
+                accentForeground={store.accentForeground}
+                onOpenModal={setModalProduct}
+              />
+            ))}
+
+            {store.contact && (
+              <ContactSection store={store} contact={store.contact} />
+            )}
+          </>
+        )}
       </main>
 
       <StoreFooter store={store} />

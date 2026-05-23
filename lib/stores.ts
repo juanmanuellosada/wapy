@@ -1,3 +1,15 @@
+export interface ContactHours {
+  days: string;  // e.g. "Lunes a Viernes"
+  time: string;  // e.g. "10:00 – 20:00"
+}
+
+export interface Contact {
+  address: string;
+  hours: ContactHours[];
+  instagram: string;        // handle including @, e.g. "@trama.indumentaria"
+  mapsQuery: string;        // address or "lat,lng" for Google Maps embed
+}
+
 export interface Product {
   id: string;
   sectionId: string;
@@ -23,6 +35,7 @@ export interface Store {
   whatsappNumber: string;
   sections: Section[];
   products: Product[];
+  contact?: Contact;
 }
 
 const stores: Record<string, Store> = {
@@ -36,6 +49,16 @@ const stores: Record<string, Store> = {
     // Formato: código de país + código de área sin 0 + número sin 15.
     // Ejemplo real: 5491155667788
     whatsappNumber: "5491100000000",
+    contact: {
+      address: "Av. Santa Fe 3251, Palermo, Buenos Aires",
+      hours: [
+        { days: "Lunes a Viernes", time: "10:00 – 20:00" },
+        { days: "Sábados",         time: "10:00 – 14:00" },
+        { days: "Domingos",        time: "Cerrado" },
+      ],
+      instagram: "@trama.indumentaria",
+      mapsQuery: "Av. Santa Fe 3251, Palermo, Buenos Aires, Argentina",
+    },
     sections: [
       { id: "remeras", name: "Remeras" },
       { id: "buzos", name: "Buzos" },
