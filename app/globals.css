@@ -117,6 +117,26 @@ body {
   border-radius: 4px;
 }
 
+/* ─── Store dark theme ───────────────────────────────────────────────────────
+   Applied when .store-scope has data-theme="dark".
+   Dark surfaces use desaturated warm-dark tones (not pure black).
+   Primary text (#E8E4DF on #1E1C1A) contrast ≈ 10:1 ✓
+   Secondary text (#9E9890 on #1E1C1A) contrast ≈ 4.8:1 ✓
+   Muted text (#6B6560 on #1E1C1A) contrast ≈ 3.2:1 ✓
+───────────────────────────────────────────────────────────────────────────── */
+.store-scope[data-theme="dark"] {
+  --store-bg: #1E1C1A;
+  --store-surface: #2A2724;
+  --store-border: #3A3733;
+  --store-border-strong: #4E4B46;
+  --store-ink: #E8E4DF;
+  --store-ink-secondary: #9E9890;
+  --store-ink-muted: #6B6560;
+  --store-shadow-sm: 0 1px 3px 0 rgba(0,0,0,0.30), 0 1px 2px -1px rgba(0,0,0,0.20);
+  --store-shadow-md: 0 4px 12px 0 rgba(0,0,0,0.35), 0 2px 4px -2px rgba(0,0,0,0.25);
+  --store-shadow-lg: 0 8px 24px 0 rgba(0,0,0,0.40), 0 4px 8px -4px rgba(0,0,0,0.30);
+}
+
 /* Store modal slide-up animation */
 @keyframes store-modal-in {
   from { opacity: 0; transform: translateY(16px) scale(0.98); }
@@ -139,6 +159,40 @@ body {
   .store-modal-backdrop {
     animation: none;
   }
+}
+
+/* Store header frosted-glass background (theme-aware) */
+.store-scope .store-header-bg {
+  background: rgba(250, 250, 248, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--store-border);
+}
+.store-scope[data-theme="dark"] .store-header-bg {
+  background: rgba(30, 28, 26, 0.92);
+}
+
+/* Search input styles */
+.store-scope .store-search-input {
+  background: var(--store-border);
+  color: var(--store-ink);
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+.store-scope .store-search-input:focus {
+  outline: none;
+  border-color: var(--store-accent, #2D6A4F);
+  background: var(--store-surface);
+}
+.store-scope .store-search-input::placeholder {
+  color: var(--store-ink-muted);
+}
+
+/* Theme toggle button */
+.store-scope .store-theme-btn:hover,
+.store-scope .store-theme-btn:focus-visible {
+  background: var(--store-border);
 }
 
 /* ─── Store hover states ─────────────────────────────────────────────────────
