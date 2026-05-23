@@ -8,6 +8,24 @@ import { signupSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema } 
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
+async function getOwnerDestination(userId: string, redirectTo?: string): Promise<string> {
+  // Check if owner has a published store → go to /dashboard
+  const admin = createAdminClient();
+  const { data: store } = await admin
+    .from('stores')
+    .select('status')
+    .eq('owner_id', userId)
+    .maybeSingle();
+
+  const hasPublished = store?.status === 'published' || store?.status === 'paused';
+  const defaultDest = hasPublished ? '/dashboard' : '/onboarding';
+
+  if (redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('/admin')) {
+    return redirectTo;
+  }
+  return defaultDest;
+}
+
 function getRoleDestination(role: string, redirectTo?: string): string {
   // Honor an explicit redirect param only for paths that make sense per role
   if (redirectTo && redirectTo.startsWith('/')) {
@@ -104,7 +122,14 @@ export async function loginAction(
     .single();
 
   const role = userRow?.role ?? 'owner';
-  redirect(getRoleDestination(role, redirectTo));
+
+  let destination: string;
+  if (role === 'superadmin') {
+    destination = getRoleDestination(role, redirectTo);
+  } else {
+    destination = await getOwnerDestination(data.user.id, redirectTo);
+  }
+  redirect(destination);
 }
 
 // ---------------------------------------------------------------------------
