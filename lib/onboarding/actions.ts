@@ -3,13 +3,26 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
+import { basicsSchema } from './schemas';
 import {
-  basicsSchema,
-  lookSchema,
-  sectionsSchema,
-  productsSchema,
-  whatsappSchema,
-} from './schemas';
+  saveStoreSections,
+  deleteStoreSection,
+  saveStoreProduct,
+  deleteStoreProduct,
+  saveStoreLook,
+  saveStoreWhatsapp,
+  saveLogoUrl,
+} from '@/lib/store/actions';
+
+// Re-export pure store actions under the original names so existing wizard components
+// that import from here continue to work without changing their import paths.
+export {
+  saveStoreLook as saveLook,
+  saveStoreWhatsapp as saveWhatsapp,
+  saveStoreProduct as saveProduct,
+  deleteStoreProduct as removeProduct,
+  saveLogoUrl,
+};
 
 // ---------------------------------------------------------------------------
 // Auth guard
@@ -50,7 +63,6 @@ export async function checkSlugAvailable(
 
   const admin = createAdminClient();
 
-  // Check reserved_slugs
   const { data: reserved } = await admin
     .from('reserved_slugs')
     .select('slug')
@@ -58,7 +70,6 @@ export async function checkSlugAvailable(
     .maybeSingle();
   if (reserved) return { available: false, reason: 'reserved' };
 
-  // Check existing stores
   let query = admin.from('stores').select('id').eq('slug', slug);
   if (excludeStoreId) {
     query = query.neq('id', excludeStoreId);
@@ -70,7 +81,7 @@ export async function checkSlugAvailable(
 }
 
 // ---------------------------------------------------------------------------
-// Save basics (INSERT or UPDATE)
+// saveBasics — wizard version: INSERT or UPDATE + advances onboarding_step
 // ---------------------------------------------------------------------------
 
 type SaveResult = { ok: true; storeId: string } | { error: string };
@@ -90,14 +101,12 @@ export async function saveBasics(formData: {
 
   const admin = createAdminClient();
 
-  // Check if store already exists for this owner
   const { data: existing } = await admin
     .from('stores')
     .select('id, slug, onboarding_step')
     .eq('owner_id', user.id)
     .maybeSingle();
 
-  // Check slug availability (exclude own store if updating)
   const slugCheck = await checkSlugAvailable(slug, existing?.id);
   if (!slugCheck.available) {
     const msgs = {
@@ -124,7 +133,6 @@ export async function saveBasics(formData: {
     return { ok: true, storeId: existing.id };
   }
 
-  // INSERT new store
   const { data: newStore, error: insertError } = await admin
     .from('stores')
     .insert({
@@ -147,59 +155,7 @@ export async function saveBasics(formData: {
 }
 
 // ---------------------------------------------------------------------------
-// Save look
-// ---------------------------------------------------------------------------
-
-export async function saveLook(formData: {
-  accent_color: string;
-  logo_url?: string | null;
-}): Promise<SaveResult> {
-  const { user, store } = await requireOwnerStore();
-  if (!store) return { error: 'No se encontró la tienda.' };
-
-  const parsed = lookSchema.safeParse(formData);
-  if (!parsed.success) return { error: parsed.error.issues[0].message };
-
-  const { accent_color, logo_url } = parsed.data;
-
-  const admin = createAdminClient();
-  const { error } = await admin
-    .from('stores')
-    .update({
-      theme: { accent_color },
-      logo_url: logo_url ?? null,
-      onboarding_step: Math.max(store.onboarding_step, 2),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', store.id);
-
-  if (error) return { error: 'No se pudo guardar el look.' };
-
-  revalidatePath('/onboarding', 'layout');
-  return { ok: true, storeId: store.id };
-}
-
-// ---------------------------------------------------------------------------
-// Save logo URL (called from client after upload, updates just logo_url)
-// ---------------------------------------------------------------------------
-
-export async function saveLogoUrl(logoUrl: string | null): Promise<{ ok: true } | { error: string }> {
-  const { store } = await requireOwnerStore();
-  if (!store) return { error: 'No se encontró la tienda.' };
-
-  const admin = createAdminClient();
-  const { error } = await admin
-    .from('stores')
-    .update({ logo_url: logoUrl, updated_at: new Date().toISOString() })
-    .eq('id', store.id);
-
-  if (error) return { error: 'No se pudo guardar el logo.' };
-  revalidatePath('/onboarding', 'layout');
-  return { ok: true };
-}
-
-// ---------------------------------------------------------------------------
-// Save sections
+// saveSections — wizard version: delegates CRUD to store action + advances onboarding_step
 // ---------------------------------------------------------------------------
 
 type SectionInput = {
@@ -212,55 +168,14 @@ type SectionInput = {
 export async function saveSections(formData: {
   sections: SectionInput[];
 }): Promise<SaveResult> {
-  const { user, store } = await requireOwnerStore();
+  const { store } = await requireOwnerStore();
   if (!store) return { error: 'No se encontró la tienda.' };
 
-  const parsed = sectionsSchema.safeParse(formData);
-  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const result = await saveStoreSections(formData);
+  if ('error' in result) return result;
 
-  const { sections } = parsed.data;
-
+  // Wizard-specific: advance onboarding_step
   const admin = createAdminClient();
-
-  // Get existing section IDs for this store
-  const { data: existingSections } = await admin
-    .from('sections')
-    .select('id')
-    .eq('store_id', store.id);
-
-  const existingIds = new Set((existingSections ?? []).map((s) => s.id));
-  const incomingIds = new Set(sections.filter((s) => s.id).map((s) => s.id!));
-
-  // Delete removed sections
-  const toDelete = [...existingIds].filter((id) => !incomingIds.has(id));
-  if (toDelete.length > 0) {
-    await admin.from('sections').delete().in('id', toDelete);
-  }
-
-  // Upsert all sections
-  for (const section of sections) {
-    if (section.id) {
-      await admin
-        .from('sections')
-        .update({
-          name: section.name,
-          slug: section.slug,
-          position: section.position,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', section.id)
-        .eq('store_id', store.id); // extra safety
-    } else {
-      await admin.from('sections').insert({
-        store_id: store.id,
-        name: section.name,
-        slug: section.slug,
-        position: section.position,
-        is_active: true,
-      });
-    }
-  }
-
   await admin
     .from('stores')
     .update({
@@ -270,104 +185,19 @@ export async function saveSections(formData: {
     .eq('id', store.id);
 
   revalidatePath('/onboarding', 'layout');
-  return { ok: true, storeId: store.id };
+  return result;
 }
 
 // ---------------------------------------------------------------------------
-// Remove section
+// removeSection — delegates to store action (keeps onboarding compat)
 // ---------------------------------------------------------------------------
 
 export async function removeSection(sectionId: string): Promise<{ ok: true } | { error: string }> {
-  const { store } = await requireOwnerStore();
-  if (!store) return { error: 'No se encontró la tienda.' };
-
-  const admin = createAdminClient();
-  // FK ON DELETE SET NULL handles products with this section_id
-  const { error } = await admin
-    .from('sections')
-    .delete()
-    .eq('id', sectionId)
-    .eq('store_id', store.id);
-
-  if (error) return { error: 'No se pudo borrar la sección.' };
-  revalidatePath('/onboarding', 'layout');
-  return { ok: true };
+  return deleteStoreSection(sectionId);
 }
 
 // ---------------------------------------------------------------------------
-// Save product (upsert single product immediately)
-// ---------------------------------------------------------------------------
-
-type ProductInput = {
-  id?: string;
-  name: string;
-  description?: string | null;
-  price_cents: number;
-  stock?: number | null;
-  section_id?: string | null;
-  image_urls: string[];
-  position: number;
-  is_active?: boolean;
-};
-
-export async function saveProduct(
-  product: ProductInput
-): Promise<{ ok: true; productId: string } | { error: string }> {
-  const { store } = await requireOwnerStore();
-  if (!store) return { error: 'No se encontró la tienda.' };
-
-  const admin = createAdminClient();
-
-  if (product.id) {
-    const { error } = await admin
-      .from('products')
-      .update({
-        name: product.name,
-        description: product.description ?? null,
-        price_cents: product.price_cents,
-        stock: product.stock ?? null,
-        section_id: product.section_id ?? null,
-        image_urls: product.image_urls,
-        position: product.position,
-        is_active: product.is_active ?? true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', product.id)
-      .eq('store_id', store.id);
-
-    if (error) return { error: 'No se pudo actualizar el producto.' };
-    revalidatePath('/onboarding', 'layout');
-    return { ok: true, productId: product.id };
-  }
-
-  // INSERT
-  const { data: newProduct, error: insertError } = await admin
-    .from('products')
-    .insert({
-      store_id: store.id,
-      name: product.name,
-      description: product.description ?? null,
-      price_cents: product.price_cents,
-      stock: product.stock ?? null,
-      section_id: product.section_id ?? null,
-      image_urls: product.image_urls,
-      position: product.position,
-      is_active: true,
-      currency: 'ARS',
-    })
-    .select('id')
-    .single();
-
-  if (insertError || !newProduct) {
-    return { error: 'No se pudo crear el producto.' };
-  }
-
-  revalidatePath('/onboarding', 'layout');
-  return { ok: true, productId: newProduct.id };
-}
-
-// ---------------------------------------------------------------------------
-// Advance products step (after user clicks Siguiente on products step)
+// advanceProductsStep — wizard-specific
 // ---------------------------------------------------------------------------
 
 export async function advanceProductsStep(): Promise<SaveResult> {
@@ -376,7 +206,6 @@ export async function advanceProductsStep(): Promise<SaveResult> {
 
   const admin = createAdminClient();
 
-  // Verify at least 1 active product
   const { data: products } = await admin
     .from('products')
     .select('id')
@@ -401,93 +230,6 @@ export async function advanceProductsStep(): Promise<SaveResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Remove product
-// ---------------------------------------------------------------------------
-
-export async function removeProduct(
-  productId: string
-): Promise<{ ok: true } | { error: string }> {
-  const { store } = await requireOwnerStore();
-  if (!store) return { error: 'No se encontró la tienda.' };
-
-  const admin = createAdminClient();
-
-  // Get image URLs before deleting
-  const { data: product } = await admin
-    .from('products')
-    .select('image_urls')
-    .eq('id', productId)
-    .eq('store_id', store.id)
-    .maybeSingle();
-
-  if (product?.image_urls && product.image_urls.length > 0) {
-    // Extract paths from URLs and delete from storage
-    const paths = product.image_urls.map((url) => {
-      try {
-        const u = new URL(url);
-        // URL format: .../storage/v1/object/public/product-images/{path}
-        const match = u.pathname.match(/\/product-images\/(.+)$/);
-        return match ? match[1] : null;
-      } catch {
-        return null;
-      }
-    }).filter((p): p is string => p !== null);
-
-    if (paths.length > 0) {
-      // Best-effort: log failures but don't block delete
-      try {
-        await admin.storage.from('product-images').remove(paths);
-      } catch (e) {
-        console.warn('[removeProduct] storage remove failed:', e);
-      }
-    }
-  }
-
-  const { error } = await admin
-    .from('products')
-    .delete()
-    .eq('id', productId)
-    .eq('store_id', store.id);
-
-  if (error) return { error: 'No se pudo borrar el producto.' };
-
-  revalidatePath('/onboarding', 'layout');
-  return { ok: true };
-}
-
-// ---------------------------------------------------------------------------
-// Save WhatsApp
-// ---------------------------------------------------------------------------
-
-export async function saveWhatsapp(formData: {
-  whatsapp_number: string;
-}): Promise<SaveResult> {
-  const { store } = await requireOwnerStore();
-  if (!store) return { error: 'No se encontró la tienda.' };
-
-  const parsed = whatsappSchema.safeParse(formData);
-  if (!parsed.success) return { error: parsed.error.issues[0].message };
-
-  // Normalize: strip spaces
-  const normalized = parsed.data.whatsapp_number.replace(/\s/g, '');
-
-  const admin = createAdminClient();
-  const { error } = await admin
-    .from('stores')
-    .update({
-      whatsapp_number: normalized,
-      onboarding_step: Math.max(store.onboarding_step, 5),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', store.id);
-
-  if (error) return { error: 'No se pudo guardar el número.' };
-
-  revalidatePath('/onboarding', 'layout');
-  return { ok: true, storeId: store.id };
-}
-
-// ---------------------------------------------------------------------------
 // Publish store
 // ---------------------------------------------------------------------------
 
@@ -499,14 +241,12 @@ export async function publishStore(): Promise<PublishResult> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'No se encontró la tienda.' };
 
-  // Already published — no-op
   if (store.status === 'published') {
     redirect('/dashboard');
   }
 
   const admin = createAdminClient();
 
-  // Re-validate from DB
   const { data: sections } = await admin
     .from('sections')
     .select('id')
