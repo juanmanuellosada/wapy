@@ -64,19 +64,19 @@
 
 ## 7. /admin sub-routes split
 
-- [ ] 7.1 Edit `app/admin/page.tsx`: replace current content with `requireSuperadmin` + `redirect('/admin/leads')`.
-- [ ] 7.2 Create `app/admin/_components/AdminShell.tsx` (Server Component): header with "Wapy Admin" + email + logout, + `<AdminNav currentTab={tab} />`.
-- [ ] 7.3 Create `app/admin/_components/AdminNav.tsx`: pills/tabs with "Leads" and "Whitelist" links to `/admin/leads` and `/admin/whitelist`. Highlight current.
-- [ ] 7.4 Create `app/admin/whitelist/page.tsx`: move logic from old `app/admin/page.tsx`. Render `<AdminShell tab='whitelist'>` + existing `<AddEmailForm />` + `<WhitelistTable rows={...} />`. Update WhitelistTable to also render `plan` badge + "trial ends in" column.
-- [ ] 7.5 Update `app/admin/WhitelistTable.tsx` (current location, will be moved to `app/admin/whitelist/` or shared):
+- [x] 7.1 Edit `app/admin/page.tsx`: replace current content with `requireSuperadmin` + `redirect('/admin/leads')`.
+- [x] 7.2 Create `app/admin/_components/AdminShell.tsx` (Server Component): header with "Wapy Admin" + email + logout, + `<AdminNav currentTab={tab} />`.
+- [x] 7.3 Create `app/admin/_components/AdminNav.tsx`: pills/tabs with "Leads" and "Whitelist" links to `/admin/leads` and `/admin/whitelist`. Highlight current.
+- [x] 7.4 Create `app/admin/whitelist/page.tsx`: move logic from old `app/admin/page.tsx`. Render `<AdminShell tab='whitelist'>` + existing `<AddEmailForm />` + `<WhitelistTable rows={...} />`. Update WhitelistTable to also render `plan` badge + "trial ends in" column.
+- [x] 7.5 Update `app/admin/WhitelistTable.tsx` (current location, will be moved to `app/admin/whitelist/` or shared):
   - Add `plan` column showing badge "Inicial" or "Pro" (or "—" if null).
   - Add "Trial" column showing "Vence en X días" / "Venció hace X días" / "—" based on `trial_ends_at`.
 
 ## 8. Leads panel
 
-- [ ] 8.1 Create `app/admin/leads/page.tsx`: Server Component. requireSuperadmin → fetch all leads (sorted by created_at DESC) → render `<AdminShell tab='leads'>` + `<LeadsTable rows={...} />`.
-- [ ] 8.2 Create `app/admin/leads/LeadsTable.tsx`: table with columns name, email, whatsapp, plan badge, status badge, "hace X días" (relative time), actions. Pass row to `<LeadRowActions>`.
-- [ ] 8.3 Create `app/admin/leads/LeadRowActions.tsx` (Client): "Aprobar" button (visible if status='new') → calls `approveLead` → toast/inline feedback ("Lead aprobado, invite enviado" or warning if mail failed). "Borrar" button → window.confirm → `deleteLead`. Disable while pending.
+- [x] 8.1 Create `app/admin/leads/page.tsx`: Server Component. requireSuperadmin → fetch all leads (sorted by created_at DESC) → render `<AdminShell tab='leads'>` + `<LeadsTable rows={...} />`.
+- [x] 8.2 Create `app/admin/leads/LeadsTable.tsx`: table with columns name, email, whatsapp, plan badge, status badge, "hace X días" (relative time), actions. Pass row to `<LeadRowActions>`.
+- [x] 8.3 Create `app/admin/leads/LeadRowActions.tsx` (Client): "Aprobar" button (visible if status='new') → calls `approveLead` → toast/inline feedback ("Lead aprobado, invite enviado" or warning if mail failed). "Borrar" button → window.confirm → `deleteLead`. Disable while pending.
 
 ## 9. Verification
 
