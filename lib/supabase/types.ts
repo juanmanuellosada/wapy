@@ -17,6 +17,53 @@ export type Database = {
   }
   public: {
     Tables: {
+      leads: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string
+          email: string
+          id: string
+          name: string
+          notes: string | null
+          plan: string
+          status: string
+          whatsapp: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          email: string
+          id?: string
+          name: string
+          notes?: string | null
+          plan: string
+          status?: string
+          whatsapp: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          email?: string
+          id?: string
+          name?: string
+          notes?: string | null
+          plan?: string
+          status?: string
+          whatsapp?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       products: {
         Row: {
           created_at: string
@@ -249,7 +296,9 @@ export type Database = {
           id: string
           invite_token: string | null
           invited_at: string
+          plan: string | null
           registered_at: string | null
+          trial_ends_at: string | null
         }
         Insert: {
           email: string
@@ -257,7 +306,9 @@ export type Database = {
           id?: string
           invite_token?: string | null
           invited_at?: string
+          plan?: string | null
           registered_at?: string | null
+          trial_ends_at?: string | null
         }
         Update: {
           email?: string
@@ -265,7 +316,9 @@ export type Database = {
           id?: string
           invite_token?: string | null
           invited_at?: string
+          plan?: string | null
           registered_at?: string | null
+          trial_ends_at?: string | null
         }
         Relationships: []
       }
