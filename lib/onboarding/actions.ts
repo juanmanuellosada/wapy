@@ -109,24 +109,12 @@ export async function saveBasics(formData: {
   }
 
   if (existing) {
-    // Read existing theme to merge description in
-    const { data: existingStore } = await admin
-      .from('stores')
-      .select('theme')
-      .eq('id', existing.id)
-      .maybeSingle();
-
-    const existingTheme =
-      existingStore?.theme && typeof existingStore.theme === 'object' && !Array.isArray(existingStore.theme)
-        ? (existingStore.theme as Record<string, unknown>)
-        : {};
-
     await admin
       .from('stores')
       .update({
         name,
         slug,
-        theme: { ...existingTheme, description: description ?? null },
+        description: description ?? null,
         onboarding_step: Math.max(existing.onboarding_step ?? 0, 1),
         updated_at: new Date().toISOString(),
       })
@@ -143,9 +131,9 @@ export async function saveBasics(formData: {
       owner_id: user.id,
       name,
       slug,
+      description: description ?? null,
       status: 'draft',
       onboarding_step: 1,
-      theme: { description: description ?? null },
     })
     .select('id')
     .single();

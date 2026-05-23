@@ -47,8 +47,8 @@ export function StepReview({ store, sections, products }: Props) {
       <ReviewCard title="Datos de la tienda" editHref="/onboarding/basics">
         <p className="text-sm font-bold text-[#FBF7EC]">{store.name}</p>
         <p className="text-xs text-white/50 font-mono">wapy.com.ar/{store.slug}</p>
-        {getThemeField(store, 'description') && (
-          <p className="text-xs text-white/40 mt-1 line-clamp-2">{getThemeField(store, 'description')}</p>
+        {store.description && (
+          <p className="text-xs text-white/40 mt-1 line-clamp-2">{store.description}</p>
         )}
       </ReviewCard>
 

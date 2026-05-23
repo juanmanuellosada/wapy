@@ -35,12 +35,6 @@ export function StepBasics({ store }: Props) {
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const slugCheckIdRef = useRef(0);
 
-  function getDescription(s: Store | null): string {
-    if (!s?.theme || typeof s.theme !== 'object' || Array.isArray(s.theme)) return '';
-    const t = s.theme as Record<string, unknown>;
-    return typeof t.description === 'string' ? t.description : '';
-  }
-
   const {
     register,
     handleSubmit,
@@ -52,7 +46,7 @@ export function StepBasics({ store }: Props) {
     defaultValues: {
       name: store?.name ?? '',
       slug: store?.slug ?? '',
-      description: getDescription(store),
+      description: store?.description ?? '',
     },
   });
 
