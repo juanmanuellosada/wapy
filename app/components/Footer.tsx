@@ -2,12 +2,14 @@ const navLinks = [
   { href: "#como-funciona", label: "Cómo funciona" },
   { href: "#features", label: "Funcionalidades" },
   { href: "#precios", label: "Precios" },
+  { href: "#faq", label: "FAQ" },
+  { href: "/login", label: "Ingresar" },
+  { href: "mailto:hola@wapy.com.ar", label: "Contacto" },
 ];
 
 const legalLinks = [
   { href: "#", label: "Términos" },
   { href: "#", label: "Privacidad" },
-  { href: "#", label: "Contacto" },
 ];
 
 export default function Footer() {
@@ -25,7 +27,7 @@ export default function Footer() {
               wapy
             </span>
             <p className="text-white/35 text-sm text-center md:text-left max-w-xs">
-              Menos vueltas, más pedidos.
+              Tu tienda online + WhatsApp en 5 minutos.
             </p>
           </div>
 
@@ -33,7 +35,7 @@ export default function Footer() {
           <nav className="flex flex-wrap justify-center md:justify-end gap-x-8 gap-y-2">
             {navLinks.map((link) => (
               <a
-                key={link.href}
+                key={link.label}
                 href={link.href}
                 className="text-white/50 text-sm font-medium hover:text-[#F5C84B] transition-colors duration-200 cursor-pointer"
               >
