@@ -19,7 +19,13 @@ import WapyFooter from "@/app/components/WapyFooter";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const PLACEHOLDER_IMAGE = "/placeholder-product.png";
+// Inline SVG data URI so we never need a separate asset file. Gray box with
+// "Sin imagen" centered — used when a product has no image_urls.
+const PLACEHOLDER_IMAGE =
+  "data:image/svg+xml;charset=utf-8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#e5e7eb"/><text x="100" y="105" font-family="system-ui,sans-serif" font-size="14" fill="#9ca3af" text-anchor="middle">Sin imagen</text></svg>'
+  );
 
 function formatARS(amount: number): string {
   return amount.toLocaleString("es-AR", {
