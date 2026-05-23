@@ -39,16 +39,16 @@
 
 ## 5. Header + Hero + Footer adjustments
 
-- [ ] 5.1 Edit `app/components/Header.tsx`:
+- [x] 5.1 Edit `app/components/Header.tsx`:
   - Add "Ingresar" link → `/login` between nav items and CTA on desktop.
   - Add "Ingresar" in mobile drawer items list.
   - Keep existing CTA "Quiero mi tienda" but change href to `#precios` (it might already be).
-- [ ] 5.2 Edit `app/components/Hero.tsx`:
+- [x] 5.2 Edit `app/components/Hero.tsx`:
   - Refinar copy: headline shorter and more direct ("Tu tienda online + WhatsApp, lista en 5 minutos" o similar — refinar con ui-ux-pro-max guidance).
   - Primary CTA "Quiero mi tienda" → `#precios`.
   - Secondary CTA optional: "Ver cómo funciona" → `#como-funciona`.
   - Mockup visual: side image (mobile mockup + WhatsApp bubble). Use SVG inline or PNG placeholder in `/public/landing/mockup.png` (if SVG too complex, leave PNG asset reference and note in PR description that asset should be replaced; OR build a CSS-only mockup with divs).
-- [ ] 5.3 Edit `app/components/Footer.tsx`:
+- [x] 5.3 Edit `app/components/Footer.tsx`:
   - Real anchors for nav links (`#como-funciona`, `#features`, `#precios`, `#faq`).
   - Add "Ingresar" → `/login`.
   - Add "Contacto" → `mailto:hola@wapy.com.ar`.
@@ -56,11 +56,11 @@
 
 ## 6. FAQ section
 
-- [ ] 6.1 Create `app/components/FAQ.tsx`:
+- [x] 6.1 Create `app/components/FAQ.tsx`:
   - 8 preguntas hardcodeadas (ver design.md §11 para texto exacto, refinar copy).
   - Accessible accordion: each question is a `<button>` with `aria-expanded`. Only one open at a time (state in component).
   - Anchor `id="faq"`.
-- [ ] 6.2 Edit `app/page.tsx`: import + insert `<FAQ />` between `<Pricing />` and `<Footer />`.
+- [x] 6.2 Edit `app/page.tsx`: import + insert `<FAQ />` between `<Pricing />` and `<Footer />`.
 
 ## 7. /admin sub-routes split
 

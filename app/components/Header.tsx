@@ -17,6 +17,7 @@ export default function Header() {
     { href: "#como-funciona", label: "Cómo funciona" },
     { href: "#features", label: "Funcionalidades" },
     { href: "#precios", label: "Precios" },
+    { href: "#faq", label: "FAQ" },
   ];
 
   const headerBase =
@@ -58,6 +59,12 @@ export default function Header() {
         {/* Desktop CTA */}
         <div className="flex items-center gap-3">
           <a
+            href="/login"
+            className="hidden md:inline-flex items-center px-4 py-2 rounded-full text-white/80 font-bold text-sm border border-white/20 hover:bg-white/10 transition-all duration-200 cursor-pointer"
+          >
+            Ingresar
+          </a>
+          <a
             href="#precios"
             className="hidden md:inline-flex items-center px-5 py-2.5 rounded-full bg-[#F5C84B] text-[#16222E] font-extrabold text-sm hover:bg-[#D9A92A] transition-all duration-200 shadow-md hover:shadow-lg cursor-pointer"
           >
@@ -93,6 +100,13 @@ export default function Header() {
               {link.label}
             </a>
           ))}
+          <a
+            href="/login"
+            onClick={() => setMenuOpen(false)}
+            className="text-white/80 font-bold py-3 px-2 rounded-xl hover:bg-white/10 hover:text-[#F5C84B] transition-colors duration-200 cursor-pointer min-h-[44px] flex items-center"
+          >
+            Ingresar
+          </a>
           <a
             href="#precios"
             onClick={() => setMenuOpen(false)}
