@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 // Note: hover affordances are CSS-driven via .store-scope rules in globals.css
 import {
@@ -10,16 +9,17 @@ import {
   Minus,
   Trash2,
   ChevronRight,
-  MapPin,
-  Clock,
   Search,
   Sun,
   Moon,
 } from "lucide-react";
-import type { Contact, Product, Section, Store } from "../../../lib/stores";
+import type { StoreRow, SectionRow, ProductRow } from "@/lib/storefront/resolve";
 import { useCart } from "./CartContext";
+import WapyFooter from "@/app/components/WapyFooter";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const PLACEHOLDER_IMAGE = "/placeholder-product.png";
 
 function formatARS(amount: number): string {
   return amount.toLocaleString("es-AR", {
@@ -38,26 +38,23 @@ function normalize(s: string): string {
     .replace(/[̀-ͯ]/g, "");
 }
 
-// Instagram SVG (not available in this version of lucide-react)
-function InstagramIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      style={style}
-      aria-hidden="true"
-    >
-      <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
-      <circle cx="12" cy="12" r="4" />
-      <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
-    </svg>
-  );
+function getAccentColor(theme: unknown): string {
+  if (
+    theme !== null &&
+    typeof theme === "object" &&
+    "accent_color" in theme &&
+    typeof (theme as { accent_color: unknown }).accent_color === "string"
+  ) {
+    return (theme as { accent_color: string }).accent_color;
+  }
+  return "#22c55e";
+}
+
+function getProductImage(product: ProductRow): string {
+  if (product.image_urls && product.image_urls.length > 0) {
+    return product.image_urls[0];
+  }
+  return PLACEHOLDER_IMAGE;
 }
 
 // WhatsApp SVG (not in lucide-react)
@@ -108,23 +105,44 @@ function useDarkMode(slug: string) {
   return { isDark, toggle };
 }
 
+// ─── Local types used in cart/UI ─────────────────────────────────────────────
+
+interface UIProduct {
+  id: string;
+  sectionId: string;
+  name: string;
+  description: string;
+  price: number; // ARS float (price_cents / 100)
+  image: string;
+}
+
+interface UISection {
+  id: string;
+  name: string;
+}
+
 // ─── Store Header ─────────────────────────────────────────────────────────────
 
 function StoreHeader({
-  store,
+  storeName,
+  storeSlug,
+  accentColor,
   sections,
   searchQuery,
   onSearchChange,
 }: {
-  store: Store;
-  sections: Section[];
+  storeName: string;
+  storeSlug: string;
+  accentColor: string;
+  sections: UISection[];
   searchQuery: string;
   onSearchChange: (q: string) => void;
 }) {
   const { totalItems, openCart } = useCart();
-  const { isDark, toggle } = useDarkMode(store.slug);
+  const { isDark, toggle } = useDarkMode(storeSlug);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const mobileInputRef = useRef<HTMLInputElement>(null);
+  const accentForeground = "#ffffff";
 
   // Auto-focus mobile search input when opened
   useEffect(() => {
@@ -148,9 +166,9 @@ function StoreHeader({
         {/* Store name */}
         <span
           className="text-base font-semibold tracking-tight shrink-0"
-          style={{ color: store.accentColor, fontFamily: "var(--font-rubik, Rubik)" }}
+          style={{ color: accentColor, fontFamily: "var(--font-rubik, Rubik)" }}
         >
-          {store.name}
+          {storeName}
         </span>
 
         {/* Section nav — desktop (md+) */}
@@ -168,13 +186,6 @@ function StoreHeader({
               {s.name}
             </a>
           ))}
-          <a
-            href="#contacto"
-            className="store-nav-link shrink-0 px-3 py-1.5 text-sm font-medium rounded-full transition-colors cursor-pointer"
-            style={{ color: "var(--store-ink-secondary)" }}
-          >
-            Contacto
-          </a>
         </nav>
 
         {/* Right controls: search + theme toggle + cart */}
@@ -242,8 +253,8 @@ function StoreHeader({
             onClick={openCart}
             className="relative flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-opacity hover:opacity-80 cursor-pointer shrink-0"
             style={{
-              background: store.accentColor,
-              color: store.accentForeground,
+              background: accentColor,
+              color: accentForeground,
             }}
             aria-label={`Carrito${totalItems > 0 ? `, ${totalItems} producto${totalItems !== 1 ? "s" : ""}` : ""}`}
           >
@@ -252,7 +263,7 @@ function StoreHeader({
             {totalItems > 0 && (
               <span
                 className="flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold"
-                style={{ background: "rgba(255,255,255,0.25)", color: store.accentForeground }}
+                style={{ background: "rgba(255,255,255,0.25)", color: accentForeground }}
                 aria-hidden="true"
               >
                 {totalItems}
@@ -316,16 +327,6 @@ function StoreHeader({
               {s.name}
             </a>
           ))}
-          <a
-            href="#contacto"
-            className="shrink-0 px-3 py-1 text-xs font-medium rounded-full cursor-pointer whitespace-nowrap"
-            style={{
-              background: "var(--store-border)",
-              color: "var(--store-ink-secondary)",
-            }}
-          >
-            Contacto
-          </a>
         </div>
       </div>
     </header>
@@ -334,7 +335,15 @@ function StoreHeader({
 
 // ─── Hero ─────────────────────────────────────────────────────────────────────
 
-function StoreHero({ store }: { store: Store }) {
+function StoreHero({
+  name,
+  description,
+  accentColor,
+}: {
+  name: string;
+  description: string | null;
+  accentColor: string;
+}) {
   return (
     <section
       className="py-16 sm:py-24 px-4 sm:px-6"
@@ -345,28 +354,30 @@ function StoreHero({ store }: { store: Store }) {
         {/* Eyebrow */}
         <p
           className="text-xs font-semibold uppercase tracking-widest"
-          style={{ color: store.accentColor }}
+          style={{ color: accentColor }}
         >
-          Nueva colección
+          Tienda online
         </p>
         {/* Headline */}
         <h1
           className="text-5xl sm:text-7xl font-bold tracking-tight leading-none"
           style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
         >
-          {store.name}
+          {name}
         </h1>
-        {/* Tagline */}
-        <p
-          className="text-base sm:text-lg max-w-md mt-1"
-          style={{ color: "var(--store-ink-secondary)" }}
-        >
-          {store.tagline}
-        </p>
+        {/* Description */}
+        {description && (
+          <p
+            className="text-base sm:text-lg max-w-md mt-1"
+            style={{ color: "var(--store-ink-secondary)" }}
+          >
+            {description}
+          </p>
+        )}
         {/* Decorative rule */}
         <div
           className="mt-6 h-px w-16"
-          style={{ background: store.accentColor, opacity: 0.6 }}
+          style={{ background: accentColor, opacity: 0.6 }}
           aria-hidden="true"
         />
       </div>
@@ -379,15 +390,14 @@ function StoreHero({ store }: { store: Store }) {
 function ProductCard({
   product,
   accentColor,
-  accentForeground,
   onOpenModal,
 }: {
-  product: Product;
+  product: UIProduct;
   accentColor: string;
-  accentForeground: string;
-  onOpenModal: (p: Product) => void;
+  onOpenModal: (p: UIProduct) => void;
 }) {
   const { addItem, openCart } = useCart();
+  const accentForeground = "#ffffff";
 
   function handleAdd(e: React.MouseEvent) {
     e.stopPropagation();
@@ -415,12 +425,11 @@ function ProductCard({
         className="relative overflow-hidden"
         style={{ aspectRatio: "3/4", background: "var(--store-border)" }}
       >
-        <Image
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
           src={product.image}
           alt={product.name}
-          fill
-          className="store-card-image object-cover"
-          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+          className="store-card-image object-cover w-full h-full"
         />
       </div>
 
@@ -459,17 +468,16 @@ function ProductCard({
 function ProductModal({
   product,
   accentColor,
-  accentForeground,
   onClose,
 }: {
-  product: Product;
+  product: UIProduct;
   accentColor: string;
-  accentForeground: string;
   onClose: () => void;
 }) {
   const { addItem, setQty, items, openCart } = useCart();
   const [qty, setLocalQty] = useState(1);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const accentForeground = "#ffffff";
 
   const existingItem = items.find((i) => i.productId === product.id);
 
@@ -543,13 +551,11 @@ function ProductModal({
           className="relative w-full shrink-0"
           style={{ aspectRatio: "4/3", background: "var(--store-border)" }}
         >
-          <Image
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={product.image}
             alt={product.name}
-            fill
-            className="object-cover"
-            sizes="(max-width: 640px) 100vw, 36rem"
-            priority
+            className="w-full h-full object-cover"
           />
         </div>
 
@@ -567,12 +573,14 @@ function ProductModal({
             </p>
           </div>
 
-          <p
-            className="text-sm leading-relaxed"
-            style={{ color: "var(--store-ink-secondary)" }}
-          >
-            {product.description}
-          </p>
+          {product.description && (
+            <p
+              className="text-sm leading-relaxed"
+              style={{ color: "var(--store-ink-secondary)" }}
+            >
+              {product.description}
+            </p>
+          )}
 
           {/* Quantity selector */}
           <div className="flex items-center gap-4">
@@ -626,23 +634,34 @@ function ProductModal({
 
 // ─── Cart Drawer ──────────────────────────────────────────────────────────────
 
-function CartDrawer({ store }: { store: Store }) {
+function CartDrawer({
+  storeName,
+  accentColor,
+  whatsappNumber,
+}: {
+  storeName: string;
+  accentColor: string;
+  whatsappNumber: string | null;
+}) {
   const { items, open, totalPrice, removeItem, setQty, closeCart } = useCart();
+  const accentForeground = "#ffffff";
 
   function handleWhatsApp() {
+    if (!whatsappNumber) return;
     const lines = items.map(
       (i) => `• ${i.quantity}x ${i.name} — ${formatARS(i.price * i.quantity)}`
     );
     const message = [
-      `*Pedido en ${store.name}*`,
+      `*Pedido en ${storeName}*`,
       "",
       ...lines,
       "",
       `*Total: ${formatARS(totalPrice)}*`,
     ].join("\n");
 
+    const normalized = whatsappNumber.replace(/\D/g, "");
     const encoded = encodeURIComponent(message);
-    window.open(`https://wa.me/${store.whatsappNumber}?text=${encoded}`, "_blank");
+    window.open(`https://wa.me/${normalized}?text=${encoded}`, "_blank");
   }
 
   // Prevent body scroll when open
@@ -688,7 +707,7 @@ function CartDrawer({ store }: { store: Store }) {
             <ShoppingBag
               className="h-4 w-4"
               aria-hidden="true"
-              style={{ color: store.accentColor }}
+              style={{ color: accentColor }}
             />
             <h2
               className="text-base font-semibold"
@@ -744,12 +763,11 @@ function CartDrawer({ store }: { store: Store }) {
                     className="relative h-16 w-16 rounded-xl overflow-hidden shrink-0"
                     style={{ background: "var(--store-border)" }}
                   >
-                    <Image
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
                       src={item.image}
                       alt={item.name}
-                      fill
-                      className="object-cover"
-                      sizes="4rem"
+                      className="w-full h-full object-cover"
                     />
                   </div>
 
@@ -842,15 +860,32 @@ function CartDrawer({ store }: { store: Store }) {
             </div>
 
             {/* WhatsApp CTA */}
-            <button
-              onClick={handleWhatsApp}
-              className="w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 cursor-pointer transition-opacity hover:opacity-90"
-              style={{ background: "#25D366", color: "#ffffff" }}
-              aria-label="Enviar pedido por WhatsApp"
-            >
-              <WhatsAppIcon className="h-5 w-5" />
-              Pedir por WhatsApp
-            </button>
+            {whatsappNumber ? (
+              <button
+                onClick={handleWhatsApp}
+                className="w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 cursor-pointer transition-opacity hover:opacity-90"
+                style={{ background: "#25D366", color: "#ffffff" }}
+                aria-label="Enviar pedido por WhatsApp"
+              >
+                <WhatsAppIcon className="h-5 w-5" />
+                Pedir por WhatsApp
+              </button>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <button
+                  disabled
+                  className="w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 opacity-50 cursor-not-allowed"
+                  style={{ background: "#25D366", color: "#ffffff" }}
+                  title="El comercio no configuró WhatsApp aún"
+                >
+                  <WhatsAppIcon className="h-5 w-5" />
+                  Pedir por WhatsApp
+                </button>
+                <p className="text-center text-xs" style={{ color: "var(--store-ink-muted)" }}>
+                  El comercio no configuró WhatsApp aún
+                </p>
+              </div>
+            )}
 
             <p
               className="text-center text-xs"
@@ -871,14 +906,12 @@ function SectionBlock({
   section,
   products,
   accentColor,
-  accentForeground,
   onOpenModal,
 }: {
-  section: Section;
-  products: Product[];
+  section: UISection;
+  products: UIProduct[];
   accentColor: string;
-  accentForeground: string;
-  onOpenModal: (p: Product) => void;
+  onOpenModal: (p: UIProduct) => void;
 }) {
   return (
     <section id={section.id} className="scroll-mt-24" aria-labelledby={`section-${section.id}`}>
@@ -910,7 +943,6 @@ function SectionBlock({
             key={p.id}
             product={p}
             accentColor={accentColor}
-            accentForeground={accentForeground}
             onOpenModal={onOpenModal}
           />
         ))}
@@ -925,17 +957,16 @@ function SearchResults({
   query,
   results,
   accentColor,
-  accentForeground,
   onOpenModal,
   onClear,
 }: {
   query: string;
-  results: Product[];
+  results: UIProduct[];
   accentColor: string;
-  accentForeground: string;
-  onOpenModal: (p: Product) => void;
+  onOpenModal: (p: UIProduct) => void;
   onClear: () => void;
 }) {
+  const accentForeground = "#ffffff";
   return (
     <section aria-label="Resultados de búsqueda">
       {/* Result header */}
@@ -1008,7 +1039,6 @@ function SearchResults({
               key={p.id}
               product={p}
               accentColor={accentColor}
-              accentForeground={accentForeground}
               onOpenModal={onOpenModal}
             />
           ))}
@@ -1018,198 +1048,12 @@ function SearchResults({
   );
 }
 
-// ─── Contact Section ──────────────────────────────────────────────────────────
-
-function ContactSection({
-  store,
-  contact,
-}: {
-  store: Store;
-  contact: Contact;
-}) {
-  const instagramHandle = contact.instagram.replace(/^@/, "");
-  const mapsEmbedUrl = `https://maps.google.com/maps?q=${encodeURIComponent(contact.mapsQuery)}&z=15&output=embed`;
-
-  return (
-    <section
-      id="contacto"
-      className="scroll-mt-24"
-      aria-labelledby="contacto-heading"
-      style={{ borderTop: "1px solid var(--store-border)" }}
-    >
-      {/* Section header — matches SectionBlock style */}
-      <div className="flex items-center gap-3 mb-6 sm:mb-8">
-        <h2
-          id="contacto-heading"
-          className="text-xl sm:text-2xl font-bold"
-          style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
-        >
-          Contacto
-        </h2>
-        <div
-          className="h-px flex-1"
-          style={{ background: "var(--store-border)" }}
-          aria-hidden="true"
-        />
-        <ChevronRight
-          className="h-4 w-4 shrink-0"
-          aria-hidden="true"
-          style={{ color: "var(--store-border-strong)" }}
-        />
-      </div>
-
-      {/* Two-column layout: info left, map right */}
-      <div className="flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Info column */}
-        <div className="flex flex-col gap-6 lg:w-72 shrink-0">
-          {/* Store identity */}
-          <div className="flex flex-col gap-1">
-            <p
-              className="text-2xl font-bold tracking-tight"
-              style={{ color: store.accentColor, fontFamily: "var(--font-rubik, Rubik)" }}
-            >
-              {store.name}
-            </p>
-            <p className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>
-              {store.tagline}
-            </p>
-          </div>
-
-          {/* Address */}
-          <div className="flex gap-3 items-start">
-            <MapPin
-              className="h-4 w-4 mt-0.5 shrink-0"
-              aria-hidden="true"
-              style={{ color: store.accentColor }}
-            />
-            <p className="text-sm leading-relaxed" style={{ color: "var(--store-ink)" }}>
-              {contact.address}
-            </p>
-          </div>
-
-          {/* Hours */}
-          <div className="flex gap-3 items-start">
-            <Clock
-              className="h-4 w-4 mt-0.5 shrink-0"
-              aria-hidden="true"
-              style={{ color: store.accentColor }}
-            />
-            <ul className="flex flex-col gap-1" aria-label="Horarios de atención">
-              {contact.hours.map((h) => (
-                <li key={h.days} className="flex gap-2 text-sm">
-                  <span
-                    className="font-medium w-40 shrink-0"
-                    style={{ color: "var(--store-ink)" }}
-                  >
-                    {h.days}
-                  </span>
-                  <span style={{ color: "var(--store-ink-secondary)" }}>{h.time}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Instagram */}
-          <a
-            href={`https://instagram.com/${instagramHandle}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2.5 self-start rounded-full px-4 py-2 text-sm font-semibold transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 cursor-pointer"
-            style={{
-              background: "var(--store-border)",
-              color: "var(--store-ink)",
-            }}
-            aria-label={`Seguinos en Instagram: ${contact.instagram}`}
-          >
-            <InstagramIcon
-              className="h-4 w-4"
-              style={{ color: store.accentColor }}
-            />
-            {contact.instagram}
-          </a>
-        </div>
-
-        {/* Map */}
-        <div
-          className="flex-1 overflow-hidden rounded-2xl"
-          style={{
-            border: "1px solid var(--store-border)",
-            boxShadow: "var(--store-shadow)",
-          }}
-        >
-          <div style={{ position: "relative", paddingBottom: "56.25%", height: 0 }}>
-            <iframe
-              src={mapsEmbedUrl}
-              title={`Mapa de ubicación de ${store.name}`}
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: "100%",
-                border: 0,
-              }}
-            />
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ─── Store Footer ─────────────────────────────────────────────────────────────
-
-function StoreFooter({ store }: { store: Store }) {
-  return (
-    <footer
-      className="mt-20 py-10 px-4 sm:px-6"
-      style={{ borderTop: "1px solid var(--store-border)" }}
-    >
-      <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-3">
-        <p className="text-sm" style={{ color: "var(--store-ink-muted)" }}>
-          <span className="font-semibold" style={{ color: store.accentColor }}>
-            {store.name}
-          </span>{" "}
-          &mdash; Todos los precios en pesos argentinos (ARS)
-        </p>
-        <p className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
-          Tienda impulsada por{" "}
-          <a
-            href="/"
-            className="inline-flex items-baseline hover:opacity-75 cursor-pointer transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 rounded-sm"
-            style={{ color: "var(--store-ink-secondary)" }}
-            aria-label="Wapy — ir al sitio de Wapy"
-          >
-            <span
-              style={{
-                fontFamily: "var(--font-agbalumo, cursive)",
-                fontSize: "1.1em",
-                lineHeight: 1,
-                letterSpacing: "-0.01em",
-              }}
-            >
-              wapy
-            </span>
-          </a>
-        </p>
-      </div>
-    </footer>
-  );
-}
-
 // ─── Floating Cart Button (mobile) ───────────────────────────────────────────
 
-function FloatingCartButton({
-  accentColor,
-  accentForeground,
-}: {
-  accentColor: string;
-  accentForeground: string;
-}) {
+function FloatingCartButton({ accentColor }: { accentColor: string }) {
   const { totalItems, openCart, open } = useCart();
   if (open || totalItems === 0) return null;
+  const accentForeground = "#ffffff";
 
   return (
     <button
@@ -1230,42 +1074,78 @@ function FloatingCartButton({
 
 // ─── Root Client Component ────────────────────────────────────────────────────
 
-export default function StoreClient({ store }: { store: Store }) {
-  const [modalProduct, setModalProduct] = useState<Product | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+export default function StoreClient({
+  store,
+  sections: sectionRows,
+  products: productRows,
+}: {
+  store: StoreRow;
+  sections: SectionRow[];
+  products: ProductRow[];
+}) {
+  const accentColor = getAccentColor(store.theme);
+
+  // Map Supabase rows to local UI types
+  const sections: UISection[] = useMemo(
+    () => sectionRows.map((s) => ({ id: s.id, name: s.name })),
+    [sectionRows]
+  );
+
+  const products: UIProduct[] = useMemo(
+    () =>
+      productRows.map((p) => ({
+        id: p.id,
+        sectionId: p.section_id ?? "",
+        name: p.name,
+        description: p.description ?? "",
+        price: p.price_cents / 100,
+        image: getProductImage(p),
+      })),
+    [productRows]
+  );
 
   const productsBySection = useMemo(() => {
-    const map = new Map<string, Product[]>();
-    for (const s of store.sections) {
+    const map = new Map<string, UIProduct[]>();
+    for (const s of sections) {
       map.set(
         s.id,
-        store.products.filter((p) => p.sectionId === s.id)
+        products.filter((p) => p.sectionId === s.id)
       );
     }
     return map;
-  }, [store.sections, store.products]);
+  }, [sections, products]);
+
+  const [modalProduct, setModalProduct] = useState<UIProduct | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Filter products by name and description — accent- and case-insensitive
   const filteredProducts = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const q = normalize(searchQuery.trim());
-    return store.products.filter(
+    return products.filter(
       (p) => normalize(p.name).includes(q) || normalize(p.description).includes(q)
     );
-  }, [searchQuery, store.products]);
+  }, [searchQuery, products]);
 
   const hasQuery = searchQuery.trim().length > 0;
 
   return (
-    <>
+    // Inject accent CSS variable so child components can use var(--accent)
+    <div style={{ "--accent": accentColor } as React.CSSProperties}>
       <StoreHeader
-        store={store}
-        sections={store.sections}
+        storeName={store.name}
+        storeSlug={store.slug}
+        accentColor={accentColor}
+        sections={sections}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
       />
 
-      <StoreHero store={store} />
+      <StoreHero
+        name={store.name}
+        description={store.description}
+        accentColor={accentColor}
+      />
 
       <main
         className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-14 flex flex-col gap-14 sm:gap-20"
@@ -1275,48 +1155,40 @@ export default function StoreClient({ store }: { store: Store }) {
           <SearchResults
             query={searchQuery}
             results={filteredProducts}
-            accentColor={store.accentColor}
-            accentForeground={store.accentForeground}
+            accentColor={accentColor}
             onOpenModal={setModalProduct}
             onClear={() => setSearchQuery("")}
           />
         ) : (
-          <>
-            {store.sections.map((s) => (
-              <SectionBlock
-                key={s.id}
-                section={s}
-                products={productsBySection.get(s.id) ?? []}
-                accentColor={store.accentColor}
-                accentForeground={store.accentForeground}
-                onOpenModal={setModalProduct}
-              />
-            ))}
-
-            {store.contact && (
-              <ContactSection store={store} contact={store.contact} />
-            )}
-          </>
+          sections.map((s) => (
+            <SectionBlock
+              key={s.id}
+              section={s}
+              products={productsBySection.get(s.id) ?? []}
+              accentColor={accentColor}
+              onOpenModal={setModalProduct}
+            />
+          ))
         )}
       </main>
 
-      <StoreFooter store={store} />
+      <WapyFooter />
 
-      <CartDrawer store={store} />
-
-      <FloatingCartButton
-        accentColor={store.accentColor}
-        accentForeground={store.accentForeground}
+      <CartDrawer
+        storeName={store.name}
+        accentColor={accentColor}
+        whatsappNumber={store.whatsapp_number}
       />
+
+      <FloatingCartButton accentColor={accentColor} />
 
       {modalProduct && (
         <ProductModal
           product={modalProduct}
-          accentColor={store.accentColor}
-          accentForeground={store.accentForeground}
+          accentColor={accentColor}
           onClose={() => setModalProduct(null)}
         />
       )}
-    </>
+    </div>
   );
 }

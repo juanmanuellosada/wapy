@@ -15,7 +15,6 @@ interface Props {
 
 // Inline script that runs before paint to avoid flash of wrong theme.
 // Reads localStorage key "wapy-theme-{slug}", falls back to prefers-color-scheme.
-// Must be a plain string to be injected as a <script> tag.
 function themeScript(slug: string): string {
   return `(function(){
   var key = "wapy-theme-${slug}";
