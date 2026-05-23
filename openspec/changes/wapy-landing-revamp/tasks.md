@@ -18,7 +18,7 @@
 
 ## 3. LeadFormModal (Client)
 
-- [ ] 3.1 Create `app/components/LeadFormModal.tsx`:
+- [x] 3.1 Create `app/components/LeadFormModal.tsx`:
   - Props: `{ open: boolean, onClose, plan: 'inicial' | 'pro' }`.
   - `react-hook-form` + zodResolver.
   - Fields: email, name, whatsapp (with hint "Ej: +54 9 11 1234 5678"), plan (hidden, set from prop).
@@ -29,7 +29,7 @@
 
 ## 4. Pricing section rewrite
 
-- [ ] 4.1 Rewrite `app/components/Pricing.tsx`:
+- [x] 4.1 Rewrite `app/components/Pricing.tsx`:
   - Two cards side-by-side on desktop, stacked on mobile (Pro first on mobile).
   - Each card: plan name, price `$X / mes`, "14 días gratis · sin tarjeta" badge, feature list with check icons, CTA button.
   - Pro card visually distinct: "Más popular" badge, brighter border, slight scale or shadow.
