@@ -80,11 +80,11 @@
 
 ## 9. Verification
 
-- [ ] 9.1 `npm run build` — must pass.
+- [x] 9.1 `npm run build` — must pass. ✓ 17 routes, 0 type errors.
 - [ ] 9.2 Verify dev: lead form opens from Pricing CTAs, submits to actions correctly. No console errors.
 - [ ] 9.3 Confirm `/admin` redirects to `/admin/leads`. Tab nav works between Leads and Whitelist.
-- [ ] 9.4 Sin TypeScript `any`.
-- [ ] 9.5 Run `get_advisors --type security` — 0 warnings (the new RLS policies for leads should be clean).
+- [x] 9.4 Sin TypeScript `any`. ✓ All types from Database[...]['Row'].
+- [x] 9.5 Run `get_advisors --type security` — 0 warnings (the new RLS policies for leads should be clean).
 
 ## 10. Smoke test (USER post-merge)
 
@@ -103,10 +103,10 @@
 
 ## 11. Commits & PR
 
-- [ ] 11.1 Commit 1: `Add leads schema, types, and lead capture server actions` (migrations 015+016, types.ts regen, lib/leads/*).
-- [ ] 11.2 Commit 2: `Add lead form modal and rewrite pricing with two plans` (LeadFormModal, Pricing rewrite).
-- [ ] 11.3 Commit 3: `Add FAQ section and login link in header + footer` (FAQ component, Header + Footer edits, page.tsx update).
-- [ ] 11.4 Commit 4: `Refine Hero copy and add mockup visual` (Hero + HowItWorks + Features pulido).
-- [ ] 11.5 Commit 5: `Split /admin into sub-routes with leads management` (sub-routes, AdminShell, AdminNav, LeadsTable, LeadRowActions, WhitelistTable updates).
-- [ ] 11.6 Update tasks.md; commit.
+- [x] 11.1 Commit 1 (e2ffa9d): `Add leads schema, types, and lead capture server actions` (migrations 015+016, types.ts regen, lib/leads/*).
+- [x] 11.2 Commit 2 (e188d50): `Add lead form modal and rewrite pricing with two plans` (LeadFormModal, Pricing rewrite).
+- [x] 11.3 Commit 3 (bb29559): `Add FAQ section and login link in header + footer; refine Hero copy and mockup` (FAQ, Header, Hero, Footer, page.tsx).
+- [x] 11.4 Hero copy + CSS-only mockup merged into Commit 3.
+- [x] 11.5 Commit 4 (fd40725): `Split /admin into sub-routes with leads management panel` (sub-routes, AdminShell, AdminNav, LeadsTable, LeadRowActions, WhitelistTable updates).
+- [x] 11.6 Update tasks.md; commit.
 - [ ] 11.7 Orchestrator: push + open PR.

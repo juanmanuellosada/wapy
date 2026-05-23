@@ -76,9 +76,7 @@ export const leadFormSchema = z.object({
       (val) => normalizeWhatsapp(val) !== null,
       'Número de WhatsApp inválido. Ej: +54 9 11 1234 5678'
     ),
-  plan: z.enum(['inicial', 'pro'], {
-    errorMap: () => ({ message: 'Plan inválido' }),
-  }),
+  plan: z.enum(['inicial', 'pro'], { error: 'Plan inválido' }),
 });
 
 export type LeadFormInput = z.infer<typeof leadFormSchema>;
