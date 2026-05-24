@@ -16,6 +16,7 @@ import {
 import type { StoreRow, SectionRow, ProductRow } from "@/lib/storefront/resolve";
 import { useCart } from "./CartContext";
 import WapyFooter from "@/app/components/WapyFooter";
+import { createPendingOrder } from "@/lib/store/orders/actions";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -671,10 +672,12 @@ function ProductModal({
 // ─── Cart Drawer ──────────────────────────────────────────────────────────────
 
 function CartDrawer({
+  storeId,
   storeName,
   accentColor,
   whatsappNumber,
 }: {
+  storeId: string;
   storeName: string;
   accentColor: string;
   whatsappNumber: string | null;
@@ -682,12 +685,12 @@ function CartDrawer({
   const { items, open, totalPrice, removeItem, setQty, closeCart } = useCart();
   const accentForeground = "#ffffff";
 
-  function handleWhatsApp() {
+  async function handleWhatsApp() {
     if (!whatsappNumber) return;
     const lines = items.map(
       (i) => `• ${i.quantity}x ${i.name} — ${formatARS(i.price * i.quantity)}`
     );
-    const message = [
+    const currentMessage = [
       `*Pedido en ${storeName}*`,
       "",
       ...lines,
@@ -695,9 +698,22 @@ function CartDrawer({
       `*Total: ${formatARS(totalPrice)}*`,
     ].join("\n");
 
+    let orderRef = '';
+    try {
+      const result = await createPendingOrder({
+        store_id: storeId,
+        items: items.map((i) => ({ product_id: i.productId, quantity: i.quantity })),
+      });
+      if ('order_id' in result) {
+        orderRef = `\n\nReferencia: #${result.order_id.slice(0, 8)}`;
+      }
+    } catch {
+      // silencioso, abrir wa.me igual
+    }
+
     const normalized = whatsappNumber.replace(/\D/g, "");
-    const encoded = encodeURIComponent(message);
-    window.open(`https://wa.me/${normalized}?text=${encoded}`, "_blank");
+    const text = encodeURIComponent(`${currentMessage}${orderRef}`);
+    window.open(`https://wa.me/${normalized}?text=${text}`, "_blank");
   }
 
   // Prevent body scroll when open
@@ -1213,6 +1229,7 @@ export default function StoreClient({
       <WapyFooter />
 
       <CartDrawer
+        storeId={store.id}
         storeName={store.name}
         accentColor={accentColor}
         whatsappNumber={store.whatsapp_number}
