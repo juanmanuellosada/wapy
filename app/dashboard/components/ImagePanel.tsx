@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { Loader2, CheckCircle } from 'lucide-react';
-import { ACCENT_COLORS, DEFAULT_ACCENT_COLOR } from '@/lib/onboarding/palette';
 import { saveStoreLook } from '@/lib/store/actions';
+import { ColorPicker } from '@/app/components/ColorPicker';
 import { LogoUploader } from '@/app/components/store/LogoUploader';
 import type { Store } from '@/lib/onboarding/state';
+
+const DEFAULT_ACCENT_COLOR = '#F5C84B';
 
 type Props = {
   store: Store;
@@ -78,35 +80,15 @@ export function ImagePanel({ store }: Props) {
             Color de acento <span aria-hidden className="text-red-400">*</span>
           </h2>
           <p className="text-xs text-white/40 mb-4">
-            Se usa en botones y detalles de tu tienda.
+            Se usa en botones y detalles de tu tienda. Elegí cualquier color.
           </p>
 
-          <div className="flex items-center gap-3 flex-wrap" role="radiogroup" aria-label="Color de acento">
-            {ACCENT_COLORS.map((color) => {
-              const isSelected = accentColor === color.value;
-              return (
-                <label key={color.value} className="cursor-pointer" title={color.label}>
-                  <input
-                    type="radio"
-                    name="accent_color"
-                    value={color.value}
-                    checked={isSelected}
-                    onChange={() => setAccentColor(color.value)}
-                    className="sr-only"
-                  />
-                  <span
-                    className={`block w-10 h-10 rounded-full transition-all ${
-                      isSelected
-                        ? 'ring-2 ring-white ring-offset-2 ring-offset-[#16222E] scale-110'
-                        : 'hover:scale-105'
-                    }`}
-                    style={{ backgroundColor: color.value }}
-                    aria-label={color.label}
-                  />
-                </label>
-              );
-            })}
-          </div>
+          <ColorPicker
+            value={accentColor}
+            onChange={setAccentColor}
+            id="accent-color"
+            ariaLabel="Color de acento"
+          />
 
           {/* Preview */}
           <div className="mt-5 p-4 rounded-xl border border-white/10 bg-white/3">
