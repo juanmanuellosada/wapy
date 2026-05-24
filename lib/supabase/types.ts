@@ -17,6 +17,111 @@ export type Database = {
   }
   public: {
     Tables: {
+      order_items: {
+        Row: {
+          id: string
+          order_id: string
+          product_id: string | null
+          product_name: string
+          unit_price_cents: number
+          quantity: number
+          section_id: string | null
+          section_name: string | null
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          product_id?: string | null
+          product_name: string
+          unit_price_cents: number
+          quantity: number
+          section_id?: string | null
+          section_name?: string | null
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          product_id?: string | null
+          product_name?: string
+          unit_price_cents?: number
+          quantity?: number
+          section_id?: string | null
+          section_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_items_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_items_section_id_fkey"
+            columns: ["section_id"]
+            isOneToOne: false
+            referencedRelation: "sections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          id: string
+          store_id: string
+          status: string
+          customer_name: string | null
+          total_cents: number
+          currency: string
+          notes: string | null
+          created_at: string
+          confirmed_at: string | null
+          cancelled_at: string | null
+          delivered_at: string | null
+        }
+        Insert: {
+          id?: string
+          store_id: string
+          status?: string
+          customer_name?: string | null
+          total_cents: number
+          currency?: string
+          notes?: string | null
+          created_at?: string
+          confirmed_at?: string | null
+          cancelled_at?: string | null
+          delivered_at?: string | null
+        }
+        Update: {
+          id?: string
+          store_id?: string
+          status?: string
+          customer_name?: string | null
+          total_cents?: number
+          currency?: string
+          notes?: string | null
+          created_at?: string
+          confirmed_at?: string | null
+          cancelled_at?: string | null
+          delivered_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leads: {
         Row: {
           approved_at: string | null
