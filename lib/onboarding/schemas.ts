@@ -55,7 +55,8 @@ export const productsSchema = z.object({
 export const whatsappSchema = z.object({
   whatsapp_number: z
     .string()
-    .regex(E164_REGEX, 'Número inválido. Debe empezar con + y código de país (ej: +5491112345678).'),
+    .transform((s) => s.replace(/[\s\-()]/g, ''))
+    .pipe(z.string().regex(E164_REGEX, 'Número inválido. Debe empezar con + y código de país (ej: +5491112345678).')),
 });
 
 // Inferred types
