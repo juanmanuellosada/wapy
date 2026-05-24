@@ -109,12 +109,8 @@ function applyFilters(orders: OrderWithItems[], f: Filters): OrderWithItems[] {
     );
   }
   if (f.search.trim()) {
-    const s = f.search.trim().toLowerCase();
-    result = result.filter(
-      (o) =>
-        (o.customer_name ?? '').toLowerCase().includes(s) ||
-        o.id.toLowerCase().startsWith(s)
-    );
+    const s = f.search.trim().toLowerCase().replace(/^#/, '');
+    result = result.filter((o) => o.id.toLowerCase().startsWith(s));
   }
 
   return result;
@@ -180,16 +176,8 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
 
         {/* Body */}
         <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
-          {/* Customer + notes */}
-          {(order.customer_name || order.notes) && (
-            <div className="space-y-1">
-              {order.customer_name && (
-                <p className="text-sm text-[#FBF7EC] font-medium">{order.customer_name}</p>
-              )}
-              {order.notes && (
-                <p className="text-xs text-white/50">{order.notes}</p>
-              )}
-            </div>
+          {order.notes && (
+            <p className="text-xs text-white/50">{order.notes}</p>
           )}
 
           {/* Items */}
@@ -310,7 +298,7 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
               type="text"
               value={filters.search}
               onChange={(e) => setFilter('search', e.target.value)}
-              placeholder="Buscar por cliente o #id..."
+              placeholder="Buscar por #id..."
               className="w-full pl-8 pr-3 py-2 rounded-xl bg-white/6 border border-white/10 text-sm text-[#FBF7EC] placeholder-white/30 focus:outline-none focus:border-white/30 transition-colors"
             />
           </div>
@@ -402,23 +390,20 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
               className="flex items-center gap-3 bg-white/6 border border-white/10 rounded-xl px-4 py-3"
             >
               {/* Date + id */}
-              <div className="flex-shrink-0 w-20">
+              <div className="flex-shrink-0 w-28">
                 <p className="text-xs text-white/60">{formatDate(order.created_at)}</p>
                 <p className="text-xs text-white/30 font-mono mt-0.5">#{order.id.slice(0, 8)}</p>
               </div>
 
-              {/* Customer */}
+              {/* Items count */}
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-[#FBF7EC] truncate">
-                  {order.customer_name ?? <span className="text-white/30">—</span>}
-                </p>
-                <p className="text-xs text-white/40 mt-0.5">
+                <p className="text-sm text-white/60">
                   {order.items.length} {order.items.length === 1 ? 'producto' : 'productos'}
                 </p>
               </div>
 
               {/* Total */}
-              <div className="flex-shrink-0 text-right hidden sm:block">
+              <div className="flex-shrink-0 text-right">
                 <p className="text-sm font-semibold text-[#F5C84B]">
                   {formatPrice(order.total_cents)}
                 </p>
