@@ -125,7 +125,7 @@ export function AddEmailForm() {
       {/* Feedback */}
       {feedback?.type === 'success' && feedback.mail_sent && (
         <p role="status" aria-live="polite" className="mt-3 text-sm text-green-700 font-medium">
-          Mail enviado a <span className="font-bold">{feedback.email}</span>. Ya puede registrarse.
+          Mail enviado a <span className="font-bold">{feedback.email}</span>. Ya puede registrarse — avisale que revise spam si no lo ve.
         </p>
       )}
       {feedback?.type === 'success' && !feedback.mail_sent && (
