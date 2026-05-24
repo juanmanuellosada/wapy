@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import type { Database } from '@/lib/supabase/types';
 import { approveLead, deleteLead } from '@/lib/leads/actions';
+import { ConfirmModal } from '@/app/components/ConfirmModal';
 
 type LeadRow = Database['public']['Tables']['leads']['Row'];
 
@@ -13,6 +14,7 @@ interface Props {
 export function LeadRowActions({ row }: Props) {
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'warn' | 'error'; message: string } | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   function handleApprove() {
     setFeedback(null);
@@ -38,11 +40,12 @@ export function LeadRowActions({ row }: Props) {
   }
 
   function handleDelete() {
-    const confirmed = window.confirm(
-      `¿Borrar el lead de "${row.name}" (${row.email})?\n\nEsta acción no se puede deshacer.`
-    );
-    if (!confirmed) return;
+    setConfirmOpen(true);
+  }
+
+  async function handleConfirmDelete() {
     setFeedback(null);
+    setConfirmOpen(false);
     startTransition(async () => {
       const result = await deleteLead({ id: row.id });
       if ('error' in result) {
@@ -93,6 +96,16 @@ export function LeadRowActions({ row }: Props) {
           {feedback.message}
         </p>
       )}
+
+      <ConfirmModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={handleConfirmDelete}
+        title="Borrar lead"
+        message={`¿Borrar el lead de "${row.name}" (${row.email})? Esta acción no se puede deshacer.`}
+        confirmLabel="Sí, borrar"
+        variant="destructive"
+      />
     </div>
   );
 }
