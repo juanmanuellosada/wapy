@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { X, Loader2 } from 'lucide-react';
 import { ImageUpload } from './ImageUpload';
+import { Select } from '@/app/components/Select';
 import { deleteImage } from '@/lib/onboarding/storage';
 import { uploadProductImageAction } from '@/lib/onboarding/upload-actions';
 import { saveStoreProduct } from '@/lib/store/actions';
@@ -50,6 +51,7 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
   const {
     register,
     handleSubmit,
+    control,
     formState: { errors },
   } = useForm<ProductFormData>({
     resolver: zodResolver(productFormSchema),
@@ -235,18 +237,23 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
               <label htmlFor="prod-section" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
                 Sección <span className="text-white/30 font-normal">(opcional)</span>
               </label>
-              <select
-                id="prod-section"
-                {...register('section_id')}
-                className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] px-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors cursor-pointer"
-              >
-                <option value="">Sin sección</option>
-                {sections.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              <Controller
+                name="section_id"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    id="prod-section"
+                    value={field.value || null}
+                    onChange={(v) => field.onChange(v)}
+                    options={[
+                      { value: '', label: 'Sin sección' },
+                      ...sections.map((s) => ({ value: s.id, label: s.name })),
+                    ]}
+                    placeholder="Sin sección"
+                    ariaLabel="Sección del producto"
+                  />
+                )}
+              />
             </div>
           )}
 
