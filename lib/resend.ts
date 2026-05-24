@@ -79,6 +79,11 @@ Este enlace es válido por 7 días. Si no esperabas esta invitación, ignorá es
     subject: 'Tu invitación para crear tu tienda en Wapy',
     html,
     text,
+    replyTo: 'hola@wapy.com.ar',
+    headers: {
+      'List-Unsubscribe': '<mailto:hola@wapy.com.ar>',
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
   });
 
   if (error) throw new Error(`Resend error: ${error.message}`);
