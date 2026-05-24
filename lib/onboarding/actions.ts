@@ -17,7 +17,6 @@ import {
 // Re-export pure store actions under the original names so existing wizard components
 // that import from here continue to work without changing their import paths.
 export {
-  saveStoreWhatsapp as saveWhatsapp,
   saveStoreProduct as saveProduct,
   deleteStoreProduct as removeProduct,
   saveLogoUrl,
@@ -207,6 +206,33 @@ export async function saveSections(formData: {
     .from('stores')
     .update({
       onboarding_step: Math.max(store.onboarding_step, 3),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', store.id);
+
+  revalidatePath('/onboarding', 'layout');
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// saveWhatsapp — wizard version: delegates to saveStoreWhatsapp + advances onboarding_step
+// ---------------------------------------------------------------------------
+
+export async function saveWhatsapp(formData: {
+  whatsapp_number: string;
+}): Promise<SaveResult> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const result = await saveStoreWhatsapp(formData);
+  if ('error' in result) return result;
+
+  // Wizard-specific: advance onboarding_step
+  const admin = createAdminClient();
+  await admin
+    .from('stores')
+    .update({
+      onboarding_step: Math.max(store.onboarding_step, 5),
       updated_at: new Date().toISOString(),
     })
     .eq('id', store.id);
