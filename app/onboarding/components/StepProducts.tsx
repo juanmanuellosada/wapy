@@ -111,7 +111,7 @@ export function StepProducts({ store, initialProducts, sections }: Props) {
         )}
 
         <p className="text-sm text-white/50">
-          Agregá los productos de tu tienda. Podés arrastrarlos para cambiar el orden.
+          Agregá tu primer producto para arrancar. El resto lo cargás con calma desde tu panel cuando publiques.
         </p>
 
         {products.length > 0 && (
@@ -163,7 +163,7 @@ export function StepProducts({ store, initialProducts, sections }: Props) {
 
         {products.length === 0 && (
           <div className="border-2 border-dashed border-white/15 rounded-xl px-6 py-8 text-center">
-            <p className="text-sm text-white/40">Todavía no tenés productos. Agregá el primero.</p>
+            <p className="text-sm text-white/40">Todavía no tenés productos. Agregá el primero para arrancar.</p>
           </div>
         )}
 
@@ -173,7 +173,7 @@ export function StepProducts({ store, initialProducts, sections }: Props) {
           className="flex items-center gap-2 text-sm text-[#F5C84B] hover:text-[#FAE08A] font-semibold transition-colors cursor-pointer"
         >
           <Plus size={16} />
-          Agregar producto
+          {products.length === 0 ? 'Agregá tu primer producto' : 'Agregar producto'}
         </button>
 
         {/* Actions */}
