@@ -337,5 +337,5 @@ export async function publishStore(): Promise<PublishResult> {
 
   revalidatePath('/onboarding', 'layout');
   revalidatePath('/dashboard');
-  redirect('/dashboard');
+  return { ok: true };
 }
