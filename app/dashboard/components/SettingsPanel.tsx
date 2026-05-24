@@ -225,13 +225,14 @@ export function SettingsPanel({ store }: Props) {
             disabled={toggling}
             role="switch"
             aria-checked={storeStatus === 'published'}
-            className={`relative w-12 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 disabled:opacity-40 ${
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               storeStatus === 'published' ? 'bg-green-500' : 'bg-white/20'
             }`}
           >
             <span
-              className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
-                storeStatus === 'published' ? 'translate-x-6' : 'translate-x-0.5'
+              aria-hidden="true"
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ease-in-out ${
+                storeStatus === 'published' ? 'translate-x-[22px]' : 'translate-x-0.5'
               }`}
             />
             <span className="sr-only">
