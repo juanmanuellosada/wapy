@@ -7,6 +7,7 @@ import {
   Image,
   Layout,
   Package,
+  ClipboardList,
   MessageCircle,
   Settings,
   ExternalLink,
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { id: 'image', label: 'Imagen', icon: Image },
   { id: 'sections', label: 'Secciones', icon: Layout },
   { id: 'products', label: 'Productos', icon: Package },
+  { id: 'orders', label: 'Pedidos', icon: ClipboardList },
   { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
   { id: 'settings', label: 'Configuración', icon: Settings },
 ] as const;
