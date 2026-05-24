@@ -15,7 +15,7 @@ interface SignupFormProps {
 }
 
 export function SignupForm({ prefillEmail, token }: SignupFormProps) {
-  const [state, formAction] = useActionState(signupAction, null);
+  const [state, formAction, isPending] = useActionState(signupAction, null);
 
   const {
     register,
@@ -25,6 +25,15 @@ export function SignupForm({ prefillEmail, token }: SignupFormProps) {
     resolver: zodResolver(signupSchema),
     defaultValues: { email: prefillEmail ?? '' },
   });
+
+  const onValidSubmit = (data: SignupInput) => {
+    const fd = new FormData();
+    fd.set('email', data.email);
+    fd.set('password', data.password);
+    fd.set('confirmPassword', data.confirmPassword);
+    if (token) fd.set('token', token);
+    formAction(fd);
+  };
 
   return (
     <div>
@@ -44,9 +53,7 @@ export function SignupForm({ prefillEmail, token }: SignupFormProps) {
         </div>
       )}
 
-      <form action={formAction} onSubmit={handleSubmit(() => {})} noValidate className="flex flex-col gap-4">
-        {/* Hidden token field if provided */}
-        {token && <input type="hidden" name="token" value={token} />}
+      <form onSubmit={handleSubmit(onValidSubmit)} noValidate className="flex flex-col gap-4">
 
         <FormField
           id="email"
@@ -82,7 +89,7 @@ export function SignupForm({ prefillEmail, token }: SignupFormProps) {
           {...register('confirmPassword')}
         />
 
-        <SubmitButton label="Crear cuenta" loadingLabel="Creando cuenta..." />
+        <SubmitButton label="Crear cuenta" loadingLabel="Creando cuenta..." pending={isPending} />
       </form>
 
       <p className="mt-6 text-center text-sm text-[#16222E]/60">

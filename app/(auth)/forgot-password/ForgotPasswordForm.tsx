@@ -10,7 +10,7 @@ import { FormField } from '../components/FormField';
 import { SubmitButton } from '../components/SubmitButton';
 
 export function ForgotPasswordForm() {
-  const [state, formAction] = useActionState(forgotPasswordAction, null);
+  const [state, formAction, isPending] = useActionState(forgotPasswordAction, null);
 
   const {
     register,
@@ -19,6 +19,12 @@ export function ForgotPasswordForm() {
   } = useForm<ForgotPasswordInput>({
     resolver: zodResolver(forgotPasswordSchema),
   });
+
+  const onValidSubmit = (data: ForgotPasswordInput) => {
+    const fd = new FormData();
+    fd.set('email', data.email);
+    formAction(fd);
+  };
 
   if (state?.sent) {
     return (
@@ -58,7 +64,7 @@ export function ForgotPasswordForm() {
         </div>
       )}
 
-      <form action={formAction} onSubmit={handleSubmit(() => {})} noValidate className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit(onValidSubmit)} noValidate className="flex flex-col gap-4">
         <FormField
           id="email"
           label="Email"
@@ -70,7 +76,7 @@ export function ForgotPasswordForm() {
           {...register('email')}
         />
 
-        <SubmitButton label="Enviar link" loadingLabel="Enviando..." />
+        <SubmitButton label="Enviar link" loadingLabel="Enviando..." pending={isPending} />
       </form>
 
       <p className="mt-6 text-center text-sm text-[#16222E]/60">
