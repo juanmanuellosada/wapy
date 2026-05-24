@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import type { Database } from '@/lib/supabase/types';
 import { reinviteEntry, removeWhitelistEntry } from '@/lib/admin/actions';
+import { ConfirmModal } from '@/app/components/ConfirmModal';
 
 type WhitelistRow = Database['public']['Tables']['whitelist']['Row'];
 
@@ -13,6 +14,7 @@ interface Props {
 export function RowActions({ row }: Props) {
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'error'; message: string } | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   function handleReinvite() {
     setFeedback(null);
@@ -36,11 +38,12 @@ export function RowActions({ row }: Props) {
   }
 
   function handleRemove() {
-    const confirmed = window.confirm(
-      `¿Seguro que querés quitar "${row.email}" de la whitelist?\n\nSi todavía no se registró, perderá acceso al invite link.`
-    );
-    if (!confirmed) return;
+    setConfirmOpen(true);
+  }
+
+  async function handleConfirmRemove() {
     setFeedback(null);
+    setConfirmOpen(false);
     startTransition(async () => {
       const result = await removeWhitelistEntry({ id: row.id });
       if ('error' in result) {
@@ -113,6 +116,16 @@ export function RowActions({ row }: Props) {
           {feedback.message}
         </p>
       )}
+
+      <ConfirmModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={handleConfirmRemove}
+        title="Quitar de la whitelist"
+        message={`¿Seguro que querés quitar "${row.email}" de la whitelist? Si todavía no se registró, perderá acceso al invite link.`}
+        confirmLabel="Sí, quitar"
+        variant="destructive"
+      />
     </div>
   );
 }

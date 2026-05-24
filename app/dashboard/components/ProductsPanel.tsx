@@ -6,6 +6,7 @@ import { SortableList } from '@/app/components/store/SortableList';
 import { ProductModal } from '@/app/components/store/ProductModal';
 import { saveStoreProduct, deleteStoreProduct } from '@/lib/store/actions';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
+import { ConfirmModal } from '@/app/components/ConfirmModal';
 
 type Props = {
   store: Store;
@@ -25,6 +26,7 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined); // undefined = closed
   const [serverError, setServerError] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const handleProductSaved = (product: Product) => {
     setProducts((prev) => {
@@ -37,8 +39,14 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
     setModalProduct(undefined);
   };
 
-  const handleDelete = async (productId: string) => {
-    if (!confirm('¿Borrar este producto? Esta acción no se puede deshacer.')) return;
+  const handleDelete = (productId: string) => {
+    setConfirmDeleteId(productId);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteId) return;
+    const productId = confirmDeleteId;
+    setConfirmDeleteId(null);
     const result = await deleteStoreProduct(productId);
     if ('error' in result) {
       setServerError(result.error);
@@ -190,6 +198,16 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
           Agregar producto
         </button>
       </div>
+
+      <ConfirmModal
+        open={confirmDeleteId !== null}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={handleConfirmDelete}
+        title="Borrar producto"
+        message="¿Borrar este producto? Esta acción no se puede deshacer."
+        confirmLabel="Sí, borrar"
+        variant="destructive"
+      />
     </div>
   );
 }

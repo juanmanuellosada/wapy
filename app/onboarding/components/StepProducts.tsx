@@ -7,6 +7,7 @@ import { SortableList } from './SortableList';
 import { ProductModal } from './ProductModal';
 import { removeProduct, saveProduct, advanceProductsStep } from '@/lib/onboarding/actions';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
+import { ConfirmModal } from '@/app/components/ConfirmModal';
 
 type Props = {
   store: Store;
@@ -28,6 +29,7 @@ export function StepProducts({ store, initialProducts, sections }: Props) {
   const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined); // undefined = closed
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const handleProductSaved = (product: Product) => {
     setProducts((prev) => {
@@ -40,8 +42,14 @@ export function StepProducts({ store, initialProducts, sections }: Props) {
     setModalProduct(undefined);
   };
 
-  const handleDelete = async (productId: string) => {
-    if (!confirm('¿Borrar este producto?')) return;
+  const handleDelete = (productId: string) => {
+    setConfirmDeleteId(productId);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteId) return;
+    const productId = confirmDeleteId;
+    setConfirmDeleteId(null);
     const result = await removeProduct(productId);
     if ('error' in result) {
       setServerError(result.error);
@@ -196,6 +204,16 @@ export function StepProducts({ store, initialProducts, sections }: Props) {
           </button>
         </div>
       </form>
+
+      <ConfirmModal
+        open={confirmDeleteId !== null}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={handleConfirmDelete}
+        title="Borrar producto"
+        message="¿Borrar este producto del catálogo? Esta acción no se puede deshacer."
+        confirmLabel="Sí, borrar"
+        variant="destructive"
+      />
     </>
   );
 }
