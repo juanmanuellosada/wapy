@@ -9,7 +9,8 @@ import { ProductsPanel } from '../components/ProductsPanel';
 import { WhatsappPanel } from '../components/WhatsappPanel';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { OrdersPanel } from '../components/OrdersPanel';
-import { listOrders } from '@/lib/store/orders/actions';
+import { OrdersStats } from '../components/OrdersStats';
+import { listOrders, getOrderStats } from '@/lib/store/orders/actions';
 import type { Metadata } from 'next';
 import type { Section, Product } from '@/lib/onboarding/state';
 
@@ -72,8 +73,25 @@ export default async function DashboardSectionPage({
   const sections: Section[] = sectionsResult.data ?? [];
   const products: Product[] = productsResult.data ?? [];
 
-  const ordersResult = section === 'orders' ? await listOrders({}) : null;
+  const [ordersResult, statsResult] = section === 'orders'
+    ? await Promise.all([listOrders({}), getOrderStats('30d')])
+    : [null, null];
+
   const initialOrders = ordersResult && 'orders' in ordersResult ? ordersResult.orders : [];
+  const initialStats = statsResult && !('error' in statsResult) ? statsResult : {
+    kpis: { revenue_cents: 0, order_count: 0, avg_ticket_cents: 0, confirmation_rate: 0 },
+    revenue_by_day: [],
+    top_products: [],
+    orders_by_section: [],
+  };
+
+  const accentColor =
+    store.theme &&
+    typeof store.theme === 'object' &&
+    !Array.isArray(store.theme) &&
+    typeof (store.theme as Record<string, unknown>).accent_color === 'string'
+      ? (store.theme as Record<string, unknown>).accent_color as string
+      : '#F5C84B';
 
   return (
     <DashboardShell store={store} currentSection={section}>
@@ -81,7 +99,12 @@ export default async function DashboardSectionPage({
       {section === 'image' && <ImagePanel store={store} />}
       {section === 'sections' && <SectionsPanel store={store} initialSections={sections} />}
       {section === 'products' && <ProductsPanel store={store} initialProducts={products} sections={sections} />}
-      {section === 'orders' && <OrdersPanel store={store} initialOrders={initialOrders} sections={sections} />}
+      {section === 'orders' && (
+        <>
+          <OrdersStats accentColor={accentColor} initialStats={initialStats} initialRange="30d" />
+          <OrdersPanel store={store} initialOrders={initialOrders} sections={sections} />
+        </>
+      )}
       {section === 'whatsapp' && <WhatsappPanel store={store} />}
       {section === 'settings' && <SettingsPanel store={store} />}
     </DashboardShell>
