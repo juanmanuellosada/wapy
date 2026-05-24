@@ -44,7 +44,7 @@ export function LogoUploader({ storeId, initialUrl, onUrlChange }: Props) {
         'image/webp': ['.webp'],
         'image/svg+xml': ['.svg'],
       }}
-      maxSizeMB={2}
+      maxSizeMB={5}
       onUpload={handleUpload}
       onDelete={handleDelete}
       label="Subí el logo de tu tienda (PNG, JPG, WEBP, SVG)"

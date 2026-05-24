@@ -24,7 +24,7 @@ export function ImageUpload({
   images,
   maxCount,
   accept,
-  maxSizeMB = 2,
+  maxSizeMB = 5,
   onUpload,
   onDelete,
   disabled = false,

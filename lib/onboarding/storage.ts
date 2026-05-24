@@ -5,7 +5,7 @@
 
 import { createBrowserClient } from '@/lib/supabase/client';
 
-const MAX_SIZE_BYTES = 2 * 1024 * 1024; // 2MB
+const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 export type UploadError = {
   type: 'size' | 'format' | 'upload';
@@ -19,7 +19,7 @@ function getExtension(file: File): string {
 
 function validateLogoFile(file: File): UploadError | null {
   if (file.size > MAX_SIZE_BYTES) {
-    return { type: 'size', message: 'Imagen muy pesada. Máximo 2MB.' };
+    return { type: 'size', message: 'Imagen muy pesada. Máximo 5MB.' };
   }
   const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
   if (!allowed.includes(file.type)) {
@@ -30,7 +30,7 @@ function validateLogoFile(file: File): UploadError | null {
 
 function validateProductImageFile(file: File): UploadError | null {
   if (file.size > MAX_SIZE_BYTES) {
-    return { type: 'size', message: 'Imagen muy pesada. Máximo 2MB.' };
+    return { type: 'size', message: 'Imagen muy pesada. Máximo 5MB.' };
   }
   // No SVG for product images
   const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
@@ -53,6 +53,9 @@ export async function uploadLogo(file: File, storeId: string): Promise<string> {
   const path = `${storeId}/logo.${ext}`;
 
   const supabase = createBrowserClient();
+  // Ensure the session is loaded from cookies before the storage request,
+  // so the client attaches the Authorization: Bearer header (JWT) to the upload.
+  await supabase.auth.getSession();
   const { error } = await supabase.storage
     .from('store-logos')
     .upload(path, file, { upsert: true, contentType: file.type });
@@ -76,6 +79,8 @@ export async function uploadProductImage(file: File, storeId: string): Promise<s
   const path = `${storeId}/${crypto.randomUUID()}.${ext}`;
 
   const supabase = createBrowserClient();
+  // Same as uploadLogo: hydrate session before the storage request.
+  await supabase.auth.getSession();
   const { error } = await supabase.storage
     .from('product-images')
     .upload(path, file, { contentType: file.type });
