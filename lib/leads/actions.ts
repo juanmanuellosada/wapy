@@ -21,7 +21,10 @@ async function requireSuperadmin() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('UNAUTHORIZED');
-  const { data: row } = await supabase
+  // Use admin client for role lookup to bypass RLS. The user.id comes from
+  // the validated session above; this is safe.
+  const admin = createAdminClient();
+  const { data: row } = await admin
     .from('users')
     .select('role')
     .eq('id', user.id)

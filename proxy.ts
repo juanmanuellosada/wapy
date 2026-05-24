@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -68,8 +69,16 @@ export async function proxy(request: NextRequest) {
   }
 
   // Role-based guard: /admin/* requires superadmin.
+  // Use admin client (bypass RLS) for the role lookup — the user.id comes
+  // from the validated session above, so this is safe. Anon-with-RLS
+  // can fail to read public.users via users_select_self under some
+  // session-refresh edge cases, which would incorrectly redirect superadmins.
   if (pathname.startsWith("/admin")) {
-    const { data: userRow } = await supabase
+    const admin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    const { data: userRow } = await admin
       .from("users")
       .select("role")
       .eq("id", user.id)
