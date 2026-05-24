@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
@@ -11,6 +11,11 @@ import { SubmitButton } from '../components/SubmitButton';
 
 export function ForgotPasswordForm() {
   const [state, formAction, isPending] = useActionState(forgotPasswordAction, null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (state) setSubmitting(false);
+  }, [state]);
 
   const {
     register,
@@ -21,6 +26,7 @@ export function ForgotPasswordForm() {
   });
 
   const onValidSubmit = (data: ForgotPasswordInput) => {
+    setSubmitting(true);
     const fd = new FormData();
     fd.set('email', data.email);
     formAction(fd);
@@ -76,7 +82,7 @@ export function ForgotPasswordForm() {
           {...register('email')}
         />
 
-        <SubmitButton label="Enviar link" loadingLabel="Enviando..." pending={isPending} />
+        <SubmitButton label="Enviar link" loadingLabel="Enviando..." pending={submitting || isPending} />
       </form>
 
       <p className="mt-6 text-center text-sm text-[#16222E]/60">

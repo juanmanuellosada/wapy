@@ -1,4 +1,5 @@
 import { AdminNav } from './AdminNav';
+import { logoutAction } from '@/lib/auth/logout-action';
 
 interface Props {
   email: string;
@@ -36,7 +37,7 @@ export function AdminShell({ email, currentTab, children }: Props) {
               <span className="hidden sm:block text-xs text-white/50 truncate max-w-[200px]">
                 {email}
               </span>
-              <form action="/api/auth/logout" method="POST">
+              <form action={logoutAction}>
                 <button
                   type="submit"
                   className="min-h-[36px] px-4 py-1.5 rounded-lg border border-white/20 text-white/80 text-xs font-semibold hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F5C84B] transition-colors duration-150 cursor-pointer"

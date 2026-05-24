@@ -34,7 +34,7 @@ export function SubmitButton({ label, loadingLabel = 'Cargando...', pending: pen
         .filter(Boolean)
         .join(' ')}
     >
-      {pending && <Loader2 size={16} className="animate-spin" aria-hidden />}
+      {pending && <Loader2 size={20} strokeWidth={2.5} className="animate-spin" aria-hidden />}
       {pending ? loadingLabel : label}
     </button>
   );

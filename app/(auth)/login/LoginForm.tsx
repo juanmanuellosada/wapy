@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useEffect } from 'react';
+import { useActionState, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -17,12 +17,17 @@ interface LoginFormProps {
 export function LoginForm({ redirectTo }: LoginFormProps) {
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(loginAction, null);
+  // Custom pending state — useActionState's isPending sometimes batches with
+  // the state update, hiding the spinner. This keeps it visible from click
+  // through navigation (only resets on error so the user can retry).
+  const [submitting, setSubmitting] = useState(false);
 
-  // Server actions can't reliably `redirect()` when invoked programmatically
-  // via useActionState. Navigate client-side when the action signals it.
   useEffect(() => {
     if (state?.redirect) {
       router.push(state.redirect);
+      // submitting stays true — navigation will unmount this component
+    } else if (state?.error) {
+      setSubmitting(false);
     }
   }, [state, router]);
 
@@ -35,6 +40,7 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
   });
 
   const onValidSubmit = (data: LoginInput) => {
+    setSubmitting(true);
     const fd = new FormData();
     fd.set('email', data.email);
     fd.set('password', data.password);
@@ -92,7 +98,7 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
           </Link>
         </div>
 
-        <SubmitButton label="Entrar" loadingLabel="Entrando..." pending={isPending} />
+        <SubmitButton label="Entrar" loadingLabel="Entrando..." pending={submitting || isPending} />
       </form>
 
       <p className="mt-6 text-center text-sm text-[#16222E]/60">
