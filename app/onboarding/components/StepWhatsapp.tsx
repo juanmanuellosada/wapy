@@ -35,7 +35,7 @@ export function StepWhatsapp({ store }: Props) {
   } = useForm<WhatsappData>({
     resolver: zodResolver(whatsappSchema),
     defaultValues: {
-      whatsapp_number: store.whatsapp_number ?? '+54 9 ',
+      whatsapp_number: store.whatsapp_number ?? '',
     },
   });
 
@@ -79,7 +79,7 @@ export function StepWhatsapp({ store }: Props) {
           type="tel"
           autoComplete="tel"
           {...register('whatsapp_number')}
-          placeholder="+54 9 11 1234 5678"
+          placeholder="11 5063 1524 o +54 9 11..."
           className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-4 py-3 text-sm focus:outline-none focus:border-[#F5C84B]/70 focus:bg-white/10 transition-colors font-mono"
           aria-invalid={!!errors.whatsapp_number}
           aria-describedby={errors.whatsapp_number ? 'phone-error' : 'phone-hint'}
@@ -90,7 +90,7 @@ export function StepWhatsapp({ store }: Props) {
           </p>
         ) : (
           <p id="phone-hint" className="text-xs text-white/30 mt-1.5">
-            Incluí el código de país. Ej: +54 9 11 1234 5678
+            Si solo ponés el número local (ej: 11 5063 1524), te agregamos +54 9 automáticamente.
           </p>
         )}
       </div>
