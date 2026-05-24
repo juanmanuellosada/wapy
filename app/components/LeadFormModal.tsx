@@ -109,7 +109,8 @@ export function LeadFormModal({ open, onClose, plan }: Props) {
                 </h3>
                 <p className="text-[#16222E]/70 text-sm leading-relaxed">
                   Te contactamos en menos de 24hs por mail o WhatsApp para darte acceso al plan{' '}
-                  <span className="font-bold">{planLabel}</span>.
+                  <span className="font-bold">{planLabel}</span>.{' '}
+                  Si te llega por mail, revisá la carpeta de spam por las dudas.
                 </p>
               </div>
               <button
