@@ -18,7 +18,9 @@ async function getSessionUser() {
   } = await supabase.auth.getUser();
   if (!user) redirect('/login?redirect=/admin/whitelist');
 
-  const { data: row } = await supabase
+  // Use admin client for role lookup — anon with RLS can fail in edge cases.
+  const admin = createAdminClient();
+  const { data: row } = await admin
     .from('users')
     .select('role')
     .eq('id', user.id)

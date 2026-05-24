@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createServerClient } from '@/lib/supabase/server';
+import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +11,11 @@ export default async function AdminPage() {
 
   if (!user) redirect('/login?redirect=/admin');
 
-  const { data: row } = await supabase
+  // Use admin client (bypass RLS) for role lookup. user.id from validated
+  // session is safe. Anon-with-RLS reads of public.users can fail in edge
+  // cases and would incorrectly redirect superadmins to /onboarding.
+  const admin = createAdminClient();
+  const { data: row } = await admin
     .from('users')
     .select('role')
     .eq('id', user.id)
