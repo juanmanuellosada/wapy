@@ -5,6 +5,8 @@ import { Search, X, ClipboardList } from 'lucide-react';
 import { updateOrderStatus } from '@/lib/store/orders/actions';
 import type { OrderWithItems, OrderStatus } from '@/lib/store/orders/actions';
 import type { Store, Section } from '@/lib/onboarding/state';
+import { Select } from '@/app/components/Select';
+import { DatePicker } from '@/app/components/DatePicker';
 
 type Props = {
   store: Store;
@@ -109,12 +111,8 @@ function applyFilters(orders: OrderWithItems[], f: Filters): OrderWithItems[] {
     );
   }
   if (f.search.trim()) {
-    const s = f.search.trim().toLowerCase();
-    result = result.filter(
-      (o) =>
-        (o.customer_name ?? '').toLowerCase().includes(s) ||
-        o.id.toLowerCase().startsWith(s)
-    );
+    const s = f.search.trim().toLowerCase().replace(/^#/, '');
+    result = result.filter((o) => o.id.toLowerCase().startsWith(s));
   }
 
   return result;
@@ -180,16 +178,8 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
 
         {/* Body */}
         <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
-          {/* Customer + notes */}
-          {(order.customer_name || order.notes) && (
-            <div className="space-y-1">
-              {order.customer_name && (
-                <p className="text-sm text-[#FBF7EC] font-medium">{order.customer_name}</p>
-              )}
-              {order.notes && (
-                <p className="text-xs text-white/50">{order.notes}</p>
-              )}
-            </div>
+          {order.notes && (
+            <p className="text-xs text-white/50">{order.notes}</p>
           )}
 
           {/* Items */}
@@ -310,62 +300,60 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
               type="text"
               value={filters.search}
               onChange={(e) => setFilter('search', e.target.value)}
-              placeholder="Buscar por cliente o #id..."
+              placeholder="Buscar por #id..."
               className="w-full pl-8 pr-3 py-2 rounded-xl bg-white/6 border border-white/10 text-sm text-[#FBF7EC] placeholder-white/30 focus:outline-none focus:border-white/30 transition-colors"
             />
           </div>
 
           {/* Status */}
-          <select
-            value={filters.status}
-            onChange={(e) => setFilter('status', e.target.value as Filters['status'])}
-            className="px-3 py-2 rounded-xl bg-white/6 border border-white/10 text-sm text-[#FBF7EC] focus:outline-none focus:border-white/30 transition-colors cursor-pointer appearance-none"
-          >
-            <option value="all">Todos los estados</option>
-            <option value="pending">Pendientes</option>
-            <option value="confirmed">Confirmados</option>
-            <option value="delivered">Entregados</option>
-            <option value="cancelled">Cancelados</option>
-          </select>
+          <div className="w-44">
+            <Select
+              value={filters.status}
+              onChange={(v) => setFilter('status', v as Filters['status'])}
+              options={[
+                { value: 'all', label: 'Todos los estados' },
+                { value: 'pending', label: 'Pendientes' },
+                { value: 'confirmed', label: 'Confirmados' },
+                { value: 'delivered', label: 'Entregados' },
+                { value: 'cancelled', label: 'Cancelados' },
+              ]}
+              ariaLabel="Filtrar por estado"
+            />
+          </div>
 
           {/* Section */}
           {sections.length > 0 && (
-            <select
-              value={filters.section_id}
-              onChange={(e) => setFilter('section_id', e.target.value)}
-              className="px-3 py-2 rounded-xl bg-white/6 border border-white/10 text-sm text-[#FBF7EC] focus:outline-none focus:border-white/30 transition-colors cursor-pointer appearance-none"
-            >
-              <option value="">Todas las secciones</option>
-              {sections.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+            <div className="w-44">
+              <Select
+                value={filters.section_id}
+                onChange={(v) => setFilter('section_id', v)}
+                options={[
+                  { value: '', label: 'Todas las secciones' },
+                  ...sections.map((s) => ({ value: s.id, label: s.name })),
+                ]}
+                ariaLabel="Filtrar por sección"
+              />
+            </div>
           )}
         </div>
 
         <div className="flex flex-wrap gap-2 items-center">
           {/* Date from */}
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-white/40 whitespace-nowrap">Desde</label>
-            <input
-              type="date"
-              value={filters.date_from}
-              onChange={(e) => setFilter('date_from', e.target.value)}
-              className="px-3 py-2 rounded-xl bg-white/6 border border-white/10 text-sm text-[#FBF7EC] focus:outline-none focus:border-white/30 transition-colors [color-scheme:dark]"
-            />
-          </div>
+          <DatePicker
+            value={filters.date_from}
+            onChange={(v) => setFilter('date_from', v)}
+            placeholder="Desde"
+            max={filters.date_to || undefined}
+            ariaLabel="Fecha desde"
+          />
           {/* Date to */}
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-white/40 whitespace-nowrap">Hasta</label>
-            <input
-              type="date"
-              value={filters.date_to}
-              onChange={(e) => setFilter('date_to', e.target.value)}
-              className="px-3 py-2 rounded-xl bg-white/6 border border-white/10 text-sm text-[#FBF7EC] focus:outline-none focus:border-white/30 transition-colors [color-scheme:dark]"
-            />
-          </div>
+          <DatePicker
+            value={filters.date_to}
+            onChange={(v) => setFilter('date_to', v)}
+            placeholder="Hasta"
+            min={filters.date_from || undefined}
+            ariaLabel="Fecha hasta"
+          />
 
           {hasActiveFilters(filters) && (
             <button
@@ -402,23 +390,20 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
               className="flex items-center gap-3 bg-white/6 border border-white/10 rounded-xl px-4 py-3"
             >
               {/* Date + id */}
-              <div className="flex-shrink-0 w-20">
+              <div className="flex-shrink-0 w-28">
                 <p className="text-xs text-white/60">{formatDate(order.created_at)}</p>
                 <p className="text-xs text-white/30 font-mono mt-0.5">#{order.id.slice(0, 8)}</p>
               </div>
 
-              {/* Customer */}
+              {/* Items count */}
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-[#FBF7EC] truncate">
-                  {order.customer_name ?? <span className="text-white/30">—</span>}
-                </p>
-                <p className="text-xs text-white/40 mt-0.5">
+                <p className="text-sm text-white/60">
                   {order.items.length} {order.items.length === 1 ? 'producto' : 'productos'}
                 </p>
               </div>
 
               {/* Total */}
-              <div className="flex-shrink-0 text-right hidden sm:block">
+              <div className="flex-shrink-0 text-right">
                 <p className="text-sm font-semibold text-[#F5C84B]">
                   {formatPrice(order.total_cents)}
                 </p>

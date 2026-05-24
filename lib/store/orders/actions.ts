@@ -225,12 +225,8 @@ export async function listOrders(
     );
   }
   if (filters.search && filters.search.trim() !== '') {
-    const s = filters.search.trim().toLowerCase();
-    orders = orders.filter(
-      (o) =>
-        (o.customer_name ?? '').toLowerCase().includes(s) ||
-        o.id.toLowerCase().startsWith(s)
-    );
+    const s = filters.search.trim().toLowerCase().replace(/^#/, '');
+    orders = orders.filter((o) => o.id.toLowerCase().startsWith(s));
   }
 
   return { orders };
