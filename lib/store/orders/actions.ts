@@ -237,6 +237,154 @@ export async function listOrders(
 }
 
 // ---------------------------------------------------------------------------
+// getOrderStats
+// ---------------------------------------------------------------------------
+
+export type OrderStatsRange = '30d' | '90d' | 'ytd';
+
+export type OrderStatsResult = {
+  kpis: {
+    revenue_cents: number;
+    order_count: number;
+    avg_ticket_cents: number;
+    confirmation_rate: number;
+  };
+  revenue_by_day: Array<{ date: string; cents: number }>;
+  top_products: Array<{ name: string; units: number; revenue_cents: number }>;
+  orders_by_section: Array<{ section_name: string; count: number }>;
+};
+
+function getRangeStart(range: OrderStatsRange): Date {
+  const now = new Date();
+  if (range === '30d') {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 29);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  if (range === '90d') {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 89);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  // ytd
+  return new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+}
+
+function toArgentinaDateStr(isoStr: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(isoStr));
+  } catch {
+    return isoStr.slice(0, 10);
+  }
+}
+
+export async function getOrderStats(
+  range: OrderStatsRange
+): Promise<OrderStatsResult | { error: 'unauthorized' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+  const rangeStart = getRangeStart(range);
+
+  const { data: orders } = await admin
+    .from('orders')
+    .select('id, status, total_cents, created_at')
+    .eq('store_id', store.id)
+    .gte('created_at', rangeStart.toISOString());
+
+  const { data: items } = await admin
+    .from('order_items')
+    .select('order_id, product_name, unit_price_cents, quantity, section_name')
+    .in(
+      'order_id',
+      (orders ?? []).map((o) => o.id)
+    );
+
+  const allOrders = orders ?? [];
+  const allItems = items ?? [];
+
+  const totalOrders = allOrders.length;
+
+  const confirmedOrders = allOrders.filter(
+    (o) => o.status === 'confirmed' || o.status === 'delivered'
+  );
+
+  const revenueCents = confirmedOrders.reduce((s, o) => s + (o.total_cents ?? 0), 0);
+  const confirmationRate = totalOrders > 0 ? confirmedOrders.length / totalOrders : 0;
+  const avgTicketCents = confirmedOrders.length > 0
+    ? Math.round(revenueCents / confirmedOrders.length)
+    : 0;
+
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  const msPerDay = 86_400_000;
+  const dayCount = Math.max(
+    1,
+    Math.ceil((today.getTime() - rangeStart.getTime()) / msPerDay)
+  );
+  const dayMap = new Map<string, number>();
+  for (let i = dayCount - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    dayMap.set(key, 0);
+  }
+  for (const o of confirmedOrders) {
+    const dateKey = toArgentinaDateStr(o.created_at);
+    if (dayMap.has(dateKey)) {
+      dayMap.set(dateKey, (dayMap.get(dateKey) ?? 0) + (o.total_cents ?? 0));
+    }
+  }
+  const revenue_by_day = Array.from(dayMap.entries()).map(([date, cents]) => ({ date, cents }));
+
+  // top_products
+  const productMap = new Map<string, { units: number; revenue_cents: number }>();
+  for (const item of allItems) {
+    const name = item.product_name ?? 'Producto';
+    const existing = productMap.get(name) ?? { units: 0, revenue_cents: 0 };
+    productMap.set(name, {
+      units: existing.units + item.quantity,
+      revenue_cents: existing.revenue_cents + item.unit_price_cents * item.quantity,
+    });
+  }
+  const top_products = Array.from(productMap.entries())
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.units - a.units)
+    .slice(0, 5);
+
+  // orders_by_section
+  const sectionMap = new Map<string, number>();
+  for (const item of allItems) {
+    const name = item.section_name ?? 'Sin sección';
+    sectionMap.set(name, (sectionMap.get(name) ?? 0) + 1);
+  }
+  const orders_by_section = Array.from(sectionMap.entries()).map(([section_name, count]) => ({
+    section_name,
+    count,
+  }));
+
+  return {
+    kpis: {
+      revenue_cents: revenueCents,
+      order_count: totalOrders,
+      avg_ticket_cents: avgTicketCents,
+      confirmation_rate: confirmationRate,
+    },
+    revenue_by_day,
+    top_products,
+    orders_by_section,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // updateOrderStatus
 // ---------------------------------------------------------------------------
 
