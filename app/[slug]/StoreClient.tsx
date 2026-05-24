@@ -133,6 +133,7 @@ function StoreHeader({
   storeName,
   storeSlug,
   accentColor,
+  logoUrl,
   sections,
   searchQuery,
   onSearchChange,
@@ -140,6 +141,7 @@ function StoreHeader({
   storeName: string;
   storeSlug: string;
   accentColor: string;
+  logoUrl?: string | null;
   sections: UISection[];
   searchQuery: string;
   onSearchChange: (q: string) => void;
@@ -169,7 +171,17 @@ function StoreHeader({
     <header className="sticky top-0 z-40 store-header-bg">
       {/* Main header row */}
       <div className="mx-auto flex max-w-6xl items-center px-4 sm:px-6 h-14 gap-2 sm:gap-3">
-        {/* Store name */}
+        {/* Logo thumbnail + Store name */}
+        {logoUrl && (
+          <img
+            src={logoUrl}
+            alt={storeName}
+            width={32}
+            height={32}
+            className="rounded-full shrink-0 object-cover"
+            style={{ width: 32, height: 32 }}
+          />
+        )}
         <span
           className="text-base font-semibold tracking-tight shrink-0"
           style={{ color: accentColor, fontFamily: "var(--font-rubik, Rubik)" }}
@@ -345,10 +357,12 @@ function StoreHero({
   name,
   description,
   accentColor,
+  logoUrl,
 }: {
   name: string;
   description: string | null;
   accentColor: string;
+  logoUrl?: string | null;
 }) {
   return (
     <section
@@ -357,6 +371,22 @@ function StoreHero({
       aria-label="Presentación de la tienda"
     >
       <div className="mx-auto max-w-6xl flex flex-col gap-3">
+        {/* Logo */}
+        {logoUrl && (
+          <img
+            src={logoUrl}
+            alt={name}
+            width={96}
+            height={96}
+            className="rounded-full object-cover mb-2"
+            style={{
+              width: 96,
+              height: 96,
+              outline: `3px solid ${accentColor}`,
+              outlineOffset: 2,
+            }}
+          />
+        )}
         {/* Eyebrow */}
         <p
           className="text-xs font-semibold uppercase tracking-widest"
@@ -1142,6 +1172,7 @@ export default function StoreClient({
         storeName={store.name}
         storeSlug={store.slug}
         accentColor={accentColor}
+        logoUrl={store.logo_url}
         sections={sections}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -1151,6 +1182,7 @@ export default function StoreClient({
         name={store.name}
         description={store.description}
         accentColor={accentColor}
+        logoUrl={store.logo_url}
       />
 
       <main
