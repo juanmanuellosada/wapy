@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useActionState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
@@ -13,8 +14,17 @@ import { SubmitButton } from '../components/SubmitButton';
 type SessionStatus = 'loading' | 'ready' | 'invalid';
 
 export default function ResetPasswordPage() {
+  const router = useRouter();
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>('loading');
   const [state, formAction, isPending] = useActionState(resetPasswordAction, null);
+
+  // Server actions can't reliably `redirect()` when invoked programmatically
+  // via useActionState. Navigate client-side when the action signals it.
+  useEffect(() => {
+    if (state?.redirect) {
+      router.push(state.redirect);
+    }
+  }, [state, router]);
 
   const {
     register,
