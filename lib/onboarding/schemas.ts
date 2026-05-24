@@ -2,16 +2,7 @@ import { z } from 'zod';
 
 const SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/;
 const E164_REGEX = /^\+[1-9]\d{6,14}$/;
-
-// The 6 accent colors — must match palette.ts
-const ACCENT_COLORS = [
-  '#22c55e',
-  '#eab308',
-  '#ef4444',
-  '#3b82f6',
-  '#a855f7',
-  '#ec4899',
-] as const;
+const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 
 export const basicsSchema = z.object({
   name: z.string().min(1, 'El nombre es requerido').max(80, 'Máximo 80 caracteres'),
@@ -24,9 +15,7 @@ export const basicsSchema = z.object({
 });
 
 export const lookSchema = z.object({
-  accent_color: z.enum(ACCENT_COLORS, {
-    error: 'Elegí uno de los colores disponibles',
-  }),
+  accent_color: z.string().regex(HEX_COLOR_REGEX, 'Color inválido. Debe ser un hex de 6 dígitos (ej: #F5C84B).'),
   logo_url: z.string().url().optional().nullable(),
 });
 
@@ -75,4 +64,3 @@ export type ProductsData = z.infer<typeof productsSchema>;
 export type WhatsappData = z.infer<typeof whatsappSchema>;
 export type SectionItem = z.infer<typeof sectionItemSchema>;
 export type ProductItem = z.infer<typeof productItemSchema>;
-export type AccentColor = (typeof ACCENT_COLORS)[number];

@@ -41,6 +41,34 @@ body {
   font-family: var(--font-body);
 }
 
+/* ─── react-colorful overrides ───────────────────────────────────────────────
+   Scoped to .wapy-color-picker so the styles don't bleed elsewhere.
+───────────────────────────────────────────────────────────────────────────── */
+.wapy-color-picker .react-colorful {
+  width: 200px;
+  height: 160px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.wapy-color-picker .react-colorful__saturation {
+  border-radius: 10px 10px 0 0;
+}
+
+.wapy-color-picker .react-colorful__hue {
+  height: 14px;
+  border-radius: 0 0 10px 10px;
+}
+
+.wapy-color-picker .react-colorful__saturation-pointer,
+.wapy-color-picker .react-colorful__hue-pointer {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #FBF7EC;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
 /* Floating mascot animation */
 @keyframes float {
   0%, 100% { transform: translateY(0px); }

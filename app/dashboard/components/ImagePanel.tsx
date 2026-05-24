@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { Loader2, CheckCircle } from 'lucide-react';
-import { ACCENT_COLORS, DEFAULT_ACCENT_COLOR } from '@/lib/onboarding/palette';
+import { HexColorPicker, HexColorInput } from 'react-colorful';
 import { saveStoreLook } from '@/lib/store/actions';
 import { LogoUploader } from '@/app/components/store/LogoUploader';
 import type { Store } from '@/lib/onboarding/state';
+
+const DEFAULT_ACCENT_COLOR = '#22c55e';
 
 type Props = {
   store: Store;
@@ -81,31 +83,35 @@ export function ImagePanel({ store }: Props) {
             Se usa en botones y detalles de tu tienda.
           </p>
 
-          <div className="flex items-center gap-3 flex-wrap" role="radiogroup" aria-label="Color de acento">
-            {ACCENT_COLORS.map((color) => {
-              const isSelected = accentColor === color.value;
-              return (
-                <label key={color.value} className="cursor-pointer" title={color.label}>
-                  <input
-                    type="radio"
-                    name="accent_color"
-                    value={color.value}
-                    checked={isSelected}
-                    onChange={() => setAccentColor(color.value)}
-                    className="sr-only"
-                  />
-                  <span
-                    className={`block w-10 h-10 rounded-full transition-all ${
-                      isSelected
-                        ? 'ring-2 ring-white ring-offset-2 ring-offset-[#16222E] scale-110'
-                        : 'hover:scale-105'
-                    }`}
-                    style={{ backgroundColor: color.value }}
-                    aria-label={color.label}
-                  />
+          <div className="flex flex-col sm:flex-row gap-4" aria-label="Selector de color de acento">
+            {/* Picker */}
+            <div className="wapy-color-picker">
+              <HexColorPicker color={accentColor} onChange={setAccentColor} />
+            </div>
+
+            {/* Swatch + hex input */}
+            <div className="flex flex-col gap-3 justify-center">
+              <div
+                className="w-16 h-16 rounded-xl border border-white/20"
+                style={{ backgroundColor: accentColor }}
+                aria-hidden
+              />
+              <div>
+                <label htmlFor="dashboard-accent-hex-input" className="block text-xs text-white/40 mb-1">
+                  Hex
                 </label>
-              );
-            })}
+                <div className="flex items-center gap-1 px-3 py-2 rounded-lg border border-white/15 bg-white/5 text-sm text-[#FBF7EC] w-32">
+                  <span className="text-white/30">#</span>
+                  <HexColorInput
+                    id="dashboard-accent-hex-input"
+                    color={accentColor}
+                    onChange={setAccentColor}
+                    prefixed={false}
+                    className="bg-transparent outline-none w-full text-[#FBF7EC] placeholder:text-white/30"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Preview */}
