@@ -33,8 +33,8 @@ export function LeadRowActions({ row }: Props) {
           message: `Aprobado, pero el invite no se envió: ${result.mail_error ?? 'error desconocido'}. Re-invitar desde Whitelist.`,
         });
       } else {
-        setFeedback({ type: 'ok', message: 'Aprobado · invite enviado.' });
-        setTimeout(() => setFeedback(null), 4000);
+        setFeedback({ type: 'ok', message: 'Aprobado · invite enviado. Avisale que revise spam si no lo ve.' });
+        setTimeout(() => setFeedback(null), 8000);
       }
     });
   }

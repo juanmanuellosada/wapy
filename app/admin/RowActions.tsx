@@ -31,8 +31,8 @@ export function RowActions({ row }: Props) {
       } else if (!result.mail_sent) {
         setFeedback({ type: 'error', message: `Re-invitado, pero el mail falló: ${result.mail_error}` });
       } else {
-        setFeedback({ type: 'ok', message: 'Mail reenviado.' });
-        setTimeout(() => setFeedback(null), 3000);
+        setFeedback({ type: 'ok', message: 'Mail reenviado. Avisale que revise spam si no lo ve.' });
+        setTimeout(() => setFeedback(null), 8000);
       }
     });
   }
