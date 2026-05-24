@@ -1,6 +1,5 @@
 'use server';
 
-import { redirect } from 'next/navigation';
 import { createServerClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { validateWhitelistSignup } from './validation';
@@ -40,7 +39,7 @@ function getRoleDestination(role: string, redirectTo?: string): string {
 // Signup
 // ---------------------------------------------------------------------------
 
-type SignupState = { error?: string } | null;
+type SignupState = { error?: string; redirect?: string } | null;
 
 export async function signupAction(
   _prev: SignupState,
@@ -82,14 +81,14 @@ export async function signupAction(
     .update({ registered_at: new Date().toISOString() })
     .eq('email', email.toLowerCase());
 
-  redirect(getRoleDestination(validation.grant_role));
+  return { redirect: getRoleDestination(validation.grant_role) };
 }
 
 // ---------------------------------------------------------------------------
 // Login
 // ---------------------------------------------------------------------------
 
-type LoginState = { error?: string } | null;
+type LoginState = { error?: string; redirect?: string } | null;
 
 export async function loginAction(
   _prev: LoginState,
@@ -129,7 +128,7 @@ export async function loginAction(
   } else {
     destination = await getOwnerDestination(data.user.id, redirectTo);
   }
-  redirect(destination);
+  return { redirect: destination };
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +163,7 @@ export async function forgotPasswordAction(
 // Reset password
 // ---------------------------------------------------------------------------
 
-type ResetPasswordState = { error?: string } | null;
+type ResetPasswordState = { error?: string; redirect?: string } | null;
 
 export async function resetPasswordAction(
   _prev: ResetPasswordState,
@@ -194,5 +193,5 @@ export async function resetPasswordAction(
     .single();
 
   const role = userRow?.role ?? 'owner';
-  redirect(getRoleDestination(role));
+  return { redirect: getRoleDestination(role) };
 }

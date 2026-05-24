@@ -1,6 +1,7 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
@@ -15,7 +16,16 @@ interface SignupFormProps {
 }
 
 export function SignupForm({ prefillEmail, token }: SignupFormProps) {
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState(signupAction, null);
+
+  // Server actions can't reliably `redirect()` when invoked programmatically
+  // via useActionState. Navigate client-side when the action signals it.
+  useEffect(() => {
+    if (state?.redirect) {
+      router.push(state.redirect);
+    }
+  }, [state, router]);
 
   const {
     register,
