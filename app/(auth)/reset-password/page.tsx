@@ -14,7 +14,7 @@ type SessionStatus = 'loading' | 'ready' | 'invalid';
 
 export default function ResetPasswordPage() {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>('loading');
-  const [state, formAction] = useActionState(resetPasswordAction, null);
+  const [state, formAction, isPending] = useActionState(resetPasswordAction, null);
 
   const {
     register,
@@ -23,6 +23,13 @@ export default function ResetPasswordPage() {
   } = useForm<ResetPasswordInput>({
     resolver: zodResolver(resetPasswordSchema),
   });
+
+  const onValidSubmit = (data: ResetPasswordInput) => {
+    const fd = new FormData();
+    fd.set('password', data.password);
+    fd.set('confirmPassword', data.confirmPassword);
+    formAction(fd);
+  };
 
   useEffect(() => {
     // Supabase Auth sends the recovery token in the URL hash.
@@ -98,7 +105,7 @@ export default function ResetPasswordPage() {
         </div>
       )}
 
-      <form action={formAction} onSubmit={handleSubmit(() => {})} noValidate className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit(onValidSubmit)} noValidate className="flex flex-col gap-4">
         <FormField
           id="password"
           label="Nueva contraseña"
@@ -121,7 +128,7 @@ export default function ResetPasswordPage() {
           {...register('confirmPassword')}
         />
 
-        <SubmitButton label="Guardar contraseña" loadingLabel="Guardando..." />
+        <SubmitButton label="Guardar contraseña" loadingLabel="Guardando..." pending={isPending} />
       </form>
     </div>
   );

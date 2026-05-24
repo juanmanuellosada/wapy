@@ -14,7 +14,7 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ redirectTo }: LoginFormProps) {
-  const [state, formAction] = useActionState(loginAction, null);
+  const [state, formAction, isPending] = useActionState(loginAction, null);
 
   const {
     register,
@@ -23,6 +23,14 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
   } = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
   });
+
+  const onValidSubmit = (data: LoginInput) => {
+    const fd = new FormData();
+    fd.set('email', data.email);
+    fd.set('password', data.password);
+    if (redirectTo) fd.set('redirectTo', redirectTo);
+    formAction(fd);
+  };
 
   return (
     <div>
@@ -41,9 +49,7 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
         </div>
       )}
 
-      <form action={formAction} onSubmit={handleSubmit(() => {})} noValidate className="flex flex-col gap-4">
-        {/* Pass redirect destination through to the server action */}
-        {redirectTo && <input type="hidden" name="redirectTo" value={redirectTo} />}
+      <form onSubmit={handleSubmit(onValidSubmit)} noValidate className="flex flex-col gap-4">
 
         <FormField
           id="email"
@@ -76,7 +82,7 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
           </Link>
         </div>
 
-        <SubmitButton label="Entrar" loadingLabel="Entrando..." />
+        <SubmitButton label="Entrar" loadingLabel="Entrando..." pending={isPending} />
       </form>
 
       <p className="mt-6 text-center text-sm text-[#16222E]/60">

@@ -6,10 +6,17 @@ import { Loader2 } from 'lucide-react';
 interface SubmitButtonProps {
   label: string;
   loadingLabel?: string;
+  /**
+   * Override loading state. When the form is submitted via a manual server
+   * action dispatch (not via `<form action>`), useFormStatus does not fire,
+   * so callers must thread the pending state from useActionState's 3rd return.
+   */
+  pending?: boolean;
 }
 
-export function SubmitButton({ label, loadingLabel = 'Cargando...' }: SubmitButtonProps) {
-  const { pending } = useFormStatus();
+export function SubmitButton({ label, loadingLabel = 'Cargando...', pending: pendingProp }: SubmitButtonProps) {
+  const { pending: formPending } = useFormStatus();
+  const pending = pendingProp ?? formPending;
 
   return (
     <button
