@@ -47,7 +47,7 @@ export function StepWhatsapp({ store }: Props) {
     setSubmitting(true);
     setServerError(null);
 
-    const result = await saveWhatsapp({ whatsapp_number: normalizePhone(data.whatsapp_number) });
+    const result = await saveWhatsapp({ whatsapp_number: data.whatsapp_number });
 
     if ('error' in result) {
       setServerError(result.error);

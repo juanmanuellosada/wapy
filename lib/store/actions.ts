@@ -364,13 +364,11 @@ export async function saveStoreWhatsapp(formData: {
   const parsed = whatsappSchema.safeParse(formData);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const normalized = parsed.data.whatsapp_number.replace(/\s/g, '');
-
   const admin = createAdminClient();
   const { error } = await admin
     .from('stores')
     .update({
-      whatsapp_number: normalized,
+      whatsapp_number: parsed.data.whatsapp_number,
       updated_at: new Date().toISOString(),
     })
     .eq('id', store.id);
