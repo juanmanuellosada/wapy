@@ -17,12 +17,13 @@ export default function ResetPasswordPage() {
   const router = useRouter();
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>('loading');
   const [state, formAction, isPending] = useActionState(resetPasswordAction, null);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Server actions can't reliably `redirect()` when invoked programmatically
-  // via useActionState. Navigate client-side when the action signals it.
   useEffect(() => {
     if (state?.redirect) {
       router.push(state.redirect);
+    } else if (state?.error) {
+      setSubmitting(false);
     }
   }, [state, router]);
 
@@ -35,6 +36,7 @@ export default function ResetPasswordPage() {
   });
 
   const onValidSubmit = (data: ResetPasswordInput) => {
+    setSubmitting(true);
     const fd = new FormData();
     fd.set('password', data.password);
     fd.set('confirmPassword', data.confirmPassword);
@@ -138,7 +140,7 @@ export default function ResetPasswordPage() {
           {...register('confirmPassword')}
         />
 
-        <SubmitButton label="Guardar contraseña" loadingLabel="Guardando..." pending={isPending} />
+        <SubmitButton label="Guardar contraseña" loadingLabel="Guardando..." pending={submitting || isPending} />
       </form>
     </div>
   );

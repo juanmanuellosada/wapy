@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Store } from '@/lib/onboarding/state';
+import { logoutAction } from '@/lib/auth/logout-action';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://wapy.com.ar';
 
@@ -92,7 +93,7 @@ function SidebarContent({ store, currentSection, onClose }: Props & { onClose?: 
           <ExternalLink size={16} className="text-white/40" />
           Ver tienda
         </a>
-        <form action="/api/auth/logout" method="POST">
+        <form action={logoutAction}>
           <button
             type="submit"
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/60 hover:text-white hover:bg-white/8 transition-colors cursor-pointer"

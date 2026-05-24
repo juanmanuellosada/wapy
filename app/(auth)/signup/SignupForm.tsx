@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useEffect } from 'react';
+import { useActionState, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -18,12 +18,14 @@ interface SignupFormProps {
 export function SignupForm({ prefillEmail, token }: SignupFormProps) {
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(signupAction, null);
+  // Custom pending: keeps spinner visible through navigation; only resets on error.
+  const [submitting, setSubmitting] = useState(false);
 
-  // Server actions can't reliably `redirect()` when invoked programmatically
-  // via useActionState. Navigate client-side when the action signals it.
   useEffect(() => {
     if (state?.redirect) {
       router.push(state.redirect);
+    } else if (state?.error) {
+      setSubmitting(false);
     }
   }, [state, router]);
 
@@ -37,6 +39,7 @@ export function SignupForm({ prefillEmail, token }: SignupFormProps) {
   });
 
   const onValidSubmit = (data: SignupInput) => {
+    setSubmitting(true);
     const fd = new FormData();
     fd.set('email', data.email);
     fd.set('password', data.password);
@@ -99,7 +102,7 @@ export function SignupForm({ prefillEmail, token }: SignupFormProps) {
           {...register('confirmPassword')}
         />
 
-        <SubmitButton label="Crear cuenta" loadingLabel="Creando cuenta..." pending={isPending} />
+        <SubmitButton label="Crear cuenta" loadingLabel="Creando cuenta..." pending={submitting || isPending} />
       </form>
 
       <p className="mt-6 text-center text-sm text-[#16222E]/60">
