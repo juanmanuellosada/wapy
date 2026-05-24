@@ -256,7 +256,7 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
                 'image/jpeg': ['.jpg', '.jpeg'],
                 'image/webp': ['.webp'],
               }}
-              maxSizeMB={2}
+              maxSizeMB={5}
               onUpload={handleImageUpload}
               onDelete={handleImageDelete}
               label="Subí fotos del producto"
