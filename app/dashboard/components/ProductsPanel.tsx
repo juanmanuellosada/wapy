@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
 import { SortableList } from '@/app/components/store/SortableList';
 import { ProductModal } from '@/app/components/store/ProductModal';
 import { saveStoreProduct, deleteStoreProduct } from '@/lib/store/actions';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
+
+const NO_SECTION_KEY = '__no_section__';
 
 type Props = {
   store: Store;
@@ -24,9 +26,34 @@ function formatPrice(cents: number): string {
 
 export function ProductsPanel({ store, initialProducts, sections }: Props) {
   const [products, setProducts] = useState<Product[]>(initialProducts);
-  const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined); // undefined = closed
+  const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined);
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const toggleCollapsed = (key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const groups: { key: string; label: string; items: Product[] }[] = [
+    ...sections
+      .map((s) => ({
+        key: s.id,
+        label: s.name,
+        items: products.filter((p) => p.section_id === s.id),
+      }))
+      .filter((g) => g.items.length > 0),
+  ];
+
+  const unsectioned = products.filter((p) => p.section_id === null);
+  if (unsectioned.length > 0) {
+    groups.push({ key: NO_SECTION_KEY, label: 'Sin sección', items: unsectioned });
+  }
 
   const handleProductSaved = (product: Product) => {
     setProducts((prev) => {
@@ -77,7 +104,10 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
 
   const handleReorder = async (newOrder: Product[]) => {
     const reordered = newOrder.map((p, i) => ({ ...p, position: i }));
-    setProducts(reordered);
+    setProducts((prev) => {
+      const map = new Map(reordered.map((p) => [p.id, p]));
+      return prev.map((p) => map.get(p.id) ?? p);
+    });
     for (const p of reordered) {
       await saveStoreProduct({
         id: p.id,
@@ -120,67 +150,87 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
         </p>
 
         {products.length > 0 && (
-          <SortableList
-            items={products}
-            onReorder={handleReorder}
-            renderItem={(product, handle) => (
-              <div className={`flex items-center gap-3 border rounded-xl px-3 py-2.5 transition-colors ${
-                product.is_active
-                  ? 'bg-white/6 border-white/10'
-                  : 'bg-white/3 border-white/5 opacity-60'
-              }`}>
-                {handle}
-                {/* Thumbnail */}
-                <div className="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden bg-white/10">
-                  {product.image_urls[0] ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={product.image_urls[0]} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-white/20 text-xs">
-                      📦
+          <div className="space-y-3">
+            {groups.map((group) => {
+              const isCollapsed = collapsed.has(group.key);
+              return (
+                <div key={group.key}>
+                  <button
+                    type="button"
+                    onClick={() => toggleCollapsed(group.key)}
+                    className="flex items-center gap-2 w-full text-left py-1.5 text-sm font-semibold text-white/70 hover:text-white/90 transition-colors cursor-pointer"
+                  >
+                    {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                    <span>{group.label}</span>
+                    <span className="text-white/30 font-normal">({group.items.length})</span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="mt-1">
+                      <SortableList
+                        items={group.items}
+                        onReorder={handleReorder}
+                        renderItem={(product, handle) => (
+                          <div className={`flex items-center gap-3 border rounded-xl px-3 py-2.5 transition-colors ${
+                            product.is_active
+                              ? 'bg-white/6 border-white/10'
+                              : 'bg-white/3 border-white/5 opacity-60'
+                          }`}>
+                            {handle}
+                            <div className="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden bg-white/10">
+                              {product.image_urls[0] ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={product.image_urls[0]} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-white/20 text-xs">
+                                  📦
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-[#FBF7EC] truncate">{product.name}</p>
+                              <p className="text-xs text-[#F5C84B]/80">{formatPrice(product.price_cents)}</p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleActive(product)}
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
+                                  product.is_active
+                                    ? 'text-white/40 hover:text-green-400 hover:bg-green-500/10'
+                                    : 'text-white/30 hover:text-white/60 hover:bg-white/10'
+                                }`}
+                                aria-label={product.is_active ? `Ocultar ${product.name}` : `Mostrar ${product.name}`}
+                                title={product.is_active ? 'Marcar como inactivo' : 'Marcar como activo'}
+                              >
+                                {product.is_active ? <Eye size={13} /> : <EyeOff size={13} />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setModalProduct(product)}
+                                className="w-7 h-7 rounded-lg text-white/40 hover:text-white hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer"
+                                aria-label={`Editar ${product.name}`}
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(product.id)}
+                                className="w-7 h-7 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors cursor-pointer"
+                                aria-label={`Borrar ${product.name}`}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      />
                     </div>
                   )}
                 </div>
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-[#FBF7EC] truncate">{product.name}</p>
-                  <p className="text-xs text-[#F5C84B]/80">{formatPrice(product.price_cents)}</p>
-                </div>
-                {/* Actions */}
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => handleToggleActive(product)}
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
-                      product.is_active
-                        ? 'text-white/40 hover:text-green-400 hover:bg-green-500/10'
-                        : 'text-white/30 hover:text-white/60 hover:bg-white/10'
-                    }`}
-                    aria-label={product.is_active ? `Ocultar ${product.name}` : `Mostrar ${product.name}`}
-                    title={product.is_active ? 'Marcar como inactivo' : 'Marcar como activo'}
-                  >
-                    {product.is_active ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setModalProduct(product)}
-                    className="w-7 h-7 rounded-lg text-white/40 hover:text-white hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer"
-                    aria-label={`Editar ${product.name}`}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(product.id)}
-                    className="w-7 h-7 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors cursor-pointer"
-                    aria-label={`Borrar ${product.name}`}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            )}
-          />
+              );
+            })}
+          </div>
         )}
 
         {products.length === 0 && (
