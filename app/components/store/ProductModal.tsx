@@ -6,7 +6,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { X, Loader2 } from 'lucide-react';
 import { ImageUpload } from './ImageUpload';
-import { uploadProductImage, deleteImage } from '@/lib/onboarding/storage';
+import { deleteImage } from '@/lib/onboarding/storage';
+import { uploadProductImageAction } from '@/lib/onboarding/upload-actions';
 import { saveStoreProduct } from '@/lib/store/actions';
 import type { Section, Product } from '@/lib/onboarding/state';
 
@@ -69,9 +70,15 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
   }, [onClose]);
 
   const handleImageUpload = async (file: File): Promise<string> => {
-    const url = await uploadProductImage(file, storeId);
-    setImageUrls((prev) => [...prev, url]);
-    return url;
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('storeId', storeId);
+    const result = await uploadProductImageAction(fd);
+    if (!result.ok) {
+      throw new Error(result.message ?? 'Error al subir la imagen. Intentá de nuevo.');
+    }
+    setImageUrls((prev) => [...prev, result.url]);
+    return result.url;
   };
 
   const handleImageDelete = async (url: string) => {

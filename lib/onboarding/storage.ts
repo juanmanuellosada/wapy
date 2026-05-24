@@ -1,23 +1,18 @@
 /**
- * Client-side storage helpers for image uploads.
- * These use the browser supabase client (with user session for RLS).
+ * Client-side storage helpers — validation and deletion only.
+ * Uploads are handled by Server Actions in upload-actions.ts.
  */
 
 import { createBrowserClient } from '@/lib/supabase/client';
 
-const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+export const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 export type UploadError = {
   type: 'size' | 'format' | 'upload';
   message: string;
 };
 
-function getExtension(file: File): string {
-  const parts = file.name.split('.');
-  return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : 'jpg';
-}
-
-function validateLogoFile(file: File): UploadError | null {
+export function validateLogoFile(file: File): UploadError | null {
   if (file.size > MAX_SIZE_BYTES) {
     return { type: 'size', message: 'Imagen muy pesada. Máximo 5MB.' };
   }
@@ -28,7 +23,7 @@ function validateLogoFile(file: File): UploadError | null {
   return null;
 }
 
-function validateProductImageFile(file: File): UploadError | null {
+export function validateProductImageFile(file: File): UploadError | null {
   if (file.size > MAX_SIZE_BYTES) {
     return { type: 'size', message: 'Imagen muy pesada. Máximo 5MB.' };
   }
@@ -38,57 +33,6 @@ function validateProductImageFile(file: File): UploadError | null {
     return { type: 'format', message: 'Formato no permitido. Usá PNG, JPG, o WEBP.' };
   }
   return null;
-}
-
-/**
- * Uploads the store logo to `store-logos/{storeId}/logo.{ext}`.
- * Replaces existing logo (same path).
- * Returns the public URL.
- */
-export async function uploadLogo(file: File, storeId: string): Promise<string> {
-  const validationError = validateLogoFile(file);
-  if (validationError) throw new Error(validationError.message);
-
-  const ext = getExtension(file);
-  const path = `${storeId}/logo.${ext}`;
-
-  const supabase = createBrowserClient();
-  // Ensure the session is loaded from cookies before the storage request,
-  // so the client attaches the Authorization: Bearer header (JWT) to the upload.
-  await supabase.auth.getSession();
-  const { error } = await supabase.storage
-    .from('store-logos')
-    .upload(path, file, { upsert: true, contentType: file.type });
-
-  if (error) throw new Error('Error al subir el logo. Intentá de nuevo.');
-
-  const { data } = supabase.storage.from('store-logos').getPublicUrl(path);
-  // Cache bust with timestamp
-  return `${data.publicUrl}?t=${Date.now()}`;
-}
-
-/**
- * Uploads a product image to `product-images/{storeId}/{uuid}.{ext}`.
- * Returns the public URL.
- */
-export async function uploadProductImage(file: File, storeId: string): Promise<string> {
-  const validationError = validateProductImageFile(file);
-  if (validationError) throw new Error(validationError.message);
-
-  const ext = getExtension(file);
-  const path = `${storeId}/${crypto.randomUUID()}.${ext}`;
-
-  const supabase = createBrowserClient();
-  // Same as uploadLogo: hydrate session before the storage request.
-  await supabase.auth.getSession();
-  const { error } = await supabase.storage
-    .from('product-images')
-    .upload(path, file, { contentType: file.type });
-
-  if (error) throw new Error('Error al subir la imagen. Intentá de nuevo.');
-
-  const { data } = supabase.storage.from('product-images').getPublicUrl(path);
-  return data.publicUrl;
 }
 
 /**
@@ -110,6 +54,3 @@ export async function deleteImage(url: string, bucket: 'store-logos' | 'product-
     console.warn('[deleteImage] failed:', e);
   }
 }
-
-// Re-export validation helpers so components can validate before calling
-export { validateLogoFile, validateProductImageFile };
