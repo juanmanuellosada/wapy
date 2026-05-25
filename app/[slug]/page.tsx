@@ -57,6 +57,7 @@ export default async function SlugPage({ params }: Props) {
           store={resolution.store}
           sections={resolution.sections}
           products={resolution.products}
+          variantsByProduct={resolution.variantsByProduct}
         />
       );
 

@@ -185,27 +185,36 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
 
           {/* Items */}
           <div className="space-y-2">
-            {order.items.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-start justify-between gap-3 py-2 border-b border-white/5 last:border-0"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm text-[#FBF7EC]">{item.product_name}</p>
-                  {item.section_name && (
-                    <p className="text-xs text-white/40 mt-0.5">{item.section_name}</p>
-                  )}
+            {order.items.map((item) => {
+              // 6.2 Use snapshot price (price_at_purchase), not the live unit_price_cents.
+              // This ensures historical orders don't change if the owner edits prices later.
+              const snapshotPrice = item.price_at_purchase;
+              return (
+                <div
+                  key={item.id}
+                  className="flex items-start justify-between gap-3 py-2 border-b border-white/5 last:border-0"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm text-[#FBF7EC]">{item.product_name}</p>
+                    {/* 6.1 Show variant label from snapshot */}
+                    {item.variant_label && (
+                      <p className="text-xs text-white/50 mt-0.5">{item.variant_label}</p>
+                    )}
+                    {item.section_name && (
+                      <p className="text-xs text-white/40 mt-0.5">{item.section_name}</p>
+                    )}
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-xs text-white/50">
+                      {item.quantity} × {formatPrice(snapshotPrice)}
+                    </p>
+                    <p className="text-sm text-[#FBF7EC] font-medium">
+                      {formatPrice(snapshotPrice * item.quantity)}
+                    </p>
+                  </div>
                 </div>
-                <div className="text-right flex-shrink-0">
-                  <p className="text-xs text-white/50">
-                    {item.quantity} × {formatPrice(item.unit_price_cents)}
-                  </p>
-                  <p className="text-sm text-[#FBF7EC] font-medium">
-                    {formatPrice(item.unit_price_cents * item.quantity)}
-                  </p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Total */}

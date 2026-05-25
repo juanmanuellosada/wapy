@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, Eye, EyeOff, ChevronDown, ChevronRight, Copy } from 'lucide-react';
+import { Plus, Pencil, Trash2, Eye, EyeOff, ChevronDown, ChevronRight, Copy, Download } from 'lucide-react';
 import { SortableList } from '@/app/components/store/SortableList';
 import { ProductModal } from '@/app/components/store/ProductModal';
 import { saveStoreProduct, deleteStoreProduct, duplicateProduct } from '@/lib/store/actions';
+import { exportProductsCsv } from '@/lib/store/exports/products';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
 import { toast } from '@/lib/toast';
@@ -32,6 +33,7 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const toggleCollapsed = (key: string) => {
     setCollapsed((prev) => {
@@ -121,6 +123,36 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
     }
   };
 
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const result = await exportProductsCsv();
+      if ('error' in result) {
+        if (result.error === 'empty') {
+          toast.info('No hay productos para exportar');
+        } else {
+          toast.error('No se pudo exportar el CSV');
+        }
+        return;
+      }
+      const blob = new Blob([result.csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `catalogo-${date}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('CSV exportado');
+    } catch {
+      toast.error('No se pudo exportar el CSV');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleReorder = async (newOrder: Product[]) => {
     const reordered = newOrder.map((p, i) => ({ ...p, position: i }));
     setProducts((prev) => {
@@ -144,7 +176,22 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-[#FBF7EC] mb-6">Productos</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl font-bold text-[#FBF7EC]">Productos</h1>
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={exporting}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-white/50 hover:text-white hover:bg-white/8 border border-white/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {exporting ? (
+            <span className="w-3 h-3 rounded-full border border-white/40 border-t-white/80 animate-spin" />
+          ) : (
+            <Download size={12} />
+          )}
+          Exportar catálogo CSV
+        </button>
+      </div>
 
       {modalProduct !== undefined && (
         <ProductModal

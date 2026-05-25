@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { X, Loader2 } from 'lucide-react';
 import { ImageUpload } from './ImageUpload';
+import { VariantsSection } from './VariantsSection';
 import { Select } from '@/app/components/Select';
 import { deleteImage } from '@/lib/onboarding/storage';
 import { uploadProductImageAction } from '@/lib/onboarding/upload-actions';
@@ -47,11 +48,23 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  // Variants state: has variants → hide stock input, show read-only aggregate
+  const [hasVariants, setHasVariants] = useState(false);
+  const [variantsTotalStock, setVariantsTotalStock] = useState(0);
+
+  const handleVariantsChange = useCallback(
+    (hv: boolean, total: number) => {
+      setHasVariants(hv);
+      setVariantsTotalStock(total);
+    },
+    []
+  );
 
   const {
     register,
     handleSubmit,
     control,
+    watch,
     formState: { errors },
   } = useForm<ProductFormData>({
     resolver: zodResolver(productFormSchema),
@@ -199,8 +212,8 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
           </div>
 
           {/* Price + Stock */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
+          <div className={hasVariants ? '' : 'grid grid-cols-2 gap-3'}>
+            <div className={hasVariants ? 'mb-3' : ''}>
               <label htmlFor="prod-price" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
                 Precio (ARS) <span aria-hidden className="text-red-400">*</span>
               </label>
@@ -217,18 +230,27 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
               </div>
               {errors.price_display && <p role="alert" className="text-xs text-red-400 mt-1">{errors.price_display.message}</p>}
             </div>
-            <div>
-              <label htmlFor="prod-stock" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
-                Stock <span className="text-white/30 font-normal">(opcional)</span>
-              </label>
-              <input
-                id="prod-stock"
-                type="number"
-                min="0"
-                {...register('stock')}
-                className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
-              />
-            </div>
+
+            {/* Stock input: hidden when product has variants; replaced by read-only summary */}
+            {hasVariants ? (
+              <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white/60 mb-3">
+                Stock total: <span className="text-[#FBF7EC] font-semibold">{variantsTotalStock}</span>{' '}
+                <span className="text-white/40">(suma de las variedades)</span>
+              </div>
+            ) : (
+              <div>
+                <label htmlFor="prod-stock" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
+                  Stock <span className="text-white/30 font-normal">(opcional)</span>
+                </label>
+                <input
+                  id="prod-stock"
+                  type="number"
+                  min="0"
+                  {...register('stock')}
+                  className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+                />
+              </div>
+            )}
           </div>
 
           {/* Section */}
@@ -274,6 +296,18 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
               onUpload={handleImageUpload}
               onDelete={handleImageDelete}
               label="Subí fotos del producto"
+            />
+          </div>
+
+          {/* Variants */}
+          <div>
+            <label className="block text-sm font-semibold text-[#FBF7EC] mb-2">
+              Variedades <span className="text-white/30 font-normal">(color, talle, etc.)</span>
+            </label>
+            <VariantsSection
+              productId={product?.id ?? null}
+              productPriceCents={parsePriceCents(watch('price_display') ?? '') ?? product?.price_cents ?? 0}
+              onVariantsChange={handleVariantsChange}
             />
           </div>
 

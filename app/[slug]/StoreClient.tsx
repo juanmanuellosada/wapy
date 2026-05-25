@@ -16,8 +16,9 @@ import {
 } from "lucide-react";
 import type { SocialLinks } from "@/lib/store/social-links";
 import { extractSocialHandle } from "@/lib/store/social-links";
-import type { StoreRow, SectionRow, ProductRow } from "@/lib/storefront/resolve";
-import { useCart } from "./CartContext";
+import type { StoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
+import { useCart, cartItemKey } from "./CartContext";
+import ProductCardClient from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
 import { toast } from "@/lib/toast";
@@ -166,6 +167,7 @@ interface UIProduct {
   name: string;
   description: string;
   price: number; // ARS float (price_cents / 100)
+  priceCents: number; // raw cents — needed by ProductCardClient for variant price fallback
   image: string;
   stock: number | null; // null = no tracking, 0 = out of stock, N = N units available
 }
@@ -510,100 +512,29 @@ function StoreHero({
 }
 
 // ─── Product Card ─────────────────────────────────────────────────────────────
+// Thin wrapper that delegates to the client component; keeps SectionBlock /
+// SearchResults call-sites unchanged.
 
 function ProductCard({
   product,
   accentColor,
   onOpenModal,
+  variantData,
 }: {
   product: UIProduct;
   accentColor: string;
   onOpenModal: (p: UIProduct) => void;
+  variantData?: ProductVariantData;
 }) {
-  const { addItem, openCart } = useCart();
-  const accentForeground = "#ffffff";
-  const isOutOfStock = product.stock === 0;
-  const isLowStock = product.stock !== null && product.stock >= 1 && product.stock <= 5;
-
-  function handleAdd(e: React.MouseEvent) {
-    e.stopPropagation();
-    if (isOutOfStock) return;
-    addItem({
-      productId: product.id,
-      name: product.name,
-      price: product.price,
-      image: product.image,
-    });
-    openCart();
-  }
-
   return (
-    <article
-      className={`store-card cursor-pointer flex flex-col rounded-2xl overflow-hidden${isOutOfStock ? " opacity-60" : ""}`}
-      onClick={() => onOpenModal(product)}
-      style={{
-        background: "var(--store-surface)",
-        border: "1px solid var(--store-border)",
-      }}
-      aria-label={`${product.name}, ${formatARS(product.price)}${isOutOfStock ? ", sin stock" : ""}`}
-    >
-      {/* Image container */}
-      <div
-        className="relative overflow-hidden"
-        style={{ aspectRatio: "3/4", background: "var(--store-border)" }}
-      >
-        <Image
-          src={product.image}
-          alt={product.name}
-          fill
-          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-          className="store-card-image object-cover"
-          unoptimized={product.image.startsWith("data:")}
-        />
-        {isOutOfStock && (
-          <div className="absolute inset-0 flex items-end justify-start p-2 pointer-events-none">
-            <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-600/90 text-white">
-              Sin stock
-            </span>
-          </div>
-        )}
-        {isLowStock && (
-          <div className="absolute inset-0 flex items-end justify-start p-2 pointer-events-none">
-            <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-500/90 text-white">
-              Quedan {product.stock}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="flex flex-col gap-2 p-3 sm:p-4">
-        <h3
-          className="text-sm sm:text-base font-semibold leading-snug"
-          style={{ color: "var(--store-ink)" }}
-        >
-          {product.name}
-        </h3>
-        <div className="flex items-center justify-between gap-2 mt-auto">
-          <span
-            className="text-sm sm:text-base font-bold"
-            style={{ color: "var(--store-ink)" }}
-          >
-            {formatARS(product.price)}
-          </span>
-          <button
-            onClick={handleAdd}
-            disabled={isOutOfStock}
-            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-opacity${isOutOfStock ? " opacity-40 cursor-not-allowed" : " cursor-pointer hover:opacity-80"}`}
-            style={{ background: accentColor, color: accentForeground }}
-            aria-label={isOutOfStock ? `${product.name} sin stock` : `Agregar ${product.name} al carrito`}
-          >
-            <Plus className="h-3 w-3" aria-hidden="true" />
-            {isOutOfStock ? "Sin stock" : "Agregar"}
-          </button>
-        </div>
-      </div>
-    </article>
+    <ProductCardClient
+      product={product}
+      accentColor={accentColor}
+      onOpenModal={onOpenModal}
+      optionTypes={variantData?.optionTypes}
+      variants={variantData?.variants}
+      priceCents={product.priceCents}
+    />
   );
 }
 
@@ -613,17 +544,21 @@ function ProductModal({
   product,
   accentColor,
   onClose,
+  hasVariants,
 }: {
   product: UIProduct;
   accentColor: string;
   onClose: () => void;
+  hasVariants: boolean;
 }) {
   const { addItem, setQty, items, openCart } = useCart();
   const [qty, setLocalQty] = useState(1);
   const overlayRef = useRef<HTMLDivElement>(null);
   const accentForeground = "#ffffff";
 
-  const existingItem = items.find((i) => i.productId === product.id);
+  // For modal: simple product (no variant), key is just the productId
+  const itemKey = cartItemKey(product.id, null);
+  const existingItem = items.find((i) => cartItemKey(i.productId, i.variantId) === itemKey);
   const existingQty = existingItem?.quantity ?? 0;
   const isOutOfStock = product.stock === 0;
   // availableToAdd: how many more units the user can add (null = unlimited)
@@ -663,7 +598,7 @@ function ProductModal({
       return;
     }
     if (existingItem) {
-      setQty(product.id, existingItem.quantity + qty);
+      setQty(itemKey, existingItem.quantity + qty);
     } else {
       addItem({
         productId: product.id,
@@ -672,7 +607,7 @@ function ProductModal({
         image: product.image,
       });
       if (qty > 1) {
-        setQty(product.id, qty);
+        setQty(itemKey, qty);
       }
     }
     openCart();
@@ -790,15 +725,24 @@ function ProductModal({
             </div>
           )}
 
-          <button
-            onClick={handleAdd}
-            disabled={!canAdd}
-            className={`w-full rounded-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 transition-opacity${canAdd ? " cursor-pointer hover:opacity-85" : " opacity-50 cursor-not-allowed"}`}
-            style={{ background: accentColor, color: accentForeground }}
-          >
-            <ShoppingBag className="h-4 w-4" aria-hidden="true" />
-            {isOutOfStock ? "Sin stock disponible" : "Agregar al carrito"}
-          </button>
+          {hasVariants ? (
+            <p
+              className="w-full text-center text-sm py-3.5 rounded-full"
+              style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
+            >
+              Elegí una variedad en la card para agregar
+            </p>
+          ) : (
+            <button
+              onClick={handleAdd}
+              disabled={!canAdd}
+              className={`w-full rounded-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 transition-opacity${canAdd ? " cursor-pointer hover:opacity-85" : " opacity-50 cursor-not-allowed"}`}
+              style={{ background: accentColor, color: accentForeground }}
+            >
+              <ShoppingBag className="h-4 w-4" aria-hidden="true" />
+              {isOutOfStock ? "Sin stock disponible" : "Agregar al carrito"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -823,9 +767,11 @@ function CartDrawer({
   const { items, open, totalPrice, removeItem, setQty, closeCart } = useCart();
   const accentForeground = "#ffffff";
 
-  // Items where quantity exceeds current stock (stock !== null only)
+  // Items where quantity exceeds current stock (stock !== null only).
+  // For variant items, use the composite key productId::variantId for accurate stock.
   const overStockedItems = items.filter((item) => {
-    const stock = productStockMap.get(item.productId);
+    const key = item.variantId ? `${item.productId}::${item.variantId}` : item.productId;
+    const stock = productStockMap.get(key) ?? productStockMap.get(item.productId);
     return stock !== undefined && stock !== null && item.quantity > stock;
   });
   const hasStockIssues = overStockedItems.length > 0;
@@ -840,9 +786,11 @@ function CartDrawer({
       return;
     }
 
-    const lines = items.map(
-      (i) => `• ${i.quantity}x ${i.name} — ${formatARS(i.price * i.quantity)}`
-    );
+    const lines = items.map((i) => {
+      const displayPrice = i.variantPrice ?? i.price;
+      const label = i.variantLabel ? ` (${i.variantLabel})` : "";
+      return `• ${i.quantity}x ${i.name}${label} — ${formatARS(displayPrice * i.quantity)}`;
+    });
     const currentMessage = [
       `*Pedido en ${storeName}*`,
       "",
@@ -855,7 +803,7 @@ function CartDrawer({
     try {
       const result = await createPendingOrder({
         store_id: storeId,
-        items: items.map((i) => ({ product_id: i.productId, quantity: i.quantity })),
+        items: items.map((i) => ({ product_id: i.productId, quantity: i.quantity, variant_id: i.variantId ?? null })),
       });
       if ('order_id' in result) {
         orderRef = `\n\nReferencia: #${result.order_id.slice(0, 8)}`;
@@ -961,11 +909,17 @@ function CartDrawer({
           ) : (
             <ul className="flex flex-col gap-4" aria-label="Productos en el carrito">
               {items.map((item) => {
-                const itemStock = productStockMap.get(item.productId);
+                const key = cartItemKey(item.productId, item.variantId);
+                const stockKey = item.variantId ? `${item.productId}::${item.variantId}` : item.productId;
+                const itemStock = productStockMap.get(stockKey) ?? productStockMap.get(item.productId);
                 const isOverStock = itemStock !== undefined && itemStock !== null && item.quantity > itemStock;
+                // For display: use variantPrice if set, else item.price
+                const displayPrice = item.variantPrice ?? item.price;
+                // For image: use variantImageUrl if set, else item.image
+                const displayImage = item.variantImageUrl ?? item.image;
                 return (
                   <li
-                    key={item.productId}
+                    key={key}
                     className="flex gap-3 items-start"
                     style={{ paddingBottom: "1rem", borderBottom: "1px solid var(--store-border)" }}
                   >
@@ -975,12 +929,12 @@ function CartDrawer({
                       style={{ background: "var(--store-border)" }}
                     >
                         <Image
-                        src={item.image}
+                        src={displayImage}
                         alt={item.name}
                         fill
                         sizes="64px"
                         className="object-cover"
-                        unoptimized={item.image.startsWith("data:")}
+                        unoptimized={displayImage.startsWith("data:")}
                       />
                     </div>
 
@@ -992,8 +946,14 @@ function CartDrawer({
                       >
                         {item.name}
                       </p>
+                      {/* 6.1 Show variant label under product name */}
+                      {item.variantLabel && (
+                        <p className="text-xs" style={{ color: "var(--store-ink-secondary)" }}>
+                          {item.variantLabel}
+                        </p>
+                      )}
                       <p className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
-                        {formatARS(item.price)} / u
+                        {formatARS(displayPrice)} / u
                       </p>
                       {isOverStock && (
                         <p className="text-xs font-medium text-red-400">
@@ -1008,7 +968,7 @@ function CartDrawer({
                           style={{ border: `1px solid ${isOverStock ? "rgba(248,113,113,0.5)" : "var(--store-border-strong)"}` }}
                         >
                           <button
-                            onClick={() => setQty(item.productId, item.quantity - 1)}
+                            onClick={() => setQty(key, item.quantity - 1)}
                             className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
                             style={{ color: "var(--store-ink)" }}
                             aria-label={`Reducir cantidad de ${item.name}`}
@@ -1022,7 +982,7 @@ function CartDrawer({
                             {item.quantity}
                           </span>
                           <button
-                            onClick={() => setQty(item.productId, item.quantity + 1)}
+                            onClick={() => setQty(key, item.quantity + 1)}
                             className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
                             style={{ color: "var(--store-ink)" }}
                             aria-label={`Aumentar cantidad de ${item.name}`}
@@ -1032,7 +992,7 @@ function CartDrawer({
                         </div>
 
                         <button
-                          onClick={() => removeItem(item.productId)}
+                          onClick={() => removeItem(key)}
                           className="store-remove-btn flex items-center justify-center h-7 w-7 rounded-full cursor-pointer transition-colors"
                           style={{ color: "var(--store-ink-muted)" }}
                           aria-label={`Eliminar ${item.name} del carrito`}
@@ -1047,7 +1007,7 @@ function CartDrawer({
                       className="text-sm font-bold shrink-0"
                       style={{ color: "var(--store-ink)" }}
                     >
-                      {formatARS(item.price * item.quantity)}
+                      {formatARS(displayPrice * item.quantity)}
                     </p>
                   </li>
                 );
@@ -1128,11 +1088,13 @@ function SectionBlock({
   products,
   accentColor,
   onOpenModal,
+  variantsByProduct,
 }: {
   section: UISection;
   products: UIProduct[];
   accentColor: string;
   onOpenModal: (p: UIProduct) => void;
+  variantsByProduct: Record<string, ProductVariantData>;
 }) {
   return (
     <section id={section.id} className="scroll-mt-24" aria-labelledby={`section-${section.id}`}>
@@ -1165,6 +1127,7 @@ function SectionBlock({
             product={p}
             accentColor={accentColor}
             onOpenModal={onOpenModal}
+            variantData={variantsByProduct[p.id]}
           />
         ))}
       </div>
@@ -1180,12 +1143,14 @@ function SearchResults({
   accentColor,
   onOpenModal,
   onClear,
+  variantsByProduct,
 }: {
   query: string;
   results: UIProduct[];
   accentColor: string;
   onOpenModal: (p: UIProduct) => void;
   onClear: () => void;
+  variantsByProduct: Record<string, ProductVariantData>;
 }) {
   const accentForeground = "#ffffff";
   return (
@@ -1261,6 +1226,7 @@ function SearchResults({
               product={p}
               accentColor={accentColor}
               onOpenModal={onOpenModal}
+              variantData={variantsByProduct[p.id]}
             />
           ))}
         </div>
@@ -1299,10 +1265,12 @@ export default function StoreClient({
   store,
   sections: sectionRows,
   products: productRows,
+  variantsByProduct,
 }: {
   store: StoreRow;
   sections: SectionRow[];
   products: ProductRow[];
+  variantsByProduct: Record<string, ProductVariantData>;
 }) {
   const accentColor = getAccentColor(store.theme);
 
@@ -1320,6 +1288,7 @@ export default function StoreClient({
         name: p.name,
         description: p.description ?? "",
         price: p.price_cents / 100,
+        priceCents: p.price_cents,
         image: getProductImage(p),
         stock: p.stock ?? null,
       })),
@@ -1337,10 +1306,17 @@ export default function StoreClient({
     return map;
   }, [sections, products]);
 
-  // Map productId → stock for CartDrawer stock validation
+  // Map productId → stock (and productId::variantId → variantStock) for CartDrawer validation.
+  // Variant items use the composite key so the warning reflects variant stock, not product stock.
   const productStockMap = useMemo(() => {
-    return new Map(products.map((p) => [p.id, p.stock]));
-  }, [products]);
+    const map = new Map<string, number | null>(products.map((p) => [p.id, p.stock]));
+    for (const [productId, vd] of Object.entries(variantsByProduct)) {
+      for (const variant of vd.variants) {
+        map.set(`${productId}::${variant.id}`, variant.stock);
+      }
+    }
+    return map;
+  }, [products, variantsByProduct]);
 
   const [modalProduct, setModalProduct] = useState<UIProduct | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1388,6 +1364,7 @@ export default function StoreClient({
             accentColor={accentColor}
             onOpenModal={setModalProduct}
             onClear={() => setSearchQuery("")}
+            variantsByProduct={variantsByProduct}
           />
         ) : (
           sections.map((s) => (
@@ -1397,6 +1374,7 @@ export default function StoreClient({
               products={productsBySection.get(s.id) ?? []}
               accentColor={accentColor}
               onOpenModal={setModalProduct}
+              variantsByProduct={variantsByProduct}
             />
           ))
         )}
@@ -1419,6 +1397,7 @@ export default function StoreClient({
           product={modalProduct}
           accentColor={accentColor}
           onClose={() => setModalProduct(null)}
+          hasVariants={(variantsByProduct[modalProduct.id]?.optionTypes?.length ?? 0) > 0}
         />
       )}
     </div>

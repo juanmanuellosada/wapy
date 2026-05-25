@@ -461,6 +461,104 @@ export async function duplicateProduct(
     return { error: 'No se pudo duplicar el producto.' };
   }
 
+  // 3.5 Clone option types, values, variants and join rows atomically.
+  // Images are referenced (same URL), not copied in Storage — see D8.
+  const { data: originalTypes } = await admin
+    .from('product_option_types')
+    .select('id, name, position')
+    .eq('product_id', productId)
+    .order('position', { ascending: true });
+
+  if (originalTypes && originalTypes.length > 0) {
+    // Map originalTypeId → newTypeId
+    const typeIdMap = new Map<string, string>();
+
+    for (const ot of originalTypes) {
+      const { data: newType, error: typeError } = await admin
+        .from('product_option_types')
+        .insert({ product_id: newProduct.id, name: ot.name, position: ot.position })
+        .select('id')
+        .single();
+
+      if (typeError || !newType) {
+        // Best effort — product was created; return it even if variant clone fails
+        console.warn('[duplicateProduct] failed to clone option type:', typeError);
+        revalidatePath('/dashboard', 'layout');
+        return { ok: true, product: newProduct };
+      }
+
+      typeIdMap.set(ot.id, newType.id);
+    }
+
+    // Fetch values for all original types
+    const { data: originalValues } = await admin
+      .from('product_option_values')
+      .select('id, option_type_id, value, position')
+      .in('option_type_id', originalTypes.map((t) => t.id))
+      .order('position', { ascending: true });
+
+    // Map originalValueId → newValueId
+    const valueIdMap = new Map<string, string>();
+
+    for (const ov of originalValues ?? []) {
+      const newTypeId = typeIdMap.get(ov.option_type_id);
+      if (!newTypeId) continue;
+
+      const { data: newValue, error: valueError } = await admin
+        .from('product_option_values')
+        .insert({ option_type_id: newTypeId, value: ov.value, position: ov.position })
+        .select('id')
+        .single();
+
+      if (valueError || !newValue) {
+        console.warn('[duplicateProduct] failed to clone option value:', valueError);
+        continue;
+      }
+
+      valueIdMap.set(ov.id, newValue.id);
+    }
+
+    // Fetch original variants with their option value joins (exclude soft-deleted)
+    const { data: originalVariants } = await admin
+      .from('product_variants')
+      .select('id, stock, price_override, image_url, position, product_variant_option_values(option_value_id)')
+      .eq('product_id', productId)
+      .is('deleted_at', null)
+      .order('position', { ascending: true });
+
+    for (const ov of originalVariants ?? []) {
+      const { data: newVariant, error: variantError } = await admin
+        .from('product_variants')
+        .insert({
+          product_id: newProduct.id,
+          stock: ov.stock,
+          price_override: ov.price_override,
+          image_url: ov.image_url, // same URL — no physical copy per D8
+          position: ov.position,
+        })
+        .select('id')
+        .single();
+
+      if (variantError || !newVariant) {
+        console.warn('[duplicateProduct] failed to clone variant:', variantError);
+        continue;
+      }
+
+      // Clone join rows, mapping old value ids to new value ids
+      const joinRows = (ov.product_variant_option_values ?? [])
+        .map((j: { option_value_id: string }) => {
+          const newValueId = valueIdMap.get(j.option_value_id);
+          if (!newValueId) return null;
+          return { variant_id: newVariant.id, option_value_id: newValueId };
+        })
+        .filter((r): r is { variant_id: string; option_value_id: string } => r !== null);
+
+      if (joinRows.length > 0) {
+        await admin.from('product_variant_option_values').insert(joinRows);
+      }
+    }
+  }
+
   revalidatePath('/dashboard', 'layout');
   return { ok: true, product: newProduct };
 }

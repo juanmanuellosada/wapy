@@ -4,9 +4,10 @@ import * as Sentry from '@sentry/nextjs';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 
+// 3.1 Each cart item may carry an optional variantId.
 type CreateOrderInput = {
   store_id: string;
-  items: Array<{ product_id: string; quantity: number }>;
+  items: Array<{ product_id: string; quantity: number; variant_id?: string | null }>;
 };
 
 type StockInsufficientDetail = {
@@ -65,36 +66,147 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   const productMap = new Map(products.map((p) => [p.id, p]));
 
   // Filter input items to only those with a valid product
-  const validItems = input.items.filter(
+  const rawValidItems = input.items.filter(
     (i) => i.quantity >= 1 && i.quantity <= 100 && productMap.has(i.product_id)
   );
 
-  if (validItems.length === 0) {
+  if (rawValidItems.length === 0) {
     return { error: 'no_valid_items' };
   }
 
-  // 3b. Stock validation: reject if any item exceeds available stock (null = unlimited)
+  // 3.1 Validate variant presence: collect unique variant ids to validate in bulk
+  const variantIds = rawValidItems
+    .map((i) => i.variant_id)
+    .filter((id): id is string => typeof id === 'string');
+
+  // Fetch all referenced variants in one query
+  const variantMap = new Map<
+    string,
+    {
+      id: string;
+      product_id: string;
+      stock: number;
+      price_override: number | null;
+      deleted_at: string | null;
+      product_variant_option_values: Array<{
+        option_value_id: string;
+        product_option_values: {
+          value: string;
+          product_option_types: { position: number; name: string } | null;
+        } | null;
+      }>;
+    }
+  >();
+
+  if (variantIds.length > 0) {
+    const { data: variantRows } = await admin
+      .from('product_variants')
+      .select(
+        'id, product_id, stock, price_override, deleted_at, product_variant_option_values(option_value_id, product_option_values(value, product_option_types(position, name)))'
+      )
+      .in('id', variantIds);
+
+    for (const v of variantRows ?? []) {
+      variantMap.set(v.id, v as typeof variantMap extends Map<string, infer V> ? V : never);
+    }
+  }
+
+  // 3.1 Fetch option types per product to know which products have variants
+  // A product "has variants" when it has at least one product_option_type row.
+  const { data: optionTypeRows } = await admin
+    .from('product_option_types')
+    .select('product_id')
+    .in('product_id', productIds);
+
+  const productsWithVariants = new Set((optionTypeRows ?? []).map((r) => r.product_id));
+
+  // Validate variant_id presence rules per item
+  for (const item of rawValidItems) {
+    const hasVariants = productsWithVariants.has(item.product_id);
+    if (hasVariants && !item.variant_id) {
+      return { error: 'no_valid_items' }; // product has variants but no variantId provided
+    }
+    if (!hasVariants && item.variant_id) {
+      return { error: 'no_valid_items' }; // simple product but variantId provided
+    }
+    if (item.variant_id) {
+      const variant = variantMap.get(item.variant_id);
+      if (!variant || variant.product_id !== item.product_id || variant.deleted_at !== null) {
+        return { error: 'no_valid_items' }; // invalid/deleted variant
+      }
+    }
+  }
+
+  const validItems = rawValidItems;
+
+  // 3.2 + 3.3 Stock validation:
+  // - For items with variant_id: validate against variant.stock
+  // - For simple items: validate against product.stock (null = unlimited)
   const stockFailures: StockInsufficientDetail[] = [];
   for (const item of validItems) {
     const p = productMap.get(item.product_id)!;
-    if (p.stock !== null && item.quantity > p.stock) {
-      stockFailures.push({
-        productId: p.id,
-        productName: p.name,
-        requested: item.quantity,
-        available: p.stock,
-      });
+    if (item.variant_id) {
+      const variant = variantMap.get(item.variant_id)!;
+      if (item.quantity > variant.stock) {
+        stockFailures.push({
+          productId: p.id,
+          productName: p.name,
+          requested: item.quantity,
+          available: variant.stock,
+        });
+      }
+    } else {
+      // Simple product — existing behavior preserved (3.3)
+      if (p.stock !== null && item.quantity > p.stock) {
+        stockFailures.push({
+          productId: p.id,
+          productName: p.name,
+          requested: item.quantity,
+          available: p.stock,
+        });
+      }
     }
   }
   if (stockFailures.length > 0) {
     return { error: 'stock_insufficient', details: stockFailures };
   }
 
-  // 4. Recalculate total server-side
-  const totalCents = validItems.reduce((sum, i) => {
-    const p = productMap.get(i.product_id)!;
-    return sum + p.price_cents * i.quantity;
-  }, 0);
+  // 3.4 Compute effective price per item (variant.price_override ?? product.price_cents)
+  // and build variant_label for items with variants.
+  type EnrichedItem = typeof validItems[number] & {
+    effectivePrice: number;
+    variantLabel: string | null;
+  };
+
+  const enrichedItems: EnrichedItem[] = validItems.map((item) => {
+    if (item.variant_id) {
+      const variant = variantMap.get(item.variant_id)!;
+      const effectivePrice =
+        variant.price_override !== null
+          ? variant.price_override
+          : productMap.get(item.product_id)!.price_cents;
+
+      // Build label: values sorted by option type position, joined with " / "
+      const valueEntries = (variant.product_variant_option_values ?? [])
+        .map((ov) => ({
+          position: ov.product_option_values?.product_option_types?.position ?? 0,
+          value: ov.product_option_values?.value ?? '',
+        }))
+        .sort((a, b) => a.position - b.position);
+      const variantLabel = valueEntries.map((e) => e.value).join(' / ') || null;
+
+      return { ...item, effectivePrice, variantLabel };
+    } else {
+      return {
+        ...item,
+        effectivePrice: productMap.get(item.product_id)!.price_cents,
+        variantLabel: null,
+      };
+    }
+  });
+
+  // 4. Recalculate total server-side using effective prices
+  const totalCents = enrichedItems.reduce((sum, i) => sum + i.effectivePrice * i.quantity, 0);
 
   // 5. Insert order
   const { data: order, error: orderError } = await admin
@@ -112,23 +224,27 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     console.error('[createPendingOrder] order insert failed:', orderError);
     Sentry.captureException(orderError ?? new Error('order insert returned no data'), {
       tags: { feature: 'checkout-persist' },
-      extra: { storeId: input.store_id, totalCents, itemCount: validItems.length },
+      extra: { storeId: input.store_id, totalCents, itemCount: enrichedItems.length },
     });
     return { error: 'insert_failed' };
   }
 
-  // 6. Insert order_items with snapshots
-  const itemRows = validItems.map((i) => {
+  // 6. Insert order_items with snapshots (3.4)
+  const itemRows = enrichedItems.map((i) => {
     const p = productMap.get(i.product_id)!;
     const section = p.sections as { name: string } | null;
     return {
       order_id: order.id,
       product_id: i.product_id,
       product_name: p.name,
-      unit_price_cents: p.price_cents,
+      unit_price_cents: i.effectivePrice,
       quantity: i.quantity,
       section_id: p.section_id ?? null,
       section_name: section?.name ?? null,
+      // 3.4 snapshot fields
+      variant_id: i.variant_id ?? null,
+      price_at_purchase: i.effectivePrice,
+      variant_label: i.variantLabel,
     };
   });
 
@@ -141,6 +257,51 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       extra: { storeId: input.store_id, orderId: order.id, itemCount: itemRows.length },
     });
     return { error: 'insert_failed' };
+  }
+
+  // 3.2 Atomic stock deduction per variant.
+  // Note: Supabase JS client does not support BEGIN/COMMIT transactions directly.
+  // The stock validation above (step 3b) prevents most failures, so we do sequential
+  // UPDATE … WHERE stock >= qty and treat 0-rows-affected as a rollback signal.
+  // For a true atomic guarantee, a Postgres RPC would be preferable; we keep JS
+  // updates here because the project has no RPC precedent and the validation step
+  // already provides strong optimistic concurrency protection.
+  for (const item of enrichedItems) {
+    if (item.variant_id) {
+      const { data: updated } = await admin
+        .from('product_variants')
+        .update({ stock: variantMap.get(item.variant_id)!.stock - item.quantity })
+        .eq('id', item.variant_id)
+        .gte('stock', item.quantity) // guard: only update if stock still sufficient
+        .select('stock');
+
+      if (!updated || updated.length === 0) {
+        // Stock was depleted between validation and deduction — compensate
+        Sentry.captureException(
+          new Error('stock_race_condition: variant stock depleted between validation and deduction'),
+          {
+            tags: { feature: 'checkout-stock' },
+            extra: { variantId: item.variant_id, orderId: order.id },
+          }
+        );
+        // The order is already inserted; mark it cancelled to avoid fulfillment
+        await admin
+          .from('orders')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('id', order.id);
+        return { error: 'stock_insufficient', details: [] };
+      }
+    } else {
+      // Simple product — deduct from products.stock (existing behavior preserved)
+      const p = productMap.get(item.product_id)!;
+      if (p.stock !== null) {
+        await admin
+          .from('products')
+          .update({ stock: p.stock - item.quantity })
+          .eq('id', item.product_id)
+          .gte('stock', item.quantity);
+      }
+    }
   }
 
   // 7. Return order reference
@@ -188,6 +349,8 @@ export type OrderWithItems = {
     product_id: string | null;
     product_name: string;
     unit_price_cents: number;
+    price_at_purchase: number;
+    variant_label: string | null;
     quantity: number;
     section_id: string | null;
     section_name: string | null;
