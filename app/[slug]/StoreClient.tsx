@@ -15,6 +15,7 @@ import {
   Moon,
 } from "lucide-react";
 import type { SocialLinks } from "@/lib/store/social-links";
+import { extractSocialHandle } from "@/lib/store/social-links";
 import type { StoreRow, SectionRow, ProductRow } from "@/lib/storefront/resolve";
 import { useCart } from "./CartContext";
 import WapyFooter from "@/app/components/WapyFooter";
@@ -414,17 +415,17 @@ function StoreHero({
   socialLinks?: SocialLinks;
 }) {
   const socialNetworks: Array<{
-    key: string;
+    key: keyof SocialLinks;
     url?: string | null;
     renderIcon: () => React.ReactNode;
     label: string;
   }> = socialLinks
     ? [
-        { key: "instagram", url: socialLinks.instagram, renderIcon: () => <InstagramIcon size={20} />, label: "Instagram" },
-        { key: "facebook",  url: socialLinks.facebook,  renderIcon: () => <FacebookIcon  size={20} />, label: "Facebook"  },
-        { key: "tiktok",    url: socialLinks.tiktok,    renderIcon: () => <TikTokIcon    size={20} />, label: "TikTok"    },
-        { key: "twitter",   url: socialLinks.twitter,   renderIcon: () => <TwitterIcon   size={20} />, label: "Twitter"   },
-        { key: "youtube",   url: socialLinks.youtube,   renderIcon: () => <YoutubeIcon   size={20} />, label: "YouTube"   },
+        { key: "instagram" as const, url: socialLinks.instagram, renderIcon: () => <InstagramIcon size={18} />, label: "Instagram" },
+        { key: "facebook"  as const, url: socialLinks.facebook,  renderIcon: () => <FacebookIcon  size={18} />, label: "Facebook"  },
+        { key: "tiktok"    as const, url: socialLinks.tiktok,    renderIcon: () => <TikTokIcon    size={18} />, label: "TikTok"    },
+        { key: "twitter"   as const, url: socialLinks.twitter,   renderIcon: () => <TwitterIcon   size={18} />, label: "Twitter"   },
+        { key: "youtube"   as const, url: socialLinks.youtube,   renderIcon: () => <YoutubeIcon   size={18} />, label: "YouTube"   },
       ].filter((s) => s.url && s.url !== "")
     : [];
 
@@ -475,20 +476,26 @@ function StoreHero({
         )}
         {/* Social links */}
         {socialNetworks.length > 0 && (
-          <div className="flex items-center gap-4 mt-2">
-            {socialNetworks.map((s) => (
-              <a
-                key={s.key}
-                href={s.url!}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={s.label}
-                className="transition-colors hover:opacity-80"
-                style={{ color: "var(--store-ink-secondary)" }}
-              >
-                {s.renderIcon()}
-              </a>
-            ))}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2">
+            {socialNetworks.map((s) => {
+              const handle = extractSocialHandle(s.key, s.url!);
+              return (
+                <a
+                  key={s.key}
+                  href={s.url!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={s.label}
+                  className="inline-flex items-center gap-1.5 transition-opacity hover:opacity-80"
+                  style={{ color: "var(--store-ink-secondary)" }}
+                >
+                  {s.renderIcon()}
+                  {handle && (
+                    <span className="text-sm">@{handle}</span>
+                  )}
+                </a>
+              );
+            })}
           </div>
         )}
         {/* Decorative rule */}
