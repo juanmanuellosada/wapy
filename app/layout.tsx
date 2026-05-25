@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Nunito_Sans } from "next/font/google";
 import localFont from "next/font/local";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const agbalumo = localFont({
@@ -32,7 +33,10 @@ export default function RootLayout({
       lang="es"
       className={`${agbalumo.variable} ${nunitoSans.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <Toaster position="top-center" richColors closeButton theme="system" />
+      </body>
     </html>
   );
 }

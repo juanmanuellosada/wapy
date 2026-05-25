@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react';
 import { useDropzone, type FileRejection } from 'react-dropzone';
 import { Upload, X, Loader2 } from 'lucide-react';
+import { toast } from '@/lib/toast';
 
 type UploadedImage = {
   url: string;
@@ -81,8 +82,8 @@ export function ImageUpload({
   const handleDelete = async (url: string) => {
     try {
       await onDelete(url);
-    } catch (e) {
-      console.error('[ImageUpload] delete failed:', e);
+    } catch {
+      toast.error('No pudimos eliminar la imagen. Intentá de nuevo.');
     }
   };
 

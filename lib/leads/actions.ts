@@ -1,5 +1,6 @@
 'use server';
 
+import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { Resend } from 'resend';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
@@ -137,6 +138,10 @@ export async function createLead(formData: FormData): Promise<CreateLeadResult> 
 
   if (insertError || !inserted) {
     console.error('[createLead] INSERT error:', insertError?.message);
+    Sentry.captureException(insertError ?? new Error('lead insert returned no data'), {
+      tags: { feature: 'lead-capture' },
+      extra: { plan },
+    });
     return { error: 'server_error' };
   }
 
@@ -145,6 +150,10 @@ export async function createLead(formData: FormData): Promise<CreateLeadResult> 
     await sendNewLeadEmail({ lead: inserted });
   } catch (e) {
     console.error('[createLead] sendNewLeadEmail failed:', e);
+    Sentry.captureException(e, {
+      tags: { feature: 'lead-capture' },
+      extra: { leadId: inserted.id, plan },
+    });
   }
 
   return { ok: true };
