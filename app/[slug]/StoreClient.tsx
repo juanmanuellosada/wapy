@@ -1367,9 +1367,7 @@ export default function StoreClient({
         description={store.description}
         accentColor={accentColor}
         logoUrl={store.logo_url}
-        // social_links not yet in generated types — cast until user reruns supabase gen types
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        socialLinks={(store as any).social_links as SocialLinks | undefined}
+        socialLinks={(store.social_links ?? undefined) as unknown as SocialLinks | undefined}
       />
 
       <main

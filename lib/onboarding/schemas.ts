@@ -62,8 +62,17 @@ export const whatsappSchema = z.object({
     .pipe(z.string().regex(E164_REGEX, 'Número inválido. Usá solo dígitos (ej: 11 5063 1524) o formato completo (+5491150631524).')),
 });
 
+export const socialLinksSchema = z.object({
+  instagram: z.string().trim().url().or(z.literal('')).optional(),
+  facebook: z.string().trim().url().or(z.literal('')).optional(),
+  tiktok: z.string().trim().url().or(z.literal('')).optional(),
+  twitter: z.string().trim().url().or(z.literal('')).optional(),
+  youtube: z.string().trim().url().or(z.literal('')).optional(),
+});
+
 // Inferred types
 export type BasicsData = z.infer<typeof basicsSchema>;
+export type SocialLinksData = z.infer<typeof socialLinksSchema>;
 export type LookData = z.infer<typeof lookSchema>;
 export type SectionsData = z.infer<typeof sectionsSchema>;
 export type ProductsData = z.infer<typeof productsSchema>;
