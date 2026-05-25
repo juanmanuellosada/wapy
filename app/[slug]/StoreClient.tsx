@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import Image from "next/image";
 // Note: hover affordances are CSS-driven via .store-scope rules in globals.css
 import {
   ShoppingBag,
@@ -13,10 +14,12 @@ import {
   Sun,
   Moon,
 } from "lucide-react";
+import type { SocialLinks } from "@/lib/store/social-links";
 import type { StoreRow, SectionRow, ProductRow } from "@/lib/storefront/resolve";
 import { useCart } from "./CartContext";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
+import { toast } from "@/lib/toast";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,6 +82,48 @@ function WhatsAppIcon({ className }: { className?: string }) {
   );
 }
 
+// Social media SVGs — lucide-react v1 doesn't include social icons
+
+function InstagramIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} aria-hidden>
+      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z" />
+    </svg>
+  );
+}
+
+function FacebookIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} aria-hidden>
+      <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+    </svg>
+  );
+}
+
+function TikTokIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} aria-hidden>
+      <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5.8 20.1a6.34 6.34 0 0 0 10.86-4.43V8.91a8.16 8.16 0 0 0 4.77 1.52V7a4.85 4.85 0 0 1-1.84-.31z" />
+    </svg>
+  );
+}
+
+function TwitterIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} aria-hidden>
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  );
+}
+
+function YoutubeIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} aria-hidden>
+      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+    </svg>
+  );
+}
+
 // ─── Dark Mode Hook ───────────────────────────────────────────────────────────
 
 function useDarkMode(slug: string) {
@@ -121,6 +166,7 @@ interface UIProduct {
   description: string;
   price: number; // ARS float (price_cents / 100)
   image: string;
+  stock: number | null; // null = no tracking, 0 = out of stock, N = N units available
 }
 
 interface UISection {
@@ -174,13 +220,13 @@ function StoreHeader({
       <div className="mx-auto flex max-w-6xl items-center px-4 sm:px-6 h-14 gap-2 sm:gap-3">
         {/* Logo thumbnail + Store name */}
         {logoUrl && (
-          <img
+          <Image
             src={logoUrl}
             alt={storeName}
             width={32}
             height={32}
             className="rounded-full shrink-0 object-cover"
-            style={{ width: 32, height: 32 }}
+            priority
           />
         )}
         <span
@@ -359,12 +405,29 @@ function StoreHero({
   description,
   accentColor,
   logoUrl,
+  socialLinks,
 }: {
   name: string;
   description: string | null;
   accentColor: string;
   logoUrl?: string | null;
+  socialLinks?: SocialLinks;
 }) {
+  const socialNetworks: Array<{
+    key: string;
+    url?: string | null;
+    renderIcon: () => React.ReactNode;
+    label: string;
+  }> = socialLinks
+    ? [
+        { key: "instagram", url: socialLinks.instagram, renderIcon: () => <InstagramIcon size={20} />, label: "Instagram" },
+        { key: "facebook",  url: socialLinks.facebook,  renderIcon: () => <FacebookIcon  size={20} />, label: "Facebook"  },
+        { key: "tiktok",    url: socialLinks.tiktok,    renderIcon: () => <TikTokIcon    size={20} />, label: "TikTok"    },
+        { key: "twitter",   url: socialLinks.twitter,   renderIcon: () => <TwitterIcon   size={20} />, label: "Twitter"   },
+        { key: "youtube",   url: socialLinks.youtube,   renderIcon: () => <YoutubeIcon   size={20} />, label: "YouTube"   },
+      ].filter((s) => s.url && s.url !== "")
+    : [];
+
   return (
     <section
       className="py-16 sm:py-24 px-4 sm:px-6"
@@ -374,18 +437,17 @@ function StoreHero({
       <div className="mx-auto max-w-6xl flex flex-col gap-3">
         {/* Logo */}
         {logoUrl && (
-          <img
+          <Image
             src={logoUrl}
             alt={name}
             width={96}
             height={96}
             className="rounded-full object-cover mb-2"
             style={{
-              width: 96,
-              height: 96,
               outline: `3px solid ${accentColor}`,
               outlineOffset: 2,
             }}
+            priority
           />
         )}
         {/* Eyebrow */}
@@ -411,6 +473,24 @@ function StoreHero({
             {description}
           </p>
         )}
+        {/* Social links */}
+        {socialNetworks.length > 0 && (
+          <div className="flex items-center gap-4 mt-2">
+            {socialNetworks.map((s) => (
+              <a
+                key={s.key}
+                href={s.url!}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={s.label}
+                className="transition-colors hover:opacity-80"
+                style={{ color: "var(--store-ink-secondary)" }}
+              >
+                {s.renderIcon()}
+              </a>
+            ))}
+          </div>
+        )}
         {/* Decorative rule */}
         <div
           className="mt-6 h-px w-16"
@@ -435,9 +515,12 @@ function ProductCard({
 }) {
   const { addItem, openCart } = useCart();
   const accentForeground = "#ffffff";
+  const isOutOfStock = product.stock === 0;
+  const isLowStock = product.stock !== null && product.stock >= 1 && product.stock <= 5;
 
   function handleAdd(e: React.MouseEvent) {
     e.stopPropagation();
+    if (isOutOfStock) return;
     addItem({
       productId: product.id,
       name: product.name,
@@ -449,25 +532,41 @@ function ProductCard({
 
   return (
     <article
-      className="store-card cursor-pointer flex flex-col rounded-2xl overflow-hidden"
+      className={`store-card cursor-pointer flex flex-col rounded-2xl overflow-hidden${isOutOfStock ? " opacity-60" : ""}`}
       onClick={() => onOpenModal(product)}
       style={{
         background: "var(--store-surface)",
         border: "1px solid var(--store-border)",
       }}
-      aria-label={`${product.name}, ${formatARS(product.price)}`}
+      aria-label={`${product.name}, ${formatARS(product.price)}${isOutOfStock ? ", sin stock" : ""}`}
     >
       {/* Image container */}
       <div
         className="relative overflow-hidden"
         style={{ aspectRatio: "3/4", background: "var(--store-border)" }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <Image
           src={product.image}
           alt={product.name}
-          className="store-card-image object-cover w-full h-full"
+          fill
+          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+          className="store-card-image object-cover"
+          unoptimized={product.image.startsWith("data:")}
         />
+        {isOutOfStock && (
+          <div className="absolute inset-0 flex items-end justify-start p-2 pointer-events-none">
+            <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-600/90 text-white">
+              Sin stock
+            </span>
+          </div>
+        )}
+        {isLowStock && (
+          <div className="absolute inset-0 flex items-end justify-start p-2 pointer-events-none">
+            <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-500/90 text-white">
+              Quedan {product.stock}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Info */}
@@ -487,12 +586,13 @@ function ProductCard({
           </span>
           <button
             onClick={handleAdd}
-            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold cursor-pointer transition-opacity hover:opacity-80"
+            disabled={isOutOfStock}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-opacity${isOutOfStock ? " opacity-40 cursor-not-allowed" : " cursor-pointer hover:opacity-80"}`}
             style={{ background: accentColor, color: accentForeground }}
-            aria-label={`Agregar ${product.name} al carrito`}
+            aria-label={isOutOfStock ? `${product.name} sin stock` : `Agregar ${product.name} al carrito`}
           >
             <Plus className="h-3 w-3" aria-hidden="true" />
-            Agregar
+            {isOutOfStock ? "Sin stock" : "Agregar"}
           </button>
         </div>
       </div>
@@ -517,6 +617,11 @@ function ProductModal({
   const accentForeground = "#ffffff";
 
   const existingItem = items.find((i) => i.productId === product.id);
+  const existingQty = existingItem?.quantity ?? 0;
+  const isOutOfStock = product.stock === 0;
+  // availableToAdd: how many more units the user can add (null = unlimited)
+  const availableToAdd = product.stock !== null ? Math.max(0, product.stock - existingQty) : null;
+  const canAdd = !isOutOfStock && (availableToAdd === null || availableToAdd > 0);
 
   // Close on Escape
   useEffect(() => {
@@ -535,7 +640,21 @@ function ProductModal({
     };
   }, []);
 
+  function handleIncrease() {
+    if (availableToAdd !== null && qty >= availableToAdd) {
+      toast.info(`Solo quedan ${product.stock} unidades disponibles`);
+      return;
+    }
+    setLocalQty(qty + 1);
+  }
+
   function handleAdd() {
+    if (isOutOfStock) return;
+    // Check total (existing + new qty) against stock
+    if (product.stock !== null && existingQty + qty > product.stock) {
+      toast.info(`Solo quedan ${product.stock} unidades disponibles`);
+      return;
+    }
     if (existingItem) {
       setQty(product.id, existingItem.quantity + qty);
     } else {
@@ -588,11 +707,13 @@ function ProductModal({
           className="relative w-full shrink-0"
           style={{ aspectRatio: "4/3", background: "var(--store-border)" }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+            <Image
             src={product.image}
             alt={product.name}
-            className="w-full h-full object-cover"
+            fill
+            sizes="(max-width: 640px) 100vw, 576px"
+            className="object-cover"
+            unoptimized={product.image.startsWith("data:")}
           />
         </div>
 
@@ -619,49 +740,57 @@ function ProductModal({
             </p>
           )}
 
-          {/* Quantity selector */}
-          <div className="flex items-center gap-4">
-            <span className="text-sm font-medium" style={{ color: "var(--store-ink)" }}>
-              Cantidad
-            </span>
-            <div
-              className="flex items-center gap-0 rounded-full overflow-hidden"
-              style={{ border: "1px solid var(--store-border-strong)" }}
-            >
-              <button
-                onClick={() => setLocalQty(Math.max(1, qty - 1))}
-                className="store-icon-btn flex h-10 w-10 items-center justify-center cursor-pointer transition-colors"
-                style={{ color: "var(--store-ink)" }}
-                aria-label="Reducir cantidad"
-              >
-                <Minus className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-              <span
-                className="w-8 text-center text-sm font-semibold select-none"
-                style={{ color: "var(--store-ink)" }}
-                aria-live="polite"
-                aria-label={`Cantidad: ${qty}`}
-              >
-                {qty}
+          {/* Quantity selector — hidden when out of stock */}
+          {!isOutOfStock && (
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-medium" style={{ color: "var(--store-ink)" }}>
+                Cantidad
               </span>
-              <button
-                onClick={() => setLocalQty(qty + 1)}
-                className="store-icon-btn flex h-10 w-10 items-center justify-center cursor-pointer transition-colors"
-                style={{ color: "var(--store-ink)" }}
-                aria-label="Aumentar cantidad"
+              <div
+                className="flex items-center gap-0 rounded-full overflow-hidden"
+                style={{ border: "1px solid var(--store-border-strong)" }}
               >
-                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
+                <button
+                  onClick={() => setLocalQty(Math.max(1, qty - 1))}
+                  className="store-icon-btn flex h-10 w-10 items-center justify-center cursor-pointer transition-colors"
+                  style={{ color: "var(--store-ink)" }}
+                  aria-label="Reducir cantidad"
+                >
+                  <Minus className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+                <span
+                  className="w-8 text-center text-sm font-semibold select-none"
+                  style={{ color: "var(--store-ink)" }}
+                  aria-live="polite"
+                  aria-label={`Cantidad: ${qty}`}
+                >
+                  {qty}
+                </span>
+                <button
+                  onClick={handleIncrease}
+                  className={`store-icon-btn flex h-10 w-10 items-center justify-center transition-colors${availableToAdd !== null && qty >= availableToAdd ? " opacity-40 cursor-not-allowed" : " cursor-pointer"}`}
+                  style={{ color: "var(--store-ink)" }}
+                  aria-label="Aumentar cantidad"
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </div>
+              {availableToAdd !== null && availableToAdd <= 5 && availableToAdd > 0 && (
+                <span className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
+                  Quedan {availableToAdd}
+                </span>
+              )}
             </div>
-          </div>
+          )}
 
           <button
             onClick={handleAdd}
-            className="w-full rounded-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer transition-opacity hover:opacity-85"
+            disabled={!canAdd}
+            className={`w-full rounded-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 transition-opacity${canAdd ? " cursor-pointer hover:opacity-85" : " opacity-50 cursor-not-allowed"}`}
             style={{ background: accentColor, color: accentForeground }}
           >
             <ShoppingBag className="h-4 w-4" aria-hidden="true" />
-            Agregar al carrito
+            {isOutOfStock ? "Sin stock disponible" : "Agregar al carrito"}
           </button>
         </div>
       </div>
@@ -676,17 +805,34 @@ function CartDrawer({
   storeName,
   accentColor,
   whatsappNumber,
+  productStockMap,
 }: {
   storeId: string;
   storeName: string;
   accentColor: string;
   whatsappNumber: string | null;
+  productStockMap: Map<string, number | null>;
 }) {
   const { items, open, totalPrice, removeItem, setQty, closeCart } = useCart();
   const accentForeground = "#ffffff";
 
+  // Items where quantity exceeds current stock (stock !== null only)
+  const overStockedItems = items.filter((item) => {
+    const stock = productStockMap.get(item.productId);
+    return stock !== undefined && stock !== null && item.quantity > stock;
+  });
+  const hasStockIssues = overStockedItems.length > 0;
+
   async function handleWhatsApp() {
     if (!whatsappNumber) return;
+
+    // B3: block checkout if any cart item exceeds available stock
+    if (hasStockIssues) {
+      const names = overStockedItems.map((i) => i.name).join(", ");
+      toast.error(`Hay productos sin stock suficiente: ${names}. Revisá tu carrito.`);
+      return;
+    }
+
     const lines = items.map(
       (i) => `• ${i.quantity}x ${i.name} — ${formatARS(i.price * i.quantity)}`
     );
@@ -706,6 +852,9 @@ function CartDrawer({
       });
       if ('order_id' in result) {
         orderRef = `\n\nReferencia: #${result.order_id.slice(0, 8)}`;
+      } else if ('error' in result && result.error === 'stock_insufficient') {
+        toast.error("Algunos productos ya no tienen stock suficiente. Revisá tu carrito.");
+        return;
       }
     } catch {
       // silencioso, abrir wa.me igual
@@ -804,87 +953,98 @@ function CartDrawer({
             </div>
           ) : (
             <ul className="flex flex-col gap-4" aria-label="Productos en el carrito">
-              {items.map((item) => (
-                <li
-                  key={item.productId}
-                  className="flex gap-3 items-start"
-                  style={{ paddingBottom: "1rem", borderBottom: "1px solid var(--store-border)" }}
-                >
-                  {/* Thumbnail */}
-                  <div
-                    className="relative h-16 w-16 rounded-xl overflow-hidden shrink-0"
-                    style={{ background: "var(--store-border)" }}
+              {items.map((item) => {
+                const itemStock = productStockMap.get(item.productId);
+                const isOverStock = itemStock !== undefined && itemStock !== null && item.quantity > itemStock;
+                return (
+                  <li
+                    key={item.productId}
+                    className="flex gap-3 items-start"
+                    style={{ paddingBottom: "1rem", borderBottom: "1px solid var(--store-border)" }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={item.image}
-                      alt={item.name}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-
-                  {/* Info + controls */}
-                  <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                    <p
-                      className="text-sm font-semibold leading-snug truncate"
-                      style={{ color: "var(--store-ink)" }}
+                    {/* Thumbnail */}
+                    <div
+                      className="relative h-16 w-16 rounded-xl overflow-hidden shrink-0"
+                      style={{ background: "var(--store-border)" }}
                     >
-                      {item.name}
-                    </p>
-                    <p className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
-                      {formatARS(item.price)} / u
-                    </p>
+                        <Image
+                        src={item.image}
+                        alt={item.name}
+                        fill
+                        sizes="64px"
+                        className="object-cover"
+                        unoptimized={item.image.startsWith("data:")}
+                      />
+                    </div>
 
-                    {/* Quantity controls */}
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <div
-                        className="flex items-center rounded-full overflow-hidden"
-                        style={{ border: "1px solid var(--store-border-strong)" }}
+                    {/* Info + controls */}
+                    <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                      <p
+                        className="text-sm font-semibold leading-snug truncate"
+                        style={{ color: "var(--store-ink)" }}
                       >
+                        {item.name}
+                      </p>
+                      <p className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
+                        {formatARS(item.price)} / u
+                      </p>
+                      {isOverStock && (
+                        <p className="text-xs font-medium text-red-400">
+                          Solo quedan {itemStock} unidades
+                        </p>
+                      )}
+
+                      {/* Quantity controls */}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <div
+                          className="flex items-center rounded-full overflow-hidden"
+                          style={{ border: `1px solid ${isOverStock ? "rgba(248,113,113,0.5)" : "var(--store-border-strong)"}` }}
+                        >
+                          <button
+                            onClick={() => setQty(item.productId, item.quantity - 1)}
+                            className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
+                            style={{ color: "var(--store-ink)" }}
+                            aria-label={`Reducir cantidad de ${item.name}`}
+                          >
+                            <Minus className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                          <span
+                            className="w-6 text-center text-xs font-semibold select-none"
+                            style={{ color: isOverStock ? "rgb(248,113,113)" : "var(--store-ink)" }}
+                          >
+                            {item.quantity}
+                          </span>
+                          <button
+                            onClick={() => setQty(item.productId, item.quantity + 1)}
+                            className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
+                            style={{ color: "var(--store-ink)" }}
+                            aria-label={`Aumentar cantidad de ${item.name}`}
+                          >
+                            <Plus className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        </div>
+
                         <button
-                          onClick={() => setQty(item.productId, item.quantity - 1)}
-                          className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
-                          style={{ color: "var(--store-ink)" }}
-                          aria-label={`Reducir cantidad de ${item.name}`}
+                          onClick={() => removeItem(item.productId)}
+                          className="store-remove-btn flex items-center justify-center h-7 w-7 rounded-full cursor-pointer transition-colors"
+                          style={{ color: "var(--store-ink-muted)" }}
+                          aria-label={`Eliminar ${item.name} del carrito`}
                         >
-                          <Minus className="h-3 w-3" aria-hidden="true" />
-                        </button>
-                        <span
-                          className="w-6 text-center text-xs font-semibold select-none"
-                          style={{ color: "var(--store-ink)" }}
-                        >
-                          {item.quantity}
-                        </span>
-                        <button
-                          onClick={() => setQty(item.productId, item.quantity + 1)}
-                          className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
-                          style={{ color: "var(--store-ink)" }}
-                          aria-label={`Aumentar cantidad de ${item.name}`}
-                        >
-                          <Plus className="h-3 w-3" aria-hidden="true" />
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>
                       </div>
-
-                      <button
-                        onClick={() => removeItem(item.productId)}
-                        className="store-remove-btn flex items-center justify-center h-7 w-7 rounded-full cursor-pointer transition-colors"
-                        style={{ color: "var(--store-ink-muted)" }}
-                        aria-label={`Eliminar ${item.name} del carrito`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
                     </div>
-                  </div>
 
-                  {/* Line total */}
-                  <p
-                    className="text-sm font-bold shrink-0"
-                    style={{ color: "var(--store-ink)" }}
-                  >
-                    {formatARS(item.price * item.quantity)}
-                  </p>
-                </li>
-              ))}
+                    {/* Line total */}
+                    <p
+                      className="text-sm font-bold shrink-0"
+                      style={{ color: "var(--store-ink)" }}
+                    >
+                      {formatARS(item.price * item.quantity)}
+                    </p>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -915,12 +1075,14 @@ function CartDrawer({
             {whatsappNumber ? (
               <button
                 onClick={handleWhatsApp}
-                className="w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 cursor-pointer transition-opacity hover:opacity-90"
+                disabled={hasStockIssues}
+                className={`w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 transition-opacity${hasStockIssues ? " opacity-50 cursor-not-allowed" : " cursor-pointer hover:opacity-90"}`}
                 style={{ background: "#25D366", color: "#ffffff" }}
-                aria-label="Enviar pedido por WhatsApp"
+                aria-label={hasStockIssues ? "Corregí el stock para continuar" : "Enviar pedido por WhatsApp"}
+                title={hasStockIssues ? "Reducí la cantidad de los productos marcados para continuar" : undefined}
               >
                 <WhatsAppIcon className="h-5 w-5" />
-                Pedir por WhatsApp
+                {hasStockIssues ? "Corregí el stock" : "Pedir por WhatsApp"}
               </button>
             ) : (
               <div className="flex flex-col gap-1">
@@ -1152,6 +1314,7 @@ export default function StoreClient({
         description: p.description ?? "",
         price: p.price_cents / 100,
         image: getProductImage(p),
+        stock: p.stock ?? null,
       })),
     [productRows]
   );
@@ -1166,6 +1329,11 @@ export default function StoreClient({
     }
     return map;
   }, [sections, products]);
+
+  // Map productId → stock for CartDrawer stock validation
+  const productStockMap = useMemo(() => {
+    return new Map(products.map((p) => [p.id, p.stock]));
+  }, [products]);
 
   const [modalProduct, setModalProduct] = useState<UIProduct | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1199,6 +1367,9 @@ export default function StoreClient({
         description={store.description}
         accentColor={accentColor}
         logoUrl={store.logo_url}
+        // social_links not yet in generated types — cast until user reruns supabase gen types
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        socialLinks={(store as any).social_links as SocialLinks | undefined}
       />
 
       <main
@@ -1233,6 +1404,7 @@ export default function StoreClient({
         storeName={store.name}
         accentColor={accentColor}
         whatsappNumber={store.whatsapp_number}
+        productStockMap={productStockMap}
       />
 
       <FloatingCartButton accentColor={accentColor} />

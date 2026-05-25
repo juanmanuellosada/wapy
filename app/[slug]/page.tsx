@@ -14,14 +14,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   if (resolution.kind === "render") {
     const { store } = resolution;
+    const title = `${store.name} — Pedí por WhatsApp`;
+    const description =
+      store.description ?? `Catálogo de ${store.name}. Pedí por WhatsApp.`;
+    const ogImageUrl = `/${slug}/opengraph-image`;
     return {
-      title: store.name,
-      description: store.description ?? `${store.name} — tienda online en Wapy`,
+      title,
+      description,
       openGraph: {
-        title: store.name,
-        description: store.description ?? undefined,
-        images: store.logo_url ? [store.logo_url] : undefined,
+        title,
+        description,
+        images: [{ url: ogImageUrl }],
         type: "website",
+      },
+      twitter: {
+        card: "summary_large_image",
+        title,
+        description,
+        images: [ogImageUrl],
       },
     };
   }
@@ -33,7 +43,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     };
   }
 
-  return { title: "Esta tienda no existe" };
+  return { title: "Tienda no encontrada" };
 }
 
 export default async function SlugPage({ params }: Props) {
