@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, Eye, EyeOff, ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import { SortableList } from '@/app/components/store/SortableList';
 import { ProductModal } from '@/app/components/store/ProductModal';
-import { saveStoreProduct, deleteStoreProduct } from '@/lib/store/actions';
+import { saveStoreProduct, deleteStoreProduct, duplicateProduct } from '@/lib/store/actions';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
+import { toast } from '@/lib/toast';
 
 const NO_SECTION_KEY = '__no_section__';
 
@@ -30,6 +31,7 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
   const toggleCollapsed = (key: string) => {
     setCollapsed((prev) => {
@@ -100,6 +102,23 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
       return;
     }
     setProducts((prev) => prev.map((p) => (p.id === product.id ? updated : p)));
+  };
+
+  const handleDuplicate = async (product: Product) => {
+    setDuplicatingId(product.id);
+    try {
+      const result = await duplicateProduct(product.id);
+      if ('error' in result) {
+        toast.error(result.error);
+        return;
+      }
+      setProducts((prev) => [...prev, result.product as Product]);
+      toast.success('Producto duplicado');
+    } catch {
+      toast.error('No se pudo duplicar');
+    } finally {
+      setDuplicatingId(null);
+    }
   };
 
   const handleReorder = async (newOrder: Product[]) => {
@@ -189,7 +208,18 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-[#FBF7EC] truncate">{product.name}</p>
-                              <p className="text-xs text-[#F5C84B]/80">{formatPrice(product.price_cents)}</p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-xs text-[#F5C84B]/80">{formatPrice(product.price_cents)}</p>
+                                {product.stock === 0 && (
+                                  <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">Sin stock</span>
+                                )}
+                                {product.stock !== null && product.stock >= 1 && product.stock <= 5 && (
+                                  <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">Stock bajo: {product.stock}</span>
+                                )}
+                                {product.stock !== null && product.stock > 5 && (
+                                  <span className="text-xs text-white/30">Stock: {product.stock}</span>
+                                )}
+                              </div>
                             </div>
                             <div className="flex items-center gap-1">
                               <button
@@ -212,6 +242,16 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
                                 aria-label={`Editar ${product.name}`}
                               >
                                 <Pencil size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDuplicate(product)}
+                                disabled={duplicatingId === product.id}
+                                className="w-7 h-7 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                aria-label={`Duplicar ${product.name}`}
+                                title="Duplicar producto"
+                              >
+                                <Copy size={13} />
                               </button>
                               <button
                                 type="button"

@@ -8,7 +8,9 @@ import {
   basicsSchema,
   lookSchema,
   whatsappSchema,
+  socialLinksSchema,
 } from '@/lib/onboarding/schemas';
+import type { SocialLinks } from '@/lib/store/social-links';
 
 // Section item schema (without the min-1 array constraint — dashboard can have 0)
 const sectionItemSchema = z.object({
@@ -55,6 +57,7 @@ type SaveResult = { ok: true; storeId: string } | { error: string };
 export async function saveStoreBasics(formData: {
   name: string;
   description?: string;
+  social_links?: SocialLinks;
 }): Promise<SaveResult> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'No se encontró la tienda.' };
@@ -68,12 +71,27 @@ export async function saveStoreBasics(formData: {
   }
   const { name, description } = parsed.data;
 
+  // Validate social links if provided; normalize empty strings to absent keys
+  let social_links: Record<string, string> = {};
+  if (formData.social_links) {
+    const parsedLinks = socialLinksSchema.safeParse(formData.social_links);
+    if (!parsedLinks.success) {
+      return { error: parsedLinks.error.issues[0].message };
+    }
+    for (const [key, val] of Object.entries(parsedLinks.data)) {
+      if (val && val !== '') social_links[key] = val;
+    }
+  }
+
   const admin = createAdminClient();
-  const { error } = await admin
-    .from('stores')
+  // social_links column not yet in the generated types — cast via `as any` until
+  // the user reruns `supabase gen types` after applying migration 020.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (admin.from('stores') as any)
     .update({
       name,
       description: description ?? null,
+      social_links,
       updated_at: new Date().toISOString(),
     })
     .eq('id', store.id);
@@ -81,6 +99,7 @@ export async function saveStoreBasics(formData: {
   if (error) return { error: 'No se pudo guardar la información.' };
 
   revalidatePath('/dashboard', 'layout');
+  revalidatePath('/[slug]', 'page');
   return { ok: true, storeId: store.id };
 }
 
@@ -349,6 +368,101 @@ export async function deleteStoreProduct(
 
   revalidatePath('/dashboard', 'layout');
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// duplicateProduct — INSERT a copy of an existing product with "(copia N)" suffix.
+// ---------------------------------------------------------------------------
+
+export async function duplicateProduct(
+  productId: string
+): Promise<{ ok: true; product: { id: string; name: string; section_id: string | null; position: number; is_active: boolean; image_urls: string[]; price_cents: number; stock: number | null; description: string | null; store_id: string; currency: string | null; created_at: string; updated_at: string } } | { error: string }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const admin = createAdminClient();
+
+  // Fetch original product (must belong to owner's store)
+  const { data: original } = await admin
+    .from('products')
+    .select('*')
+    .eq('id', productId)
+    .eq('store_id', store.id)
+    .maybeSingle();
+
+  if (!original) return { error: 'Producto no encontrado.' };
+
+  // Determine the base name (strip existing "(copia N)" suffix if present)
+  const baseName = original.name.replace(/ \(copia(?: \d+)?\)$/, '');
+
+  // Find existing copies to compute next suffix number
+  const { data: siblings } = await admin
+    .from('products')
+    .select('name')
+    .eq('store_id', store.id)
+    .like('name', `${baseName} (copia%`);
+
+  let copyNumber = 1;
+  if (siblings && siblings.length > 0) {
+    const numbers = siblings.map((s) => {
+      const m = s.name.match(/ \(copia(?: (\d+))?\)$/);
+      if (!m) return 0;
+      return m[1] ? parseInt(m[1], 10) : 1;
+    });
+    copyNumber = Math.max(...numbers) + 1;
+  }
+
+  const newName = copyNumber === 1 ? `${baseName} (copia)` : `${baseName} (copia ${copyNumber})`;
+
+  // Compute position: MAX(position) in same section + 1
+  const { data: maxRow } = await admin
+    .from('products')
+    .select('position')
+    .eq('store_id', store.id)
+    .eq('section_id', original.section_id ?? '')
+    .order('position', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // If section_id is null, query differently
+  let newPosition: number;
+  if (original.section_id === null) {
+    const { data: maxRowNull } = await admin
+      .from('products')
+      .select('position')
+      .eq('store_id', store.id)
+      .is('section_id', null)
+      .order('position', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    newPosition = (maxRowNull?.position ?? -1) + 1;
+  } else {
+    newPosition = (maxRow?.position ?? -1) + 1;
+  }
+
+  const { data: newProduct, error: insertError } = await admin
+    .from('products')
+    .insert({
+      store_id: store.id,
+      name: newName,
+      description: original.description,
+      price_cents: original.price_cents,
+      stock: original.stock,
+      section_id: original.section_id,
+      image_urls: original.image_urls,
+      position: newPosition,
+      is_active: false,
+      currency: original.currency ?? 'ARS',
+    })
+    .select('*')
+    .single();
+
+  if (insertError || !newProduct) {
+    return { error: 'No se pudo duplicar el producto.' };
+  }
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true, product: newProduct };
 }
 
 // ---------------------------------------------------------------------------

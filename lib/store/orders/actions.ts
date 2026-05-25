@@ -1,5 +1,6 @@
 'use server';
 
+import * as Sentry from '@sentry/nextjs';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 
@@ -8,9 +9,17 @@ type CreateOrderInput = {
   items: Array<{ product_id: string; quantity: number }>;
 };
 
+type StockInsufficientDetail = {
+  productId: string;
+  productName: string;
+  requested: number;
+  available: number;
+};
+
 type CreateOrderResult =
   | { order_id: string }
-  | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' };
+  | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' }
+  | { error: 'stock_insufficient'; details: StockInsufficientDetail[] };
 
 export async function createPendingOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
   const admin = createAdminClient();
@@ -43,7 +52,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   // 3. Fetch valid products with section info, filter to active + belonging to this store
   const { data: products } = await admin
     .from('products')
-    .select('id, name, price_cents, section_id, sections(name)')
+    .select('id, name, price_cents, stock, section_id, sections(name)')
     .eq('store_id', input.store_id)
     .eq('is_active', true)
     .in('id', productIds);
@@ -62,6 +71,23 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
 
   if (validItems.length === 0) {
     return { error: 'no_valid_items' };
+  }
+
+  // 3b. Stock validation: reject if any item exceeds available stock (null = unlimited)
+  const stockFailures: StockInsufficientDetail[] = [];
+  for (const item of validItems) {
+    const p = productMap.get(item.product_id)!;
+    if (p.stock !== null && item.quantity > p.stock) {
+      stockFailures.push({
+        productId: p.id,
+        productName: p.name,
+        requested: item.quantity,
+        available: p.stock,
+      });
+    }
+  }
+  if (stockFailures.length > 0) {
+    return { error: 'stock_insufficient', details: stockFailures };
   }
 
   // 4. Recalculate total server-side
@@ -84,6 +110,10 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
 
   if (orderError || !order) {
     console.error('[createPendingOrder] order insert failed:', orderError);
+    Sentry.captureException(orderError ?? new Error('order insert returned no data'), {
+      tags: { feature: 'checkout-persist' },
+      extra: { storeId: input.store_id, totalCents, itemCount: validItems.length },
+    });
     return { error: 'insert_failed' };
   }
 
@@ -106,6 +136,10 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
 
   if (itemsError) {
     console.error('[createPendingOrder] order_items insert failed:', itemsError);
+    Sentry.captureException(itemsError, {
+      tags: { feature: 'checkout-persist' },
+      extra: { storeId: input.store_id, orderId: order.id, itemCount: itemRows.length },
+    });
     return { error: 'insert_failed' };
   }
 
@@ -201,6 +235,11 @@ export async function listOrders(
 
   if (error) {
     console.error('[listOrders] query failed:', error);
+    Sentry.captureException(error, {
+      tags: { feature: 'orders-dashboard' },
+      extra: { storeId: store.id },
+    });
+    // TODO: surface error to caller — currently returns empty list silently
     return { orders: [] };
   }
 
@@ -381,6 +420,77 @@ export async function getOrderStats(
 }
 
 // ---------------------------------------------------------------------------
+// exportOrdersCsv
+// ---------------------------------------------------------------------------
+
+function csvEscape(value: string | null | undefined): string {
+  const s = value ?? '';
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function formatCsvDate(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('es-AR', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
+function formatCsvTotal(cents: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(cents / 100);
+}
+
+export async function exportOrdersCsv(
+  filters: ListOrdersFilters
+): Promise<{ csv: string } | { error: 'unauthorized' | 'empty' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const result = await listOrders(filters);
+  if ('error' in result) return { error: 'unauthorized' };
+
+  const { orders } = result;
+  if (orders.length === 0) return { error: 'empty' };
+
+  const header = ['id', 'created_at', 'status', 'customer_name', 'total', 'currency', 'items_count', 'items_summary', 'notes'].join(',');
+
+  const rows = orders.map((order) => {
+    const itemsSummary = order.items
+      .map((i) => `${i.quantity}x ${i.product_name}`)
+      .join(' | ');
+
+    return [
+      csvEscape(order.id),
+      csvEscape(formatCsvDate(order.created_at)),
+      csvEscape(order.status),
+      csvEscape(order.customer_name),
+      csvEscape(formatCsvTotal(order.total_cents)),
+      csvEscape(order.currency),
+      String(order.items.length),
+      csvEscape(itemsSummary),
+      csvEscape(order.notes),
+    ].join(',');
+  });
+
+  // BOM UTF-8 so Excel (es-AR) opens accents correctly
+  const csv = '﻿' + [header, ...rows].join('\r\n');
+  return { csv };
+}
+
+// ---------------------------------------------------------------------------
 // updateOrderStatus
 // ---------------------------------------------------------------------------
 
@@ -436,6 +546,10 @@ export async function updateOrderStatus(
 
   if (updateError || !updated) {
     console.error('[updateOrderStatus] update failed:', updateError);
+    Sentry.captureException(updateError ?? new Error('order update returned no data'), {
+      tags: { feature: 'orders-dashboard' },
+      extra: { orderId: order_id, nextStatus: next_status },
+    });
     return { error: 'not_found' };
   }
 
