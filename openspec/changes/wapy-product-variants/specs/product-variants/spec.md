@@ -130,9 +130,6 @@ El sistema SHALL renderizar la card del producto en el storefront con un selecto
 - **WHEN** un producto tiene variedades y el cliente no ha completado la selección de todos los tipos de opción
 - **THEN** el botón "Agregar" queda deshabilitado hasta que la selección esté completa
 
-#### Scenario: Variedad sin price_override oculta el precio en la card
-- **WHEN** un cliente selecciona una variedad cuyo `price_override` es null
-- **THEN** la card oculta el precio cerca del botón (el precio ya figura en el contexto del producto); cuando no hay variedad activa aún, el precio del producto sigue siendo visible como referencia
 
 ### Requirement: Carrito y checkout operan sobre variedad cuando aplica
 El sistema SHALL registrar `variant_id` en cada `order_item` cuando el producto tenga variedades. La validación y el descuento de stock al confirmar pedido SHALL ser atómicos por línea y operar sobre `product_variants.stock` o `products.stock` según corresponda. Cuando `product_variants.stock` es `null` (sin tracking), NO se valida ni descuenta stock para esa línea.

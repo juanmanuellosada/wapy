@@ -378,37 +378,27 @@ function VariantProductCard<T extends SimpleProduct>({
           ))}
 
         {/* Price + Add button */}
-        {/* Show price only when no variant is active yet (selection incomplete) or the active variant
-            has a price_override. When the variant has no price_override its price equals the product
-            price, which is redundant here. */}
-        {(() => {
-          const showPrice = activeVariant === null || activeVariant.price_override !== null;
-          return (
-            <div className={`flex items-center gap-2 mt-auto${showPrice ? " justify-between" : " justify-end"}`}>
-              {showPrice && (
-                <span className="text-sm sm:text-base font-bold" style={{ color: "var(--store-ink)" }}>
-                  {formatARS(effectivePrice)}
-                </span>
-              )}
-              <button
-                onClick={handleAdd}
-                disabled={!canAdd}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-opacity${canAdd ? " cursor-pointer hover:opacity-80" : " opacity-40 cursor-not-allowed"}`}
-                style={{ background: accentColor, color: "#ffffff" }}
-                aria-label={
-                  !isSelectionComplete
-                    ? `Elegí las opciones de ${product.name} para agregar`
-                    : isOutOfStock
-                    ? `${product.name} sin stock`
-                    : `Agregar ${product.name}${variantLabel ? ` (${variantLabel})` : ""} al carrito`
-                }
-              >
-                <Plus className="h-3 w-3" aria-hidden="true" />
-                {btnLabel}
-              </button>
-            </div>
-          );
-        })()}
+        <div className="flex items-center justify-between gap-2 mt-auto">
+          <span className="text-sm sm:text-base font-bold" style={{ color: "var(--store-ink)" }}>
+            {formatARS(effectivePrice)}
+          </span>
+          <button
+            onClick={handleAdd}
+            disabled={!canAdd}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-opacity${canAdd ? " cursor-pointer hover:opacity-80" : " opacity-40 cursor-not-allowed"}`}
+            style={{ background: accentColor, color: "#ffffff" }}
+            aria-label={
+              !isSelectionComplete
+                ? `Elegí las opciones de ${product.name} para agregar`
+                : isOutOfStock
+                ? `${product.name} sin stock`
+                : `Agregar ${product.name}${variantLabel ? ` (${variantLabel})` : ""} al carrito`
+            }
+          >
+            <Plus className="h-3 w-3" aria-hidden="true" />
+            {btnLabel}
+          </button>
+        </div>
       </div>
     </article>
   );

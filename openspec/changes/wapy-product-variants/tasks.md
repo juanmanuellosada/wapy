@@ -75,8 +75,8 @@
 - [x] 10.7 **Fix 1 — CartDrawer**: `StoreClient.tsx` — `overStockedItems` ya filtra `stock !== null` correctamente; confirmado por revisión de código
 - [x] 10.8 **Fix 1 — CSV**: `lib/store/exports/products.ts` — variedad con `stock = null` exporta columna Stock vacía
 - [x] 10.9 **Fix 1 — spec**: `spec.md` actualizado con semantics de stock nullable y scenarios correspondientes
-- [x] 10.10 **Fix 2 — precio condicional**: `ProductCardClient.tsx` — precio oculto cuando la variedad activa no tiene `price_override`; visible en estado inicial (sin selección) y cuando hay override
-- [x] 10.11 **Fix 2 — spec**: `spec.md` actualizado con scenario de precio condicional
+- [x] 10.10 ~~**Fix 2 — precio condicional**: `ProductCardClient.tsx` — precio oculto cuando la variedad activa no tiene `price_override`; visible en estado inicial (sin selección) y cuando hay override~~ **REVERTIDO** — usuario confirmó en prod que el precio debe mostrarse siempre; revertido a `justify-between` permanente con `formatARS(effectivePrice)` incondicional
+- [x] 10.11 ~~**Fix 2 — spec**: `spec.md` actualizado con scenario de precio condicional~~ **REVERTIDO** — scenario "Variedad sin price_override oculta el precio en la card" eliminado de spec.md
 
 ## 11. Hardening post-incidente (tipos de opción sin valores)
 
