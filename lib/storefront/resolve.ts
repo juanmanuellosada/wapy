@@ -26,7 +26,7 @@ export interface StorefrontOptionType {
 /** A serialized product variant ready for the client-side selector. */
 export interface StorefrontVariant {
   id: string;
-  stock: number;
+  stock: number | null; // null = no tracking (infinite stock)
   price_override: number | null;
   image_url: string | null;
   position: number;
@@ -138,7 +138,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
       const variantsByProductId = new Map<string, StorefrontVariant[]>();
       for (const v of variantRows ?? []) {
         const vTyped = v as {
-          id: string; product_id: string; stock: number; price_override: number | null;
+          id: string; product_id: string; stock: number | null; price_override: number | null;
           image_url: string | null; position: number;
           product_variant_option_values: Array<{
             option_value_id: string;

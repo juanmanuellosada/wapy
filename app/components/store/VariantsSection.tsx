@@ -110,7 +110,12 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
 
   const hasVariants = variants.length > 0;
   const hasOptionTypes = optionTypes.length > 0;
-  const totalStock = variants.reduce((sum, v) => sum + v.stock, 0);
+  // For tracked variants (stock !== null) sum their stock; untracked ones are "infinite"
+  const trackedVariants = variants.filter((v) => v.stock !== null);
+  const untrackedCount = variants.length - trackedVariants.length;
+  const totalTrackedStock = trackedVariants.reduce((sum, v) => sum + (v.stock as number), 0);
+  // Legacy: totalStock for onVariantsChange (sum of tracked only, untracked contributes 0)
+  const totalStock = totalTrackedStock;
 
   // Notify parent of variant state changes
   useEffect(() => {
@@ -134,7 +139,8 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       const stocks: Record<string, string> = {};
       const prices: Record<string, string> = {};
       for (const v of result.variants) {
-        stocks[v.id] = String(v.stock);
+        // null stock = no tracking; show empty input (placeholder "∞")
+        stocks[v.id] = v.stock !== null ? String(v.stock) : '';
         prices[v.id] = v.price_override != null ? formatPrice(v.price_override) : '';
       }
       setStockInputs(stocks);
@@ -299,18 +305,19 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
 
   // ---- Per-variant stock/price save (on blur) ----
   const handleVariantBlur = async (variantId: string) => {
-    const stockStr = stockInputs[variantId] ?? '0';
+    const stockStr = (stockInputs[variantId] ?? '').trim();
     const priceStr = priceInputs[variantId] ?? '';
 
-    const stock = parseInt(stockStr, 10);
+    // Empty string = null (no tracking). Otherwise parse as integer.
+    const stock: number | null = stockStr === '' ? null : parseInt(stockStr, 10);
     const priceOverride = parsePriceCents(priceStr);
 
     const errors: Record<string, string> = { ...variantErrors };
 
-    if (isNaN(stock) || stock < 0) {
-      errors[variantId] = 'Stock debe ser un número ≥ 0.';
+    if (stock !== null && (isNaN(stock) || stock < 0)) {
+      errors[variantId] = 'Stock debe ser un número ≥ 0, o vacío para sin tracking.';
       setVariantErrors(errors);
-      toast.error('Stock debe ser un número ≥ 0.');
+      toast.error('Stock debe ser un número ≥ 0, o vacío para sin tracking.');
       return;
     }
     if (priceStr.trim() !== '' && (priceOverride === null || priceOverride < 0)) {
@@ -692,7 +699,12 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       {hasVariants && (
         <div>
           <p className="text-xs font-semibold text-white/50 uppercase tracking-wide mb-2">
-            Variedades ({variants.length}) — Stock total: {totalStock}
+            Variedades ({variants.length}) — Stock:{' '}
+            {untrackedCount === 0
+              ? totalTrackedStock
+              : untrackedCount === variants.length
+              ? '∞ (sin tracking)'
+              : `${totalTrackedStock} + ${untrackedCount} sin tracking`}
           </p>
 
           {/* Desktop table */}
@@ -712,7 +724,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                     key={variant.id}
                     variant={variant}
                     label={variantLabel(variant, optionTypes)}
-                    stockInput={stockInputs[variant.id] ?? '0'}
+                    stockInput={stockInputs[variant.id] ?? ''}
                     priceInput={priceInputs[variant.id] ?? ''}
                     priceOverridePlaceholder={formatPrice(productPriceCents)}
                     error={variantErrors[variant.id]}
@@ -736,7 +748,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                 key={variant.id}
                 variant={variant}
                 label={variantLabel(variant, optionTypes)}
-                stockInput={stockInputs[variant.id] ?? '0'}
+                stockInput={stockInputs[variant.id] ?? ''}
                 priceInput={priceInputs[variant.id] ?? ''}
                 priceOverridePlaceholder={formatPrice(productPriceCents)}
                 error={variantErrors[variant.id]}
@@ -802,9 +814,10 @@ function VariantRow({
             type="number"
             min="0"
             value={stockInput}
+            placeholder="∞"
             onChange={(e) => onStockChange(e.target.value)}
             onBlur={onBlur}
-            className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+            className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
             aria-label={`Stock para ${label}`}
           />
         </td>
@@ -874,9 +887,10 @@ function VariantCard({
             type="number"
             min="0"
             value={stockInput}
+            placeholder="∞"
             onChange={(e) => onStockChange(e.target.value)}
             onBlur={onBlur}
-            className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+            className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
           />
         </div>
         <div>

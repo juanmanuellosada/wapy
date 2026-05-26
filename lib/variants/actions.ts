@@ -259,12 +259,12 @@ export async function upsertProductOptions(
     const sig = [...combo].sort().join(',');
     if (existingSignatures.has(sig)) continue;
 
-    // Insert variant row
+    // Insert variant row — stock: null means "no tracking" (infinite), matches products.stock = null
     const { data: variant, error: variantError } = await admin
       .from('product_variants')
       .insert({
         product_id: productId,
-        stock: 0,
+        stock: null,
         price_override: null,
         image_url: null,
         position: pos,
@@ -307,14 +307,14 @@ export async function upsertProductOptions(
 
 const updateVariantSchema = z.object({
   variantId: z.string().uuid(),
-  stock: z.number().int().min(0, 'El stock debe ser ≥ 0'),
+  stock: z.number().int().min(0, 'El stock debe ser ≥ 0').nullable(),
   priceOverride: z.number().int().min(0, 'El precio debe ser ≥ 0').nullable(),
   imageUrl: z.string().nullable().optional(),
 });
 
 export type UpdateVariantInput = {
   variantId: string;
-  stock: number;
+  stock: number | null;
   priceOverride: number | null;
   imageUrl?: string | null;
 };
@@ -512,7 +512,7 @@ export async function addOptionValue(
       .from('product_variants')
       .insert({
         product_id: productId,
-        stock: 0,
+        stock: null,
         price_override: null,
         image_url: null,
         position: maxPosition + newVariantCount + 1,
@@ -823,7 +823,7 @@ export type OptionTypeData = {
 
 export type VariantData = {
   id: string;
-  stock: number;
+  stock: number | null; // null = no tracking (infinite stock)
   price_override: number | null;
   image_url: string | null;
   position: number;

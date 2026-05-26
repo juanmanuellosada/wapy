@@ -95,7 +95,7 @@ export async function exportProductsCsv(): Promise<ExportProductsCsvResult> {
   type RawVariant = {
     id: string;
     product_id: string;
-    stock: number;
+    stock: number | null; // null = no tracking (infinite)
     price_override: number | null;
     image_url: string | null;
     position: number;
@@ -182,12 +182,14 @@ export async function exportProductsCsv(): Promise<ExportProductsCsvResult> {
         // 7.2 Label "Rojo / M" ordenado por position del option_type
         const variantLabel = buildVariantLabel(v);
 
+        // null stock = no tracking; export as empty string (matches products.stock null behavior)
+        const stockStr = v.stock !== null ? String(v.stock) : '';
         rows.push(
           [
             csvEscape(product.name),
             csvEscape(product.description),
             csvEscape(formatCsvPrice(effectivePrice)),
-            String(v.stock),
+            stockStr,
             activo,
             csvEscape(imagenStr),
             csvEscape(sectionName),

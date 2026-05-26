@@ -85,7 +85,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     {
       id: string;
       product_id: string;
-      stock: number;
+      stock: number | null; // null = no tracking (infinite stock)
       price_override: number | null;
       deleted_at: string | null;
       product_variant_option_values: Array<{
@@ -147,7 +147,8 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     const p = productMap.get(item.product_id)!;
     if (item.variant_id) {
       const variant = variantMap.get(item.variant_id)!;
-      if (item.quantity > variant.stock) {
+      // null stock = no tracking (infinite) — skip validation
+      if (variant.stock !== null && item.quantity > variant.stock) {
         stockFailures.push({
           productId: p.id,
           productName: p.name,
@@ -268,28 +269,32 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   // already provides strong optimistic concurrency protection.
   for (const item of enrichedItems) {
     if (item.variant_id) {
-      const { data: updated } = await admin
-        .from('product_variants')
-        .update({ stock: variantMap.get(item.variant_id)!.stock - item.quantity })
-        .eq('id', item.variant_id)
-        .gte('stock', item.quantity) // guard: only update if stock still sufficient
-        .select('stock');
+      const variantStock = variantMap.get(item.variant_id)!.stock;
+      // null stock = no tracking (infinite) — skip deduction
+      if (variantStock !== null) {
+        const { data: updated } = await admin
+          .from('product_variants')
+          .update({ stock: variantStock - item.quantity })
+          .eq('id', item.variant_id)
+          .gte('stock', item.quantity) // guard: only update if stock still sufficient
+          .select('stock');
 
-      if (!updated || updated.length === 0) {
-        // Stock was depleted between validation and deduction — compensate
-        Sentry.captureException(
-          new Error('stock_race_condition: variant stock depleted between validation and deduction'),
-          {
-            tags: { feature: 'checkout-stock' },
-            extra: { variantId: item.variant_id, orderId: order.id },
-          }
-        );
-        // The order is already inserted; mark it cancelled to avoid fulfillment
-        await admin
-          .from('orders')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('id', order.id);
-        return { error: 'stock_insufficient', details: [] };
+        if (!updated || updated.length === 0) {
+          // Stock was depleted between validation and deduction — compensate
+          Sentry.captureException(
+            new Error('stock_race_condition: variant stock depleted between validation and deduction'),
+            {
+              tags: { feature: 'checkout-stock' },
+              extra: { variantId: item.variant_id, orderId: order.id },
+            }
+          );
+          // The order is already inserted; mark it cancelled to avoid fulfillment
+          await admin
+            .from('orders')
+            .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+            .eq('id', order.id);
+          return { error: 'stock_insufficient', details: [] };
+        }
       }
     } else {
       // Simple product — deduct from products.stock (existing behavior preserved)

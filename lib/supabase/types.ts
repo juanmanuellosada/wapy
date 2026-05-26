@@ -117,7 +117,7 @@ export type Database = {
           position: number
           price_override: number | null
           product_id: string
-          stock: number
+          stock: number | null
           updated_at: string
         }
         Insert: {
@@ -128,7 +128,7 @@ export type Database = {
           position?: number
           price_override?: number | null
           product_id: string
-          stock?: number
+          stock?: number | null
           updated_at?: string
         }
         Update: {
@@ -139,7 +139,7 @@ export type Database = {
           position?: number
           price_override?: number | null
           product_id?: string
-          stock?: number
+          stock?: number | null
           updated_at?: string
         }
         Relationships: [

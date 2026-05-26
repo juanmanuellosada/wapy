@@ -64,6 +64,20 @@
   - [x] 8.A Bugfix UX: ProductModal del storefront oculta botón "Agregar" cuando el producto tiene variedades; muestra mensaje "Elegí una variedad en la card para agregar"
   - [x] 8.B Bugfix UX: CartDrawer stock warning usa stock de la variedad (clave compuesta productId::variantId) para items de variedad, en lugar del stock del producto
 
+## 10. Fixes post-prod
+
+- [x] 10.1 **Fix 1 — stock nullable**: migración `022_product_variants_stock_nullable.sql` — `product_variants.stock` pasa a nullable (null = sin tracking = stock infinito)
+- [x] 10.2 **Fix 1 — tipos TS**: `lib/supabase/types.ts` y `lib/storefront/resolve.ts` actualizados para reflejar `stock: number | null` en `product_variants` y `StorefrontVariant`
+- [x] 10.3 **Fix 1 — server actions**: `lib/variants/actions.ts` — `updateVariant` acepta `stock: number | null`; nuevas variedades creadas con `stock: null` en `upsertProductOptions` y `addOptionValue`
+- [x] 10.4 **Fix 1 — checkout**: `lib/store/orders/actions.ts` — si `variant.stock === null` se omite validación y descuento atómico (mismo principio que `products.stock = null`)
+- [x] 10.5 **Fix 1 — dashboard**: `VariantsSection.tsx` — input vacío = null (placeholder `∞`); resumen diferencia tracked vs sin tracking; validación cliente acepta null
+- [x] 10.6 **Fix 1 — storefront**: `ProductCardClient.tsx` — `isOutOfStock` y `isLowStock` ya funcionan con null (sin cambios); confirmado por revisión de código
+- [x] 10.7 **Fix 1 — CartDrawer**: `StoreClient.tsx` — `overStockedItems` ya filtra `stock !== null` correctamente; confirmado por revisión de código
+- [x] 10.8 **Fix 1 — CSV**: `lib/store/exports/products.ts` — variedad con `stock = null` exporta columna Stock vacía
+- [x] 10.9 **Fix 1 — spec**: `spec.md` actualizado con semantics de stock nullable y scenarios correspondientes
+- [x] 10.10 **Fix 2 — precio condicional**: `ProductCardClient.tsx` — precio oculto cuando la variedad activa no tiene `price_override`; visible en estado inicial (sin selección) y cuando hay override
+- [x] 10.11 **Fix 2 — spec**: `spec.md` actualizado con scenario de precio condicional
+
 ## 9. Verificación end-to-end
 
 - [ ] 9.1 Crear un producto simple en el dashboard y verificar que el storefront lo renderiza exactamente como antes (regresión)

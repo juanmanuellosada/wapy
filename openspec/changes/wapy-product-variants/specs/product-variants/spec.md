@@ -47,11 +47,15 @@ El sistema SHALL generar una variedad por cada combinación posible de valores d
 - **THEN** el sistema rechaza la operación con error de tope
 
 ### Requirement: Stock por variedad
-El sistema SHALL mantener un contador de stock entero ≥ 0 por cada variedad. Cuando un producto tiene variedades, el campo `products.stock` deja de ser fuente de verdad y NO se usa en validación ni descuento.
+El sistema SHALL mantener un campo de stock por cada variedad. El campo `stock` puede ser un entero ≥ 0 (tracking activo) o `null` (sin tracking = stock infinito, alineado con `products.stock = null`). Cuando un producto tiene variedades, el campo `products.stock` deja de ser fuente de verdad y NO se usa en validación ni descuento.
 
 #### Scenario: Stock de variedad nunca negativo
 - **WHEN** una operación intenta dejar el stock de una variedad por debajo de 0
 - **THEN** el sistema rechaza la operación con error de constraint
+
+#### Scenario: Variedad con stock=null se comporta como stock infinito
+- **WHEN** una variedad tiene `stock = null`
+- **THEN** el storefront NO muestra "Sin stock" y el botón "Agregar" queda habilitado; al confirmar el pedido NO se descuenta stock para esa variedad
 
 #### Scenario: Producto simple usa stock del producto
 - **WHEN** un cliente compra un producto simple (sin variedades)
@@ -110,12 +114,20 @@ El sistema SHALL renderizar la card del producto en el storefront con un selecto
 - **WHEN** la variedad activa tiene stock 0
 - **THEN** el botón "Agregar" queda deshabilitado y se indica "Sin stock"
 
+#### Scenario: Variedad con stock=null tiene botón habilitado y no muestra badge de stock
+- **WHEN** la variedad activa tiene `stock = null`
+- **THEN** el botón "Agregar" queda habilitado, no se muestra badge "Sin stock" ni "Quedan N"
+
 #### Scenario: Sin selección no se puede agregar al carrito
 - **WHEN** un producto tiene variedades y el cliente no ha completado la selección de todos los tipos de opción
 - **THEN** el botón "Agregar" queda deshabilitado hasta que la selección esté completa
 
+#### Scenario: Variedad sin price_override oculta el precio en la card
+- **WHEN** un cliente selecciona una variedad cuyo `price_override` es null
+- **THEN** la card oculta el precio cerca del botón (el precio ya figura en el contexto del producto); cuando no hay variedad activa aún, el precio del producto sigue siendo visible como referencia
+
 ### Requirement: Carrito y checkout operan sobre variedad cuando aplica
-El sistema SHALL registrar `variant_id` en cada `order_item` cuando el producto tenga variedades. La validación y el descuento de stock al confirmar pedido SHALL ser atómicos por línea y operar sobre `product_variants.stock` o `products.stock` según corresponda.
+El sistema SHALL registrar `variant_id` en cada `order_item` cuando el producto tenga variedades. La validación y el descuento de stock al confirmar pedido SHALL ser atómicos por línea y operar sobre `product_variants.stock` o `products.stock` según corresponda. Cuando `product_variants.stock` es `null` (sin tracking), NO se valida ni descuenta stock para esa línea.
 
 #### Scenario: Línea de carrito de producto simple
 - **WHEN** un cliente agrega al carrito un producto simple
