@@ -557,6 +557,9 @@ export async function addOptionValue(
 //   (cascade cleans product_variant_option_values).
 // - If no variant is in order_items → delete the option_value row
 //   (cascade cleans variants and joins).
+//
+// HARDENING: Rejects if this is the last value of its type. Use removeOptionType
+// to delete the type entirely.
 // ---------------------------------------------------------------------------
 
 export type RemoveOptionValueInput = { optionValueId: string };
@@ -574,7 +577,7 @@ export async function removeOptionValue(
   // Resolve ownership + related variants
   const { data: optionValue } = await admin
     .from('product_option_values')
-    .select('id, option_type_id, product_option_types(product_id, products(store_id))')
+    .select('id, option_type_id, product_option_types(id, name, product_id, products(store_id))')
     .eq('id', input.optionValueId)
     .maybeSingle();
 
@@ -582,6 +585,8 @@ export async function removeOptionValue(
     id: string;
     option_type_id: string;
     product_option_types: {
+      id: string;
+      name: string;
       product_id: string;
       products: { store_id: string } | null;
     } | null;
@@ -590,6 +595,20 @@ export async function removeOptionValue(
   const ov = optionValue as OptionValueWithRelations | null;
   if (!ov || ov.product_option_types?.products?.store_id !== store.id) {
     return { error: 'Valor de opción no encontrado.' };
+  }
+
+  const typeName = ov.product_option_types!.name;
+
+  // HARDENING: Reject if this is the last value of the type
+  const { count: valueCount } = await admin
+    .from('product_option_values')
+    .select('id', { count: 'exact', head: true })
+    .eq('option_type_id', ov.option_type_id);
+
+  if ((valueCount ?? 0) <= 1) {
+    return {
+      error: `No se puede borrar el último valor de "${typeName}". Si querés eliminar el tipo, usá "Quitar tipo" en su lugar.`,
+    };
   }
 
   // Find all active variants that include this option value
@@ -653,6 +672,122 @@ export async function removeOptionValue(
   } catch (err) {
     Sentry.captureException(err, { tags: { action: 'removeOptionValue' }, extra: { optionValueId: input.optionValueId } });
     return { error: 'Error inesperado al eliminar el valor.' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2.8 removeOptionType
+//
+// Deletes an entire option type and all its values.
+// Cascade in DB removes product_option_values and product_variant_option_values.
+// Variants that included values of this type are soft-deleted if they appear in
+// order_items; otherwise they are hard-deleted via cascade.
+// ---------------------------------------------------------------------------
+
+export type RemoveOptionTypeInput = { optionTypeId: string };
+export type RemoveOptionTypeResult = { ok: true; softDeleted: boolean } | { error: string };
+
+export async function removeOptionType(
+  input: RemoveOptionTypeInput
+): Promise<RemoveOptionTypeResult> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  try {
+  const admin = createAdminClient();
+
+  // Resolve ownership
+  const { data: optionType } = await admin
+    .from('product_option_types')
+    .select('id, name, product_id, products(store_id)')
+    .eq('id', input.optionTypeId)
+    .maybeSingle();
+
+  type OptionTypeWithRelations = {
+    id: string;
+    name: string;
+    product_id: string;
+    products: { store_id: string } | null;
+  };
+
+  const ot = optionType as OptionTypeWithRelations | null;
+  if (!ot || ot.products?.store_id !== store.id) {
+    return { error: 'Tipo de opción no encontrado.' };
+  }
+
+  // Find all values of this type
+  const { data: typeValues } = await admin
+    .from('product_option_values')
+    .select('id')
+    .eq('option_type_id', input.optionTypeId);
+
+  const valueIds = (typeValues ?? []).map((v) => v.id);
+
+  // Find all active variants that include any of these values
+  let variantIds: string[] = [];
+  if (valueIds.length > 0) {
+    const { data: variantJoins } = await admin
+      .from('product_variant_option_values')
+      .select('variant_id')
+      .in('option_value_id', valueIds);
+
+    variantIds = [...new Set((variantJoins ?? []).map((j) => j.variant_id))];
+  }
+
+  // Check if any of those variants appear in order_items
+  let hasOrderItems = false;
+  if (variantIds.length > 0) {
+    const { data: orderItems } = await admin
+      .from('order_items')
+      .select('id')
+      .in('variant_id', variantIds)
+      .limit(1);
+
+    hasOrderItems = (orderItems ?? []).length > 0;
+  }
+
+  if (hasOrderItems) {
+    // Soft-delete variants before removing the type
+    const now = new Date().toISOString();
+    const { error: softDeleteError } = await admin
+      .from('product_variants')
+      .update({ deleted_at: now })
+      .in('id', variantIds);
+
+    if (softDeleteError) {
+      Sentry.captureException(softDeleteError, { tags: { action: 'removeOptionType' }, extra: { optionTypeId: input.optionTypeId } });
+      return { error: 'No se pudo archivar las variedades.' };
+    }
+  } else if (variantIds.length > 0) {
+    // Hard-delete variant rows (product_variant_option_values will be cleaned by
+    // the cascade on the option type delete, but product_variants itself needs explicit removal)
+    const { error: hardDeleteError } = await admin
+      .from('product_variants')
+      .delete()
+      .in('id', variantIds);
+
+    if (hardDeleteError) {
+      Sentry.captureException(hardDeleteError, { tags: { action: 'removeOptionType' }, extra: { optionTypeId: input.optionTypeId } });
+      return { error: 'No se pudo eliminar las variedades.' };
+    }
+  }
+
+  // Delete the option type row (cascade removes option_values and variant_option_values)
+  const { error: deleteError } = await admin
+    .from('product_option_types')
+    .delete()
+    .eq('id', input.optionTypeId);
+
+  if (deleteError) {
+    Sentry.captureException(deleteError, { tags: { action: 'removeOptionType' }, extra: { optionTypeId: input.optionTypeId } });
+    return { error: 'No se pudo eliminar el tipo de opción.' };
+  }
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true, softDeleted: hasOrderItems };
+  } catch (err) {
+    Sentry.captureException(err, { tags: { action: 'removeOptionType' }, extra: { optionTypeId: input.optionTypeId } });
+    return { error: 'Error inesperado al eliminar el tipo de opción.' };
   }
 }
 

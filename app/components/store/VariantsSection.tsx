@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from '@/lib/toast';
-import { Plus, X, Loader2, Upload, ImageIcon } from 'lucide-react';
+import { Plus, X, Loader2, Upload, ImageIcon, Info } from 'lucide-react';
 import {
   upsertProductOptions,
   updateVariant,
   addOptionValue,
   removeOptionValue,
+  removeOptionType,
   uploadVariantImage,
   getProductVariantsData,
 } from '@/lib/variants/actions';
@@ -108,6 +109,9 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   // ---- remove value loading ----
   const [removingValueId, setRemovingValueId] = useState<string | null>(null);
 
+  // ---- remove type loading ----
+  const [removingTypeId, setRemovingTypeId] = useState<string | null>(null);
+
   const hasVariants = variants.length > 0;
   const hasOptionTypes = optionTypes.length > 0;
   // For tracked variants (stock !== null) sum their stock; untracked ones are "infinite"
@@ -166,20 +170,22 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
     if (duplicateType) errors.push(`El tipo "${duplicateType}" aparece más de una vez.`);
 
     for (const type of types) {
+      const typeName = type.name.trim() || '(sin nombre)';
       if (!type.name.trim()) {
         errors.push('El nombre del tipo de opción no puede estar vacío.');
       } else if (type.name.trim().length > MAX_LABEL_LEN) {
         errors.push(`El nombre "${type.name}" supera los ${MAX_LABEL_LEN} caracteres.`);
       }
-      if (type.values.length === 0) {
-        errors.push(`El tipo "${type.name}" debe tener al menos un valor.`);
+      const nonEmptyValues = type.values.filter((v) => v.value.trim());
+      if (type.values.length === 0 || nonEmptyValues.length === 0) {
+        errors.push(`El tipo "${typeName}" necesita al menos un valor. Agregalo antes de guardar.`);
       }
       const vals = type.values.map((v) => v.value.trim());
-      const duplicateVal = vals.find((v, i) => vals.indexOf(v) !== i);
-      if (duplicateVal) errors.push(`El valor "${duplicateVal}" aparece más de una vez en "${type.name}".`);
+      const duplicateVal = vals.find((v, i) => v && vals.indexOf(v) !== i);
+      if (duplicateVal) errors.push(`El valor "${duplicateVal}" aparece más de una vez en "${typeName}".`);
       for (const val of type.values) {
         if (!val.value.trim()) {
-          errors.push(`Un valor en "${type.name}" está vacío.`);
+          errors.push(`Un valor en "${typeName}" está vacío.`);
         } else if (val.value.trim().length > MAX_LABEL_LEN) {
           errors.push(`El valor "${val.value}" supera los ${MAX_LABEL_LEN} caracteres.`);
         }
@@ -188,7 +194,8 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
 
     // Cap check (client-side estimate)
     if (types.length > 0) {
-      const count = types.reduce((acc, t) => acc * (t.values.length || 1), 1);
+      const nonEmptyTypes = types.filter((t) => t.values.some((v) => v.value.trim()));
+      const count = nonEmptyTypes.reduce((acc, t) => acc * t.values.filter((v) => v.value.trim()).length, 1);
       if (count > MAX_VARIANTS) {
         errors.push(`Esta combinación generaría ${count} variedades, superando el límite de ${MAX_VARIANTS}.`);
       }
@@ -399,6 +406,32 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
     }
   };
 
+  // ---- Remove entire option type ----
+  const handleRemoveType = async (optionTypeId: string, typeName: string) => {
+    if (!confirm(`¿Borrar el tipo "${typeName}" y todas sus variedades?`)) return;
+    setRemovingTypeId(optionTypeId);
+    setServerError(null);
+    try {
+      const result = await removeOptionType({ optionTypeId });
+      if ('error' in result) {
+        setServerError(result.error);
+        toast.error(result.error);
+      } else {
+        if (result.softDeleted) {
+          toast.info('Las variedades con ese tipo fueron archivadas porque aparecen en pedidos históricos.');
+        } else {
+          toast.success(`Tipo "${typeName}" eliminado`);
+        }
+        await loadData();
+      }
+    } catch {
+      setServerError('Error al eliminar el tipo.');
+      toast.error('Error al eliminar el tipo.');
+    } finally {
+      setRemovingTypeId(null);
+    }
+  };
+
   // ---- Image upload for a variant ----
   const handleImageUpload = async (variantId: string, file: File) => {
     setUploadingVariantId(variantId);
@@ -454,6 +487,18 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   if (isEditing) {
     return (
       <div className="space-y-4">
+        {/* Illustrative banner in editor mode too (if no types yet) */}
+        {!hasVariants && (
+          <div className="flex gap-2.5 bg-white/4 border border-white/10 rounded-xl px-4 py-3">
+            <Info size={14} className="text-white/40 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-white/50 leading-relaxed">
+              <strong className="text-white/70">Ejemplo:</strong> si vendés remeras en varios colores y talles, creá UN tipo{' '}
+              <span className="text-white/70">&ldquo;Color&rdquo;</span> (con valores Rojo, Azul) y OTRO tipo{' '}
+              <span className="text-white/70">&ldquo;Talle&rdquo;</span> (con valores S, M, L).
+              Se generan automáticamente todas las combinaciones.
+            </p>
+          </div>
+        )}
         <p className="text-xs text-white/50">
           Definí los tipos de opción (ej. Color, Talle) y sus valores. Una vez guardado se generarán las variedades.
         </p>
@@ -472,25 +517,35 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
 
             return (
               <div key={typeIdx} className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="Nombre del tipo (ej. Color)"
-                    value={type.name}
-                    onChange={(e) => updateDraftTypeName(typeIdx, e.target.value)}
-                    maxLength={MAX_LABEL_LEN}
-                    disabled={isBlockedNewType}
-                    className="flex-1 rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-3 py-2 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors disabled:opacity-40"
-                  />
-                  {draftTypes.length > 1 && !hasVariants && (
-                    <button
-                      type="button"
-                      onClick={() => removeDraftType(typeIdx)}
-                      className="w-7 h-7 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
-                      aria-label="Quitar tipo de opción"
-                    >
-                      <X size={14} />
-                    </button>
+                <div className="space-y-1.5">
+                  <label className="block text-xs text-white/50 font-medium">
+                    Nombre del tipo de opción
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="ej. Color, Talle, Versión"
+                      value={type.name}
+                      onChange={(e) => updateDraftTypeName(typeIdx, e.target.value)}
+                      maxLength={MAX_LABEL_LEN}
+                      disabled={isBlockedNewType}
+                      className="flex-1 rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-3 py-2 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors disabled:opacity-40"
+                    />
+                    {draftTypes.length > 1 && !hasVariants && (
+                      <button
+                        type="button"
+                        onClick={() => removeDraftType(typeIdx)}
+                        className="w-7 h-7 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+                        aria-label="Quitar tipo de opción"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                  {!isBlockedNewType && (
+                    <p className="text-xs text-white/35">
+                      Es el nombre de la categoría que el cliente elige. Los valores específicos los cargás abajo.
+                    </p>
                   )}
                 </div>
 
@@ -501,38 +556,48 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                 )}
 
                 {/* Values chips */}
-                <div className="flex flex-wrap gap-2">
-                  {type.values.map((val, valIdx) => (
-                    <div key={valIdx} className="flex items-center gap-1 bg-white/10 border border-white/15 rounded-full px-3 py-1">
-                      <input
-                        type="text"
-                        value={val.value}
-                        onChange={(e) => updateDraftValue(typeIdx, valIdx, e.target.value)}
-                        maxLength={MAX_LABEL_LEN}
-                        placeholder="Valor"
-                        className="bg-transparent text-[#FBF7EC] placeholder-white/30 text-xs outline-none w-20 min-w-0"
-                        style={{ width: `${Math.max(val.value.length * 8, 64)}px` }}
-                      />
-                      {type.values.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeDraftValue(typeIdx, valIdx)}
-                          className="text-white/40 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
-                          aria-label={`Quitar valor ${val.value}`}
-                        >
-                          <X size={10} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                <div className="space-y-2">
+                  <label className="block text-xs text-white/50 font-medium">Valores</label>
+                  <div className="flex flex-wrap gap-2">
+                    {type.values.map((val, valIdx) => (
+                      <div key={valIdx} className="flex items-center gap-1 bg-white/10 border border-white/15 rounded-full px-3 py-1">
+                        <input
+                          type="text"
+                          value={val.value}
+                          onChange={(e) => updateDraftValue(typeIdx, valIdx, e.target.value)}
+                          maxLength={MAX_LABEL_LEN}
+                          placeholder="ej. Rojo"
+                          className="bg-transparent text-[#FBF7EC] placeholder-white/30 text-xs outline-none w-20 min-w-0"
+                          style={{ width: `${Math.max(val.value.length * 8, 64)}px` }}
+                        />
+                        {type.values.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeDraftValue(typeIdx, valIdx)}
+                            className="text-white/40 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
+                            aria-label={`Quitar valor ${val.value}`}
+                          >
+                            <X size={10} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
 
-                  <button
-                    type="button"
-                    onClick={() => addDraftValue(typeIdx)}
-                    className="flex items-center gap-1 text-xs text-[#F5C84B]/70 hover:text-[#F5C84B] transition-colors cursor-pointer px-2 py-1 rounded-full border border-dashed border-[#F5C84B]/30 hover:border-[#F5C84B]/60"
-                  >
-                    <Plus size={11} /> Agregar valor
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => addDraftValue(typeIdx)}
+                      className="flex items-center gap-1 text-xs text-[#F5C84B]/70 hover:text-[#F5C84B] transition-colors cursor-pointer px-2 py-1 rounded-full border border-dashed border-[#F5C84B]/30 hover:border-[#F5C84B]/60"
+                    >
+                      <Plus size={11} /> Agregar valor
+                    </button>
+                  </div>
+                  <p className="text-xs text-white/35">
+                    Cada valor es una opción que el cliente puede elegir
+                    {type.name.trim()
+                      ? <> (ej. para &ldquo;{type.name}&rdquo;: Rojo, Azul, Verde)</>
+                      : <> (ej. para &ldquo;Color&rdquo;: Rojo, Azul, Verde)</>
+                    }.
+                  </p>
                 </div>
               </div>
             );
@@ -550,7 +615,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
             onClick={addDraftType}
             className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 transition-colors cursor-pointer"
           >
-            <Plus size={14} /> Agregar otro tipo de opción
+            <Plus size={14} /> + Agregar tipo (ej. Color, Talle)
           </button>
         )}
 
@@ -586,6 +651,16 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
         {serverError && (
           <p role="alert" className="text-xs text-red-400">{serverError}</p>
         )}
+        {/* Illustrative banner */}
+        <div className="flex gap-2.5 bg-white/4 border border-white/10 rounded-xl px-4 py-3">
+          <Info size={14} className="text-white/40 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-white/50 leading-relaxed">
+            <strong className="text-white/70">Ejemplo:</strong> si vendés remeras en varios colores y talles, creá UN tipo{' '}
+            <span className="text-white/70">&ldquo;Color&rdquo;</span> (con valores Rojo, Azul) y OTRO tipo{' '}
+            <span className="text-white/70">&ldquo;Talle&rdquo;</span> (con valores S, M, L).
+            Se generan automáticamente todas las combinaciones.
+          </p>
+        </div>
         <div className="border border-dashed border-white/15 rounded-xl px-4 py-5 text-center">
           <p className="text-sm text-white/40 mb-3">
             Sin variedades — precio, stock e imagen son del producto.
@@ -595,7 +670,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
             onClick={handleStartEditing}
             className="inline-flex items-center gap-1.5 text-sm text-[#F5C84B] hover:text-[#FAE08A] font-semibold transition-colors cursor-pointer"
           >
-            <Plus size={15} /> Agregar tipo de opción
+            <Plus size={15} /> + Agregar tipo (ej. Color, Talle)
           </button>
         </div>
       </div>
@@ -617,7 +692,21 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       <div className="space-y-3">
         {optionTypes.map((type) => (
           <div key={type.id} className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
-            <p className="text-xs font-semibold text-white/60 uppercase tracking-wide">{type.name}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-white/60 uppercase tracking-wide">{type.name}</p>
+              <button
+                type="button"
+                disabled={removingTypeId === type.id}
+                onClick={() => handleRemoveType(type.id, type.name)}
+                className="text-xs text-white/30 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                aria-label={`Quitar tipo ${type.name}`}
+              >
+                {removingTypeId === type.id
+                  ? <Loader2 size={11} className="animate-spin" />
+                  : <X size={11} />}
+                Quitar tipo
+              </button>
+            </div>
             <div className="flex flex-wrap gap-1.5 items-center">
               {type.values.map((val) => (
                 <div

@@ -78,6 +78,17 @@
 - [x] 10.10 **Fix 2 — precio condicional**: `ProductCardClient.tsx` — precio oculto cuando la variedad activa no tiene `price_override`; visible en estado inicial (sin selección) y cuando hay override
 - [x] 10.11 **Fix 2 — spec**: `spec.md` actualizado con scenario de precio condicional
 
+## 11. Hardening post-incidente (tipos de opción sin valores)
+
+- [x] 11.1 **Fix A — Path 2 `removeOptionValue`**: rechaza con error claro cuando se intenta borrar el último valor de un tipo. Mensaje: `"No se puede borrar el último valor de '{type_name}'. Si querés eliminar el tipo, usá 'Quitar tipo' en su lugar."`
+- [x] 11.2 **Fix A — Path 4 nueva acción `removeOptionType`**: nueva server action en `lib/variants/actions.ts` que borra el tipo entero (cascade limpia values + variant_option_values); soft-delete de variantes en order_items históricos, igual que en `removeOptionValue`
+- [x] 11.3 **Fix A — Wire-up UI**: botón "Quitar tipo" (con ícono X + label) en cada tarjeta de tipo en la vista de resumen de `VariantsSection.tsx`, usa `removeOptionType`
+- [x] 11.4 **Fix B — Copy: input nombre del tipo**: label `"Nombre del tipo de opción"`, placeholder `"ej. Color, Talle, Versión"`, helper text: `"Es el nombre de la categoría que el cliente elige. Los valores específicos los cargás abajo."`
+- [x] 11.5 **Fix B — Copy: input valores**: placeholder `"ej. Rojo"` (singular, concreto), helper text: `"Cada valor es una opción que el cliente puede elegir (ej. para 'Color': Rojo, Azul, Verde)"`
+- [x] 11.6 **Fix B — Banner ilustrativo**: panel `Info` arriba de la sección cuando no hay tipos cargados (y en modo editor), con ejemplo de Color/Talle y generación automática de combinaciones
+- [x] 11.7 **Fix B — Validación cliente**: `validateDraft` detecta tipos con 0 valores efectivos (incluyendo valores con solo espacios), mensaje: `"El tipo 'X' necesita al menos un valor. Agregalo antes de guardar."` — impide submit
+- [x] 11.8 **Fix B — CTA label**: botón CTA cambiado a `"+ Agregar tipo (ej. Color, Talle)"` en vista vacía y en modo editor
+
 ## 9. Verificación end-to-end
 
 - [ ] 9.1 Crear un producto simple en el dashboard y verificar que el storefront lo renderiza exactamente como antes (regresión)

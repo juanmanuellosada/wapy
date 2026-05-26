@@ -15,6 +15,14 @@ El sistema SHALL permitir asociar a un producto entre 0 y N **tipos de opción**
 - **WHEN** un dueño guarda un producto con un tipo de opción sin valores
 - **THEN** el sistema rechaza la operación e indica que el tipo de opción "X" necesita al menos un valor
 
+#### Scenario: No se puede borrar el último valor de un tipo vía removeOptionValue
+- **WHEN** un dueño intenta borrar el único valor restante de un tipo de opción
+- **THEN** el sistema rechaza la operación con el error: "No se puede borrar el último valor de '{type_name}'. Si querés eliminar el tipo, usá 'Quitar tipo' en su lugar."
+
+#### Scenario: Eliminar tipo entero con removeOptionType
+- **WHEN** un dueño usa la acción "Quitar tipo" para borrar un tipo de opción
+- **THEN** el sistema borra el tipo junto con sus valores y, para las variantes afectadas: las que aparecen en order_items históricos reciben soft-delete (deleted_at), las demás se borran vía cascade
+
 #### Scenario: Nombre y valor con tope de longitud
 - **WHEN** un dueño intenta guardar un nombre de tipo o valor de más de 32 caracteres
 - **THEN** el sistema rechaza la operación con error de longitud máxima
