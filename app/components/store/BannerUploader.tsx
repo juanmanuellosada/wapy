@@ -64,7 +64,7 @@ export function BannerUploader({ storeId, initialUrl, onUrlChange }: Props) {
   return (
     <div className="space-y-3">
       {url ? (
-        <div className="relative w-full aspect-[4/1] rounded-xl overflow-hidden border border-white/15 bg-white/5 group">
+        <div className="relative w-full aspect-[3/1] sm:aspect-[4/1] rounded-xl overflow-hidden border border-white/15 bg-white/5 group">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={url} alt="" className="w-full h-full object-cover" />
           <button
@@ -78,7 +78,7 @@ export function BannerUploader({ storeId, initialUrl, onUrlChange }: Props) {
         </div>
       ) : (
         <label
-          className={`flex flex-col items-center justify-center w-full aspect-[4/1] rounded-xl border-2 border-dashed transition-colors cursor-pointer ${
+          className={`flex flex-col items-center justify-center w-full aspect-[3/1] sm:aspect-[4/1] rounded-xl border-2 border-dashed transition-colors cursor-pointer ${
             uploading
               ? 'border-white/10 opacity-50 cursor-not-allowed'
               : 'border-white/20 hover:border-[#F5C84B]/50 hover:bg-white/3'

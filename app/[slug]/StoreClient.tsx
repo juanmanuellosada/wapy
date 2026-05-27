@@ -221,7 +221,7 @@ function StoreHeader({
   return (
     <header className="sticky top-0 z-40 store-header-bg">
       {/* Main header row */}
-      <div className="mx-auto flex max-w-6xl items-center px-4 sm:px-6 h-14 gap-2 sm:gap-3">
+      <div className="mx-auto flex max-w-6xl items-center px-4 sm:px-6 md:px-8 h-14 gap-2 sm:gap-3">
         {/* Logo thumbnail + Store name */}
         {logoUrl && (
           <Image
@@ -443,7 +443,7 @@ function StoreHero({
         <>
           {/* Banner + overlapping logo */}
           <div className="relative w-full">
-            <div className="aspect-[4/1] w-full">
+            <div className="aspect-[3/1] sm:aspect-[4/1] w-full">
               {banner.type === 'color' ? (
                 <div className="w-full h-full" style={{ backgroundColor: banner.value }} />
               ) : (
@@ -457,21 +457,23 @@ function StoreHero({
               )}
             </div>
             {logoUrl && (
-              <div className="absolute inset-x-0 bottom-0 px-4 sm:px-6">
+              <div className="absolute inset-x-0 bottom-0 px-4 sm:px-6 md:px-8">
                 <div className="relative mx-auto max-w-6xl">
                   <div className="absolute bottom-0 left-0 translate-y-1/2">
-                    <Image
-                      src={logoUrl}
-                      alt={name}
-                      width={96}
-                      height={96}
-                      className="rounded-full object-cover"
-                      style={{
-                        outline: `3px solid ${accentColor}`,
-                        outlineOffset: 2,
-                      }}
-                      priority
-                    />
+                    <div className="h-16 w-16 sm:h-20 sm:w-20 md:h-24 md:w-24">
+                      <Image
+                        src={logoUrl}
+                        alt={name}
+                        width={96}
+                        height={96}
+                        className="rounded-full object-cover w-full h-full"
+                        style={{
+                          outline: `3px solid ${accentColor}`,
+                          outlineOffset: 2,
+                        }}
+                        priority
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -479,7 +481,7 @@ function StoreHero({
           </div>
 
           {/* Text block — padded top so it clears the overlapping logo */}
-          <div className={`px-4 sm:px-6 pb-16 sm:pb-24 ${logoUrl ? 'pt-16' : 'pt-8'}`}>
+          <div className={`px-4 sm:px-6 md:px-8 pb-16 sm:pb-24 ${logoUrl ? 'pt-12 sm:pt-14 md:pt-16' : 'pt-8'}`}>
             <div className="mx-auto max-w-6xl flex flex-col gap-3">
               <p
                 className="text-xs font-semibold uppercase tracking-widest"
@@ -488,7 +490,7 @@ function StoreHero({
                 Tienda online
               </p>
               <h1
-                className="text-5xl sm:text-7xl font-bold tracking-tight leading-none"
+                className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-none"
                 style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
               >
                 {name}
@@ -534,7 +536,7 @@ function StoreHero({
         </>
       ) : (
         /* Original layout — no banner */
-        <div className="py-16 sm:py-24 px-4 sm:px-6">
+        <div className="py-16 sm:py-24 px-4 sm:px-6 md:px-8">
           <div className="mx-auto max-w-6xl flex flex-col gap-3">
             {logoUrl && (
               <Image
@@ -557,7 +559,7 @@ function StoreHero({
               Tienda online
             </p>
             <h1
-              className="text-5xl sm:text-7xl font-bold tracking-tight leading-none"
+              className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-none"
               style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
             >
               {name}
@@ -937,7 +939,7 @@ function CartDrawer({
 
       {/* Drawer */}
       <aside
-        className="fixed top-0 right-0 z-50 h-full w-full max-w-sm flex flex-col"
+        className="fixed top-0 right-0 z-50 h-full w-full max-w-xs sm:max-w-sm flex flex-col"
         style={{
           background: "var(--store-surface)",
           boxShadow: open ? "var(--store-shadow-lg)" : "none",
@@ -1214,7 +1216,7 @@ function SectionBlock({
       </div>
 
       {/* Product grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5">
+      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
         {products.map((p) => (
           <ProductCard
             key={p.id}
@@ -1313,7 +1315,7 @@ function SearchResults({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
           {results.map((p) => (
             <ProductCard
               key={p.id}
@@ -1449,7 +1451,7 @@ export default function StoreClient({
       />
 
       <main
-        className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-14 flex flex-col gap-14 sm:gap-20"
+        className="mx-auto w-full max-w-6xl px-4 sm:px-6 md:px-8 py-10 sm:py-14 flex flex-col gap-14 sm:gap-20"
         id="main-content"
       >
         {hasQuery ? (
