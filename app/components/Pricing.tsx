@@ -69,17 +69,20 @@ export default function Pricing() {
               <span className="text-[#F5C84B] text-xs font-extrabold uppercase tracking-widest">
                 Inicial
               </span>
+              <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#F5C84B] text-[#16222E] text-[10px] font-extrabold uppercase tracking-wide">
+                Probá 14 días gratis
+              </span>
               <div className="flex items-baseline gap-1 mt-2">
                 <span
                   className="text-4xl md:text-5xl font-bold text-white"
                   style={{ fontFamily: 'var(--font-agbalumo)' }}
                 >
-                  $12.000
+                  $9.900
                 </span>
                 <span className="text-white/40 text-base">/mes</span>
               </div>
-              <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[#F5C84B] font-semibold bg-[#F5C84B]/10 px-3 py-1 rounded-full">
-                14 días gratis · sin tarjeta
+              <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-white/45 font-medium">
+                Sin tarjeta · Cancelás cuando quieras
               </p>
             </div>
 
@@ -115,17 +118,20 @@ export default function Pricing() {
               <span className="text-[#F5C84B] text-xs font-extrabold uppercase tracking-widest">
                 Pro
               </span>
+              <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#F5C84B] text-[#16222E] text-[10px] font-extrabold uppercase tracking-wide">
+                Probá 14 días gratis
+              </span>
               <div className="flex items-baseline gap-1 mt-2">
                 <span
                   className="text-4xl md:text-5xl font-bold text-white"
                   style={{ fontFamily: 'var(--font-agbalumo)' }}
                 >
-                  $20.000
+                  $18.000
                 </span>
                 <span className="text-white/40 text-base">/mes</span>
               </div>
-              <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[#F5C84B] font-semibold bg-[#F5C84B]/10 px-3 py-1 rounded-full">
-                14 días gratis · sin tarjeta
+              <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-white/45 font-medium">
+                Sin tarjeta · Cancelás cuando quieras
               </p>
             </div>
 
