@@ -23,7 +23,7 @@ function HeaderSkeleton() {
   return (
     <header className="sticky top-0 z-40 bg-white dark:bg-gray-950 border-b border-gray-100 dark:border-gray-900">
       {/* Main header row — h-14 matches real header */}
-      <div className="mx-auto flex max-w-6xl items-center px-4 sm:px-6 h-14 gap-2 sm:gap-3">
+      <div className="mx-auto flex max-w-6xl items-center px-4 sm:px-6 md:px-8 h-14 gap-2 sm:gap-3">
         {/* Logo circle */}
         <SkeletonPulse className="h-8 w-8 rounded-full shrink-0" />
         {/* Store name */}
@@ -56,7 +56,7 @@ function HeaderSkeleton() {
 
 function HeroSkeleton() {
   return (
-    <section className="py-16 sm:py-24 px-4 sm:px-6 bg-white dark:bg-gray-950">
+    <section className="py-16 sm:py-24 px-4 sm:px-6 md:px-8 bg-white dark:bg-gray-950">
       <div className="mx-auto max-w-6xl flex flex-col gap-3">
         {/* Logo large circle */}
         <SkeletonPulse className="h-24 w-24 rounded-full mb-2" />
@@ -107,7 +107,7 @@ function SectionSkeleton({ cardCount = 4 }: { cardCount?: number }) {
         <SkeletonPulse className="h-4 w-4 rounded-full shrink-0" />
       </div>
       {/* Product grid — 2 cols mobile / 3 md / 4 lg */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5">
+      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
         {Array.from({ length: cardCount }).map((_, i) => (
           <ProductCardSkeleton key={i} />
         ))}
@@ -121,7 +121,7 @@ export default function StoreLoading() {
     <div className="min-h-screen bg-white dark:bg-gray-950">
       <HeaderSkeleton />
       <HeroSkeleton />
-      <main className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-14 flex flex-col gap-14 sm:gap-20">
+      <main className="mx-auto w-full max-w-6xl px-4 sm:px-6 md:px-8 py-10 sm:py-14 flex flex-col gap-14 sm:gap-20">
         {/* Render 2 section skeletons — common case covers most stores */}
         <SectionSkeleton cardCount={4} />
         <SectionSkeleton cardCount={4} />
