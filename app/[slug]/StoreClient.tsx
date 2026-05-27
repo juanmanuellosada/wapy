@@ -442,7 +442,7 @@ function StoreHero({
       {banner ? (
         <>
           {/* Banner + overlapping logo */}
-          <div className="relative w-full aspect-[3/1]">
+          <div className="relative w-full aspect-[4/1]">
             {banner.type === 'color' ? (
               <div className="w-full h-full" style={{ backgroundColor: banner.value }} />
             ) : (
@@ -455,7 +455,7 @@ function StoreHero({
               />
             )}
             {logoUrl && (
-              <div className="absolute left-1/2 -translate-x-1/2 bottom-0 translate-y-1/2">
+              <div className="absolute left-4 sm:left-6 bottom-0 translate-y-1/2">
                 <Image
                   src={logoUrl}
                   alt={name}

@@ -64,7 +64,7 @@ export function BannerUploader({ storeId, initialUrl, onUrlChange }: Props) {
   return (
     <div className="space-y-3">
       {url ? (
-        <div className="relative w-full aspect-[3/1] rounded-xl overflow-hidden border border-white/15 bg-white/5 group">
+        <div className="relative w-full aspect-[4/1] rounded-xl overflow-hidden border border-white/15 bg-white/5 group">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={url} alt="" className="w-full h-full object-cover" />
           <button
@@ -78,7 +78,7 @@ export function BannerUploader({ storeId, initialUrl, onUrlChange }: Props) {
         </div>
       ) : (
         <label
-          className={`flex flex-col items-center justify-center w-full aspect-[3/1] rounded-xl border-2 border-dashed transition-colors cursor-pointer ${
+          className={`flex flex-col items-center justify-center w-full aspect-[4/1] rounded-xl border-2 border-dashed transition-colors cursor-pointer ${
             uploading
               ? 'border-white/10 opacity-50 cursor-not-allowed'
               : 'border-white/20 hover:border-[#F5C84B]/50 hover:bg-white/3'
@@ -98,7 +98,7 @@ export function BannerUploader({ storeId, initialUrl, onUrlChange }: Props) {
             <>
               <Upload size={22} className="text-white/30 mb-2" />
               <p className="text-sm text-white/50">Subí el banner de tu tienda (PNG, JPG, WEBP, SVG)</p>
-              <p className="text-xs text-white/30 mt-1">Proporción recomendada 3:1 · Máx. 5MB</p>
+              <p className="text-xs text-white/30 mt-1">Proporción recomendada 4:1 · Máx. 5MB</p>
             </>
           )}
         </label>
