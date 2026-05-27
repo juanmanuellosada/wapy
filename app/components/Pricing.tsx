@@ -4,20 +4,20 @@ import { useState } from 'react';
 import { Check, Star } from 'lucide-react';
 import { LeadFormModal } from './LeadFormModal';
 
-const inicialFeatures = [
-  'Hasta 15 productos',
-  'Hasta 3 secciones',
-  'Tu link wapy.com.ar/tu-tienda',
-  'Pedidos por WhatsApp',
-  'Panel de control',
+const inicialFeatures: { label: string; highlight?: true }[] = [
+  { label: 'Hasta 50 productos' },
+  { label: 'Hasta 3 secciones' },
+  { label: 'Variantes incluidas', highlight: true },
+  { label: 'Checkout por WhatsApp' },
+  { label: 'Dashboard' },
 ];
 
 const proFeatures = [
   'Productos ilimitados',
   'Secciones ilimitadas',
-  'Tu link wapy.com.ar/tu-tienda',
-  'Pedidos por WhatsApp',
-  'Panel de control',
+  'Variantes incluidas',
+  'Checkout por WhatsApp',
+  'Dashboard',
   'Soporte prioritario',
 ];
 
@@ -87,12 +87,12 @@ export default function Pricing() {
             </div>
 
             <ul className="text-left space-y-3 mb-8 flex-1">
-              {inicialFeatures.map((item) => (
-                <li key={item} className="flex items-center gap-3 text-white/75 text-sm">
+              {inicialFeatures.map(({ label, highlight }) => (
+                <li key={label} className="flex items-center gap-3 text-white/75 text-sm">
                   <span className="w-5 h-5 rounded-full bg-[#F5C84B]/20 flex items-center justify-center flex-shrink-0">
                     <Check className="w-3 h-3 text-[#F5C84B]" strokeWidth={3} />
                   </span>
-                  {item}
+                  {highlight ? <strong className="text-white font-bold">{label}</strong> : label}
                 </li>
               ))}
             </ul>

@@ -474,11 +474,13 @@ export type Database = {
           name: string
           onboarding_step: number
           owner_id: string
+          plan: string | null
           published_at: string | null
           slug: string
           social_links: Json
           status: string
           theme: Json
+          trial_ends_at: string | null
           updated_at: string
           whatsapp_number: string | null
         }
@@ -490,11 +492,13 @@ export type Database = {
           name: string
           onboarding_step?: number
           owner_id: string
+          plan?: string | null
           published_at?: string | null
           slug: string
           social_links?: Json
           status?: string
           theme?: Json
+          trial_ends_at?: string | null
           updated_at?: string
           whatsapp_number?: string | null
         }
@@ -506,11 +510,13 @@ export type Database = {
           name?: string
           onboarding_step?: number
           owner_id?: string
+          plan?: string | null
           published_at?: string | null
           slug?: string
           social_links?: Json
           status?: string
           theme?: Json
+          trial_ends_at?: string | null
           updated_at?: string
           whatsapp_number?: string | null
         }

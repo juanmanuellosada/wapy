@@ -16,6 +16,9 @@ type Props = {
   store: Store;
   initialProducts: Product[];
   sections: Section[];
+  productsCount: number;
+  productsLimit: number;
+  limitIsUnlimited: boolean;
 };
 
 function formatPrice(cents: number): string {
@@ -26,8 +29,9 @@ function formatPrice(cents: number): string {
   }).format(cents / 100);
 }
 
-export function ProductsPanel({ store, initialProducts, sections }: Props) {
+export function ProductsPanel({ store, initialProducts, sections, productsCount, productsLimit, limitIsUnlimited }: Props) {
   const [products, setProducts] = useState<Product[]>(initialProducts);
+  const atProductsLimit = products.length >= productsLimit;
   const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined);
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -177,7 +181,14 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold text-[#FBF7EC]">Productos</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold text-[#FBF7EC]">Productos</h1>
+          {!limitIsUnlimited && (
+            <span className={`text-xs font-medium tabular-nums ${atProductsLimit ? 'text-[#F5C84B]' : 'text-white/40'}`}>
+              {products.length} / {productsLimit}
+            </span>
+          )}
+        </div>
         <button
           type="button"
           onClick={handleExportCsv}
@@ -293,10 +304,10 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
                               <button
                                 type="button"
                                 onClick={() => handleDuplicate(product)}
-                                disabled={duplicatingId === product.id}
+                                disabled={duplicatingId === product.id || atProductsLimit}
                                 className="w-7 h-7 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                                 aria-label={`Duplicar ${product.name}`}
-                                title="Duplicar producto"
+                                title={atProductsLimit ? 'Límite de productos alcanzado' : 'Duplicar producto'}
                               >
                                 <Copy size={13} />
                               </button>
@@ -326,14 +337,25 @@ export function ProductsPanel({ store, initialProducts, sections }: Props) {
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={() => setModalProduct(null)}
-          className="flex items-center gap-2 text-sm text-[#F5C84B] hover:text-[#FAE08A] font-semibold transition-colors cursor-pointer"
-        >
-          <Plus size={16} />
-          Agregar producto
-        </button>
+        <div className="flex items-center gap-4 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setModalProduct(null)}
+            disabled={atProductsLimit}
+            className="flex items-center gap-2 text-sm text-[#F5C84B] hover:text-[#FAE08A] font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Plus size={16} />
+            Agregar producto
+          </button>
+          {!limitIsUnlimited && atProductsLimit && (
+            <a
+              href="/#precios"
+              className="text-xs text-white/50 hover:text-white/80 transition-colors"
+            >
+              Pasate a Pro para sumar productos ilimitados →
+            </a>
+          )}
+        </div>
       </div>
 
       <ConfirmModal

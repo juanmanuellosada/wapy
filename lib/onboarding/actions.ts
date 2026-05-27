@@ -131,6 +131,12 @@ export async function saveBasics(formData: {
     return { ok: true, storeId: existing.id };
   }
 
+  const { data: whitelistRow } = await admin
+    .from('whitelist')
+    .select('plan, trial_ends_at')
+    .ilike('email', user.email!)
+    .maybeSingle();
+
   const { data: newStore, error: insertError } = await admin
     .from('stores')
     .insert({
@@ -140,6 +146,8 @@ export async function saveBasics(formData: {
       description: description ?? null,
       status: 'draft',
       onboarding_step: 1,
+      plan: whitelistRow?.plan ?? 'inicial',
+      trial_ends_at: whitelistRow?.trial_ends_at ?? null,
     })
     .select('id')
     .single();

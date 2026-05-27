@@ -11,6 +11,8 @@ import {
   socialLinksSchema,
 } from '@/lib/onboarding/schemas';
 import type { SocialLinks } from '@/lib/store/social-links';
+import { getPlanLimits, isUnlimited } from '@/lib/plans/limits';
+import type { PlanId } from '@/lib/plans/limits';
 
 // Section item schema (without the min-1 array constraint — dashboard can have 0)
 const sectionItemSchema = z.object({
@@ -179,6 +181,13 @@ export async function saveStoreSections(formData: {
 
   const sections = parsed.data;
 
+  // Plan limit: the incoming array IS the desired final state.
+  const storePlan = (store as unknown as { plan: PlanId | null }).plan;
+  const sectionLimit = getPlanLimits(storePlan).maxSections;
+  if (!isUnlimited(sectionLimit) && sections.length > sectionLimit) {
+    return { error: `Llegaste al límite de tu plan (${sectionLimit} secciones). Pasate a Pro para sumar secciones ilimitadas.` };
+  }
+
   const admin = createAdminClient();
 
   const { data: existingSections } = await admin
@@ -294,6 +303,19 @@ export async function saveStoreProduct(
     return { ok: true, productId: product.id };
   }
 
+  // Plan limit: only enforce on INSERT (no product.id means new product).
+  const storePlan = (store as unknown as { plan: PlanId | null }).plan;
+  const productLimit = getPlanLimits(storePlan).maxProducts;
+  if (!isUnlimited(productLimit)) {
+    const { count } = await admin
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', store.id);
+    if ((count ?? 0) >= productLimit) {
+      return { error: `Llegaste al límite de tu plan (${productLimit} productos). Pasate a Pro para sumar productos ilimitados.` };
+    }
+  }
+
   const { data: newProduct, error: insertError } = await admin
     .from('products')
     .insert({
@@ -391,6 +413,19 @@ export async function duplicateProduct(
     .maybeSingle();
 
   if (!original) return { error: 'Producto no encontrado.' };
+
+  // Plan limit: count existing products before inserting the duplicate.
+  const storePlan = (store as unknown as { plan: PlanId | null }).plan;
+  const productLimit = getPlanLimits(storePlan).maxProducts;
+  if (!isUnlimited(productLimit)) {
+    const { count } = await admin
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', store.id);
+    if ((count ?? 0) >= productLimit) {
+      return { error: `Llegaste al límite de tu plan (${productLimit} productos). Pasate a Pro para sumar productos ilimitados.` };
+    }
+  }
 
   // Determine the base name (strip existing "(copia N)" suffix if present)
   const baseName = original.name.replace(/ \(copia(?: \d+)?\)$/, '');

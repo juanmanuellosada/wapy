@@ -11,6 +11,7 @@ import { SettingsPanel } from '../components/SettingsPanel';
 import { OrdersPanel } from '../components/OrdersPanel';
 import { OrdersStats } from '../components/OrdersStats';
 import { listOrders, getOrderStats } from '@/lib/store/orders/actions';
+import { getPlanLimits, isUnlimited, type PlanId } from '@/lib/plans/limits';
 import type { Metadata } from 'next';
 import type { Section, Product } from '@/lib/onboarding/state';
 
@@ -85,6 +86,8 @@ export default async function DashboardSectionPage({
     orders_by_section: [],
   };
 
+  const limits = getPlanLimits(store.plan as PlanId | null);
+
   const accentColor =
     store.theme &&
     typeof store.theme === 'object' &&
@@ -97,8 +100,25 @@ export default async function DashboardSectionPage({
     <DashboardShell store={store} currentSection={section}>
       {section === 'info' && <InfoPanel store={store} />}
       {section === 'image' && <ImagePanel store={store} />}
-      {section === 'sections' && <SectionsPanel store={store} initialSections={sections} />}
-      {section === 'products' && <ProductsPanel store={store} initialProducts={products} sections={sections} />}
+      {section === 'sections' && (
+        <SectionsPanel
+          store={store}
+          initialSections={sections}
+          sectionsCount={sections.length}
+          sectionsLimit={limits.maxSections}
+          limitIsUnlimited={isUnlimited(limits.maxSections)}
+        />
+      )}
+      {section === 'products' && (
+        <ProductsPanel
+          store={store}
+          initialProducts={products}
+          sections={sections}
+          productsCount={products.length}
+          productsLimit={limits.maxProducts}
+          limitIsUnlimited={isUnlimited(limits.maxProducts)}
+        />
+      )}
       {section === 'orders' && (
         <>
           <OrdersStats accentColor={accentColor} initialStats={initialStats} initialRange="30d" />

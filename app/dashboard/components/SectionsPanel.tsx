@@ -9,6 +9,9 @@ import type { Store, Section } from '@/lib/onboarding/state';
 type Props = {
   store: Store;
   initialSections: Section[];
+  sectionsCount: number;
+  sectionsLimit: number;
+  limitIsUnlimited: boolean;
 };
 
 type SectionDraft = {
@@ -29,7 +32,7 @@ function slugifySection(name: string): string {
     .replace(/\s+/g, '-');
 }
 
-export function SectionsPanel({ store, initialSections }: Props) {
+export function SectionsPanel({ store, initialSections, sectionsCount, sectionsLimit, limitIsUnlimited }: Props) {
   const [sections, setSections] = useState<SectionDraft[]>(
     initialSections.map((s) => ({
       id: s.id,
@@ -38,6 +41,7 @@ export function SectionsPanel({ store, initialSections }: Props) {
       position: s.position,
     }))
   );
+  const atSectionsLimit = sections.length >= sectionsLimit;
   const [newName, setNewName] = useState('');
   const [addingNew, setAddingNew] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -100,7 +104,14 @@ export function SectionsPanel({ store, initialSections }: Props) {
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-[#FBF7EC] mb-6">Secciones</h1>
+      <div className="flex items-center gap-3 mb-6">
+        <h1 className="text-xl font-bold text-[#FBF7EC]">Secciones</h1>
+        {!limitIsUnlimited && (
+          <span className={`text-xs font-medium tabular-nums ${atSectionsLimit ? 'text-[#F5C84B]' : 'text-white/40'}`}>
+            {sections.length} / {sectionsLimit}
+          </span>
+        )}
+      </div>
 
       {serverError && (
         <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-300 mb-4">
@@ -144,7 +155,7 @@ export function SectionsPanel({ store, initialSections }: Props) {
         )}
 
         {/* Add new section input */}
-        {addingNew ? (
+        {!atSectionsLimit && addingNew ? (
           <div className="flex gap-2">
             <input
               ref={newInputRef}
@@ -177,14 +188,25 @@ export function SectionsPanel({ store, initialSections }: Props) {
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => setAddingNew(true)}
-            className="flex items-center gap-2 text-sm text-[#F5C84B] hover:text-[#FAE08A] font-semibold transition-colors cursor-pointer"
-          >
-            <Plus size={16} />
-            Agregar sección
-          </button>
+          <div className="flex items-center gap-4 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setAddingNew(true)}
+              disabled={atSectionsLimit}
+              className="flex items-center gap-2 text-sm text-[#F5C84B] hover:text-[#FAE08A] font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Plus size={16} />
+              Agregar sección
+            </button>
+            {!limitIsUnlimited && atSectionsLimit && (
+              <a
+                href="/#precios"
+                className="text-xs text-white/50 hover:text-white/80 transition-colors"
+              >
+                Pasate a Pro para sumar secciones ilimitadas →
+              </a>
+            )}
+          </div>
         )}
 
         <div className="flex items-center justify-end gap-3 pt-2">
