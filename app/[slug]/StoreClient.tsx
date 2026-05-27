@@ -442,32 +442,36 @@ function StoreHero({
       {banner ? (
         <>
           {/* Banner + overlapping logo */}
-          <div className="relative w-full aspect-[4/1]">
-            {banner.type === 'color' ? (
-              <div className="w-full h-full" style={{ backgroundColor: banner.value }} />
-            ) : (
-              <Image
-                src={banner.value}
-                alt=""
-                fill
-                className="object-cover"
-                priority
-              />
-            )}
-            {logoUrl && (
-              <div className="absolute left-4 sm:left-6 bottom-0 translate-y-1/2">
+          <div className="relative w-full">
+            <div className="aspect-[4/1] w-full">
+              {banner.type === 'color' ? (
+                <div className="w-full h-full" style={{ backgroundColor: banner.value }} />
+              ) : (
                 <Image
-                  src={logoUrl}
-                  alt={name}
-                  width={96}
-                  height={96}
-                  className="rounded-full object-cover"
-                  style={{
-                    outline: `3px solid ${accentColor}`,
-                    outlineOffset: 2,
-                  }}
+                  src={banner.value}
+                  alt=""
+                  fill
+                  className="object-cover"
                   priority
                 />
+              )}
+            </div>
+            {logoUrl && (
+              <div className="absolute inset-x-0 bottom-0 mx-auto max-w-6xl px-4 sm:px-6">
+                <div className="absolute bottom-0 left-4 sm:left-6 translate-y-1/2">
+                  <Image
+                    src={logoUrl}
+                    alt={name}
+                    width={96}
+                    height={96}
+                    className="rounded-full object-cover"
+                    style={{
+                      outline: `3px solid ${accentColor}`,
+                      outlineOffset: 2,
+                    }}
+                    priority
+                  />
+                </div>
               </div>
             )}
           </div>
