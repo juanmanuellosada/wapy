@@ -457,20 +457,22 @@ function StoreHero({
               )}
             </div>
             {logoUrl && (
-              <div className="absolute inset-x-0 bottom-0 mx-auto max-w-6xl px-4 sm:px-6">
-                <div className="absolute bottom-0 left-4 sm:left-6 translate-y-1/2">
-                  <Image
-                    src={logoUrl}
-                    alt={name}
-                    width={96}
-                    height={96}
-                    className="rounded-full object-cover"
-                    style={{
-                      outline: `3px solid ${accentColor}`,
-                      outlineOffset: 2,
-                    }}
-                    priority
-                  />
+              <div className="absolute inset-x-0 bottom-0 px-4 sm:px-6">
+                <div className="relative mx-auto max-w-6xl">
+                  <div className="absolute bottom-0 left-0 translate-y-1/2">
+                    <Image
+                      src={logoUrl}
+                      alt={name}
+                      width={96}
+                      height={96}
+                      className="rounded-full object-cover"
+                      style={{
+                        outline: `3px solid ${accentColor}`,
+                        outlineOffset: 2,
+                      }}
+                      priority
+                    />
+                  </div>
                 </div>
               </div>
             )}
