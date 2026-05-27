@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Loader2, CheckCircle } from 'lucide-react';
 import { saveStoreLook, saveBannerConfig } from '@/lib/store/actions';
 import { ColorPicker } from '@/app/components/ColorPicker';
+import { LogoColorPalette } from '@/app/dashboard/components/LogoColorPalette';
 import { LogoUploader } from '@/app/components/store/LogoUploader';
 import { BannerUploader } from '@/app/components/store/BannerUploader';
 import type { Store } from '@/lib/onboarding/state';
@@ -183,12 +184,17 @@ export function ImagePanel({ store }: Props) {
             Se usa en botones y detalles de tu tienda. Elegí cualquier color.
           </p>
 
-          <ColorPicker
-            value={accentColor}
-            onChange={setAccentColor}
-            id="accent-color"
-            ariaLabel="Color de acento"
-          />
+          <div className="flex items-start gap-6">
+            <ColorPicker
+              value={accentColor}
+              onChange={setAccentColor}
+              id="accent-color"
+              ariaLabel="Color de acento"
+            />
+            {logoUrl && (
+              <LogoColorPalette logoUrl={logoUrl} onSelectColor={setAccentColor} />
+            )}
+          </div>
 
           {/* Preview */}
           <div className="mt-5 p-4 rounded-xl border border-white/10 bg-white/3">
