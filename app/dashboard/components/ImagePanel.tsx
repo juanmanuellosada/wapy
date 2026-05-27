@@ -140,13 +140,24 @@ export function ImagePanel({ store }: Props) {
           </div>
 
           {bannerMode === 'color' && (
-            <div onBlur={handleBannerColorBlur}>
-              <ColorPicker
-                value={bannerColor}
-                onChange={handleBannerColorChange}
-                id="banner-color"
-                ariaLabel="Color del banner"
-              />
+            <div className="flex items-start gap-6">
+              <div onBlur={handleBannerColorBlur}>
+                <ColorPicker
+                  value={bannerColor}
+                  onChange={handleBannerColorChange}
+                  id="banner-color"
+                  ariaLabel="Color del banner"
+                />
+              </div>
+              {logoUrl && (
+                <LogoColorPalette
+                  logoUrl={logoUrl}
+                  onSelectColor={async (hex) => {
+                    setBannerColor(hex);
+                    await saveBannerConfig({ type: 'color', value: hex });
+                  }}
+                />
+              )}
             </div>
           )}
 
