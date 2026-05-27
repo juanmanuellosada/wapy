@@ -76,6 +76,61 @@ export async function uploadStoreLogoAction(formData: FormData): Promise<LogoUpl
 }
 
 /**
+ * Server Action: upload a store banner via the admin (service-role) client,
+ * bypassing RLS on storage. Auth and ownership are verified server-side.
+ */
+export async function uploadStoreBannerAction(formData: FormData): Promise<LogoUploadResult> {
+  const file = formData.get('file');
+  const storeId = formData.get('storeId');
+
+  if (!(file instanceof File) || !file.size) {
+    return { ok: false, error: 'invalid_file', message: 'No se recibió ningún archivo.' };
+  }
+  if (typeof storeId !== 'string' || !storeId) {
+    return { ok: false, error: 'invalid_file', message: 'storeId requerido.' };
+  }
+
+  if (file.size > MAX_SIZE_BYTES) {
+    return { ok: false, error: 'too_large', message: 'Imagen muy pesada. Máximo 5MB.' };
+  }
+  const validationError = validateLogoFile(file);
+  if (validationError) {
+    return { ok: false, error: 'invalid_file', message: validationError.message };
+  }
+
+  const serverClient = await createServerClient();
+  const { data: { user } } = await serverClient.auth.getUser();
+  if (!user) {
+    return { ok: false, error: 'unauthorized' };
+  }
+
+  const { data: store } = await serverClient
+    .from('stores')
+    .select('id')
+    .eq('id', storeId)
+    .eq('owner_id', user.id)
+    .maybeSingle();
+  if (!store) {
+    return { ok: false, error: 'not_owner' };
+  }
+
+  const ext = getExtension(file.name);
+  const path = `${storeId}/banner.${ext}`;
+  const admin = createAdminClient();
+
+  const { error: uploadError } = await admin.storage
+    .from('store-banners')
+    .upload(path, file, { upsert: true, contentType: file.type });
+
+  if (uploadError) {
+    return { ok: false, error: 'upload_failed', message: 'Error al subir el banner. Intentá de nuevo.' };
+  }
+
+  const { data } = admin.storage.from('store-banners').getPublicUrl(path);
+  return { ok: true, url: `${data.publicUrl}?t=${Date.now()}` };
+}
+
+/**
  * Server Action: upload a product image via the admin (service-role) client,
  * bypassing RLS on storage. Auth and ownership are verified server-side.
  */

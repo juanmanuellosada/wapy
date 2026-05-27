@@ -112,6 +112,7 @@ export async function saveStoreBasics(formData: {
 export async function saveStoreLook(formData: {
   accent_color: string;
   logo_url?: string | null;
+  banner?: { type: 'color' | 'image'; value: string } | null;
 }): Promise<SaveResult> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'No se encontró la tienda.' };
@@ -121,11 +122,26 @@ export async function saveStoreLook(formData: {
 
   const { accent_color, logo_url } = parsed.data;
 
+  const existingTheme =
+    store.theme && typeof store.theme === 'object' && !Array.isArray(store.theme)
+      ? (store.theme as Record<string, unknown>)
+      : {};
+
+  const newTheme: Record<string, unknown> = { ...existingTheme, accent_color };
+  if (formData.banner !== undefined) {
+    if (formData.banner) {
+      newTheme.banner = formData.banner;
+    } else {
+      delete newTheme.banner;
+    }
+  }
+
   const admin = createAdminClient();
   const { error } = await admin
     .from('stores')
     .update({
-      theme: { accent_color },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      theme: newTheme as any,
       logo_url: logo_url ?? null,
       updated_at: new Date().toISOString(),
     })
@@ -135,6 +151,42 @@ export async function saveStoreLook(formData: {
 
   revalidatePath('/dashboard', 'layout');
   return { ok: true, storeId: store.id };
+}
+
+// ---------------------------------------------------------------------------
+// saveBannerConfig — UPDATE only theme.banner (called from client after upload/change).
+// ---------------------------------------------------------------------------
+
+export async function saveBannerConfig(
+  banner: { type: 'color' | 'image'; value: string } | null
+): Promise<{ ok: true } | { error: string }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const existingTheme =
+    store.theme && typeof store.theme === 'object' && !Array.isArray(store.theme)
+      ? (store.theme as Record<string, unknown>)
+      : {};
+
+  const newTheme: Record<string, unknown> = { ...existingTheme };
+  if (banner) {
+    newTheme.banner = banner;
+  } else {
+    delete newTheme.banner;
+  }
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from('stores')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .update({ theme: newTheme as any, updated_at: new Date().toISOString() })
+    .eq('id', store.id);
+
+  if (error) return { error: 'No se pudo guardar el banner.' };
+
+  revalidatePath('/dashboard', 'layout');
+  revalidatePath('/[slug]', 'page');
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

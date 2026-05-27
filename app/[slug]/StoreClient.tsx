@@ -17,6 +17,7 @@ import {
 import type { SocialLinks } from "@/lib/store/social-links";
 import { extractSocialHandle } from "@/lib/store/social-links";
 import type { StoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
+import { parseBanner } from "@/lib/store/theme";
 import { useCart, cartItemKey } from "./CartContext";
 import ProductCardClient from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
@@ -409,12 +410,14 @@ function StoreHero({
   accentColor,
   logoUrl,
   socialLinks,
+  banner,
 }: {
   name: string;
   description: string | null;
   accentColor: string;
   logoUrl?: string | null;
   socialLinks?: SocialLinks;
+  banner?: { type: 'color' | 'image'; value: string } | null;
 }) {
   const socialNetworks: Array<{
     key: keyof SocialLinks;
@@ -433,80 +436,165 @@ function StoreHero({
 
   return (
     <section
-      className="py-16 sm:py-24 px-4 sm:px-6"
       style={{ background: "var(--store-surface)" }}
       aria-label="Presentación de la tienda"
     >
-      <div className="mx-auto max-w-6xl flex flex-col gap-3">
-        {/* Logo */}
-        {logoUrl && (
-          <Image
-            src={logoUrl}
-            alt={name}
-            width={96}
-            height={96}
-            className="rounded-full object-cover mb-2"
-            style={{
-              outline: `3px solid ${accentColor}`,
-              outlineOffset: 2,
-            }}
-            priority
-          />
-        )}
-        {/* Eyebrow */}
-        <p
-          className="text-xs font-semibold uppercase tracking-widest"
-          style={{ color: accentColor }}
-        >
-          Tienda online
-        </p>
-        {/* Headline */}
-        <h1
-          className="text-5xl sm:text-7xl font-bold tracking-tight leading-none"
-          style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
-        >
-          {name}
-        </h1>
-        {/* Description */}
-        {description && (
-          <p
-            className="text-base sm:text-lg max-w-md mt-1"
-            style={{ color: "var(--store-ink-secondary)" }}
-          >
-            {description}
-          </p>
-        )}
-        {/* Social links */}
-        {socialNetworks.length > 0 && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2">
-            {socialNetworks.map((s) => {
-              const handle = extractSocialHandle(s.key, s.url!);
-              return (
-                <a
-                  key={s.key}
-                  href={s.url!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={s.label}
-                  className="inline-flex items-center gap-1.5 transition-opacity hover:opacity-80"
+      {banner ? (
+        <>
+          {/* Banner + overlapping logo */}
+          <div className="relative w-full aspect-[3/1]">
+            {banner.type === 'color' ? (
+              <div className="w-full h-full" style={{ backgroundColor: banner.value }} />
+            ) : (
+              <Image
+                src={banner.value}
+                alt=""
+                fill
+                className="object-cover"
+                priority
+              />
+            )}
+            {logoUrl && (
+              <div className="absolute left-1/2 -translate-x-1/2 bottom-0 translate-y-1/2">
+                <Image
+                  src={logoUrl}
+                  alt={name}
+                  width={96}
+                  height={96}
+                  className="rounded-full object-cover"
+                  style={{
+                    outline: `3px solid ${accentColor}`,
+                    outlineOffset: 2,
+                  }}
+                  priority
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Text block — padded top so it clears the overlapping logo */}
+          <div className={`px-4 sm:px-6 pb-16 sm:pb-24 ${logoUrl ? 'pt-16' : 'pt-8'}`}>
+            <div className="mx-auto max-w-6xl flex flex-col gap-3">
+              <p
+                className="text-xs font-semibold uppercase tracking-widest"
+                style={{ color: accentColor }}
+              >
+                Tienda online
+              </p>
+              <h1
+                className="text-5xl sm:text-7xl font-bold tracking-tight leading-none"
+                style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
+              >
+                {name}
+              </h1>
+              {description && (
+                <p
+                  className="text-base sm:text-lg max-w-md mt-1"
                   style={{ color: "var(--store-ink-secondary)" }}
                 >
-                  {s.renderIcon()}
-                  {handle && (
-                    <span className="text-sm">@{handle}</span>
-                  )}
-                </a>
-              );
-            })}
+                  {description}
+                </p>
+              )}
+              {socialNetworks.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2">
+                  {socialNetworks.map((s) => {
+                    const handle = extractSocialHandle(s.key, s.url!);
+                    return (
+                      <a
+                        key={s.key}
+                        href={s.url!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={s.label}
+                        className="inline-flex items-center gap-1.5 transition-opacity hover:opacity-80"
+                        style={{ color: "var(--store-ink-secondary)" }}
+                      >
+                        {s.renderIcon()}
+                        {handle && (
+                          <span className="text-sm">@{handle}</span>
+                        )}
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
+              <div
+                className="mt-6 h-px w-16"
+                style={{ background: accentColor, opacity: 0.6 }}
+                aria-hidden="true"
+              />
+            </div>
           </div>
-        )}
-        {/* Decorative rule */}
-        <div
-          className="mt-6 h-px w-16"
-          style={{ background: accentColor, opacity: 0.6 }}
-          aria-hidden="true"
-        />
-      </div>
+        </>
+      ) : (
+        /* Original layout — no banner */
+        <div className="py-16 sm:py-24 px-4 sm:px-6">
+          <div className="mx-auto max-w-6xl flex flex-col gap-3">
+            {logoUrl && (
+              <Image
+                src={logoUrl}
+                alt={name}
+                width={96}
+                height={96}
+                className="rounded-full object-cover mb-2"
+                style={{
+                  outline: `3px solid ${accentColor}`,
+                  outlineOffset: 2,
+                }}
+                priority
+              />
+            )}
+            <p
+              className="text-xs font-semibold uppercase tracking-widest"
+              style={{ color: accentColor }}
+            >
+              Tienda online
+            </p>
+            <h1
+              className="text-5xl sm:text-7xl font-bold tracking-tight leading-none"
+              style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
+            >
+              {name}
+            </h1>
+            {description && (
+              <p
+                className="text-base sm:text-lg max-w-md mt-1"
+                style={{ color: "var(--store-ink-secondary)" }}
+              >
+                {description}
+              </p>
+            )}
+            {socialNetworks.length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2">
+                {socialNetworks.map((s) => {
+                  const handle = extractSocialHandle(s.key, s.url!);
+                  return (
+                    <a
+                      key={s.key}
+                      href={s.url!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={s.label}
+                      className="inline-flex items-center gap-1.5 transition-opacity hover:opacity-80"
+                      style={{ color: "var(--store-ink-secondary)" }}
+                    >
+                      {s.renderIcon()}
+                      {handle && (
+                        <span className="text-sm">@{handle}</span>
+                      )}
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+            <div
+              className="mt-6 h-px w-16"
+              style={{ background: accentColor, opacity: 0.6 }}
+              aria-hidden="true"
+            />
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -1351,6 +1439,7 @@ export default function StoreClient({
         accentColor={accentColor}
         logoUrl={store.logo_url}
         socialLinks={(store.social_links ?? undefined) as unknown as SocialLinks | undefined}
+        banner={parseBanner(store.theme)}
       />
 
       <main
