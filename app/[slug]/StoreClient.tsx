@@ -242,7 +242,7 @@ function StoreHeader({
 
         {/* Section nav — desktop (md+) */}
         <nav
-          className="hidden md:flex items-center gap-0.5 flex-1 justify-center"
+          className="hidden lg:flex items-center gap-0.5 flex-1 justify-center"
           aria-label="Secciones de la tienda"
         >
           {sections.map((s) => (
@@ -343,7 +343,7 @@ function StoreHeader({
       </div>
 
       {/* Mobile secondary row: section nav + optional search bar */}
-      <div className="md:hidden">
+      <div className="lg:hidden">
         {/* Mobile search bar — shown when toggled */}
         {mobileSearchOpen && (
           <div id="mobile-search-bar" className="px-4 pb-2">
