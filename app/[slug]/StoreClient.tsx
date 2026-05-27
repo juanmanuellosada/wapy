@@ -258,7 +258,7 @@ function StoreHeader({
         </nav>
 
         {/* Right controls: search + theme toggle + cart */}
-        <div className="flex items-center gap-1.5 sm:gap-2 lg:ml-auto shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 ml-auto shrink-0">
           {/* Desktop search input (sm+) */}
           <div className="relative hidden sm:flex items-center">
             <Search
