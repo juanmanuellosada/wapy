@@ -4,6 +4,8 @@ import { resolveStoreSlug } from "@/lib/storefront/resolve";
 import StoreClient from "./StoreClient";
 import MaintenancePage from "./MaintenancePage";
 import { parseFiltersFromSearchParams } from "./filters";
+import { getTopSellers, getRelatedProductIds } from "@/lib/storefront/insights";
+import type { UIProduct } from "./types";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -65,6 +67,44 @@ export default async function SlugPage({ params, searchParams }: Props) {
           ? pRaw
           : null;
 
+      // Build a local UIProduct map for mapping RPC ids → UIProduct
+      const productMap = new Map<string, UIProduct>(
+        resolution.products.map((p) => [
+          p.id,
+          {
+            id: p.id,
+            sectionId: p.section_id ?? "",
+            name: p.name,
+            description: p.description ?? "",
+            price: p.price_cents / 100,
+            priceCents: p.price_cents,
+            image:
+              p.image_urls && p.image_urls.length > 0
+                ? p.image_urls[0]
+                : "data:image/svg+xml;charset=utf-8," +
+                  encodeURIComponent(
+                    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#e5e7eb"/><text x="100" y="105" font-family="system-ui,sans-serif" font-size="14" fill="#9ca3af" text-anchor="middle">Sin imagen</text></svg>'
+                  ),
+            imageUrls: p.image_urls ?? [],
+            stock: p.stock ?? null,
+          },
+        ])
+      );
+
+      // Fetch top sellers and (if deep-link) related products in parallel.
+      // Both are best-effort — silently degrade to [] on any error.
+      const [topSellerIds, initialRelatedIds] = await Promise.all([
+        getTopSellers(resolution.store.id),
+        initialProductId
+          ? getRelatedProductIds(initialProductId, resolution.store.id)
+          : Promise.resolve([]),
+      ]);
+
+      // Map RPC ids → UIProduct, filtering products not in the active catalog.
+      const topSellerProducts: UIProduct[] = topSellerIds
+        .map((id) => productMap.get(id))
+        .filter((p): p is UIProduct => p !== undefined);
+
       return (
         <StoreClient
           store={resolution.store}
@@ -73,6 +113,8 @@ export default async function SlugPage({ params, searchParams }: Props) {
           variantsByProduct={resolution.variantsByProduct}
           initialFilters={initialFilters}
           initialProductId={initialProductId}
+          topSellerProducts={topSellerProducts}
+          initialRelatedIds={initialRelatedIds}
         />
       );
     }

@@ -34,6 +34,10 @@ import {
   applyFilters,
 } from "./filters";
 import type { UIProduct } from "./types";
+import TopSellers from "./TopSellers";
+import RelatedProducts from "./RelatedProducts";
+import ShareCartButton from "./ShareCartButton";
+import { getRelatedProductIds } from "@/lib/storefront/insights";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1152,6 +1156,15 @@ function CartDrawer({
               </span>
             </div>
 
+            {/* Share viral CTA — above WhatsApp order button */}
+            <ShareCartButton
+              storeName={storeName}
+              slug={storeSlug}
+              items={items}
+              total={totalPrice}
+              accentColor={accentColor}
+            />
+
             {/* WhatsApp CTA */}
             {whatsappNumber ? (
               <button
@@ -1286,6 +1299,8 @@ export default function StoreClient({
   variantsByProduct,
   initialFilters = DEFAULT_FILTERS,
   initialProductId = null,
+  topSellerProducts = [],
+  initialRelatedIds = [],
 }: {
   store: StoreRow;
   sections: SectionRow[];
@@ -1293,6 +1308,10 @@ export default function StoreClient({
   variantsByProduct: Record<string, ProductVariantData>;
   initialFilters?: CatalogFilters;
   initialProductId?: string | null;
+  /** Pre-fetched top seller UIProducts (SSR). Shown when length >= 3. */
+  topSellerProducts?: UIProduct[];
+  /** Pre-fetched related product IDs for the initial deep-link product (SSR). */
+  initialRelatedIds?: string[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -1343,6 +1362,27 @@ export default function StoreClient({
     return map;
   }, [products, variantsByProduct]);
 
+  // ─── Related products state ───────────────────────────────────────────────
+
+  // In-memory cache: productId → related product IDs. Avoids re-fetching when
+  // the visitor closes and re-opens the same product modal.
+  const relatedCacheRef = useRef<Map<string, string[]>>(new Map());
+
+  // Hydrate cache with SSR-resolved ids for the initial deep-link product
+  useEffect(() => {
+    if (initialProductId && initialRelatedIds.length > 0) {
+      relatedCacheRef.current.set(initialProductId, initialRelatedIds);
+    }
+    // Intentionally runs only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Related IDs for the currently open modal product (drives relatedSlot rendering)
+  const [currentRelatedIds, setCurrentRelatedIds] = useState<string[]>(
+    () => (initialProductId && initialRelatedIds.length > 0 ? initialRelatedIds : [])
+  );
+  const [relatedLoading, setRelatedLoading] = useState(false);
+
   // ─── Filters state ───────────────────────────────────────────────────────────
 
   const [filters, setFilters] = useState<CatalogFilters>(initialFilters);
@@ -1366,12 +1406,40 @@ export default function StoreClient({
     () => (initialProductId ? (productMap.get(initialProductId) ?? null) : null)
   );
 
-  const openModal = useCallback((p: UIProduct) => {
+  const openModal = useCallback(async (p: UIProduct) => {
     setModalProductState(p);
-  }, []);
+
+    // Fetch related products if not already cached
+    const cached = relatedCacheRef.current.get(p.id);
+    if (cached !== undefined) {
+      setCurrentRelatedIds(cached);
+      return;
+    }
+
+    // No cache — fetch asynchronously
+    setCurrentRelatedIds([]);
+    setRelatedLoading(true);
+    try {
+      const ids = await getRelatedProductIds(p.id, store.id);
+      relatedCacheRef.current.set(p.id, ids);
+      // Only apply if the user is still on this product
+      setModalProductState((current) => {
+        if (current?.id === p.id) {
+          setCurrentRelatedIds(ids);
+        }
+        return current;
+      });
+    } catch {
+      console.warn("[StoreClient] failed to fetch related products");
+      relatedCacheRef.current.set(p.id, []);
+    } finally {
+      setRelatedLoading(false);
+    }
+  }, [store.id]);
 
   const closeModal = useCallback(() => {
     setModalProductState(null);
+    setCurrentRelatedIds([]);
   }, []);
 
   // Single effect: sync URL whenever modal or filters change.
@@ -1468,6 +1536,16 @@ export default function StoreClient({
           accentColor={accentColor}
         />
 
+        {/* Top sellers — only visible when no active filters */}
+        {!hasActiveFilters && topSellerProducts.length >= 3 && (
+          <TopSellers
+            products={topSellerProducts}
+            accentColor={accentColor}
+            variantsByProduct={variantsByProduct}
+            onOpenModal={openModal}
+          />
+        )}
+
         {/* Product grid area */}
         {hasActiveFilters ? (
           visibleProducts.length === 0 ? (
@@ -1553,10 +1631,37 @@ export default function StoreClient({
 
       {modalProduct && (
         <ProductModal
+          key={modalProduct.id}
           product={modalProduct}
           accentColor={accentColor}
           onClose={closeModal}
           hasVariants={(variantsByProduct[modalProduct.id]?.optionTypes?.length ?? 0) > 0}
+          relatedSlot={
+            relatedLoading ? (
+              /* Loading skeletons while fetching related products */
+              <div className="mt-4 flex gap-3 overflow-x-auto pb-1" aria-hidden="true">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="shrink-0 rounded-xl overflow-hidden"
+                    style={{
+                      width: 88,
+                      height: 140,
+                      background: "var(--store-border)",
+                      opacity: 0.6,
+                    }}
+                  />
+                ))}
+              </div>
+            ) : currentRelatedIds.length > 0 ? (
+              <RelatedProducts
+                relatedIds={currentRelatedIds}
+                products={products}
+                onSelect={openModal}
+                accentColor={accentColor}
+              />
+            ) : null
+          }
         />
       )}
     </div>

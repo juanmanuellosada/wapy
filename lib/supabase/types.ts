@@ -594,6 +594,20 @@ export type Database = {
     Functions: {
       current_user_role: { Args: { uid: string }; Returns: string }
       is_superadmin: { Args: { uid: string }; Returns: boolean }
+      storefront_co_purchased: {
+        Args: { p_limit?: number; p_product_id: string; p_store_id: string }
+        Returns: {
+          co_orders: number
+          product_id: string
+        }[]
+      }
+      storefront_top_sellers: {
+        Args: { p_days?: number; p_limit?: number; p_store_id: string }
+        Returns: {
+          product_id: string
+          units_sold: number
+        }[]
+      }
       whitelist_check_email: {
         Args: { p_email: string }
         Returns: {
