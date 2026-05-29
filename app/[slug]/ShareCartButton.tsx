@@ -3,6 +3,7 @@
 import React from "react";
 import { Share2 } from "lucide-react";
 import type { CartItem } from "./CartContext";
+import { toast } from "@/lib/toast";
 
 function formatARS(amount: number): string {
   return amount.toLocaleString("es-AR", {
@@ -42,6 +43,8 @@ interface Props {
   items: CartItem[];
   total: number;
   accentColor: string;
+  /** Map from productId → { min_quantity, qty_step } for pre-share validation (D3). */
+  productMinStepMap?: Map<string, { min_quantity: number; qty_step: number }>;
 }
 
 /**
@@ -54,6 +57,7 @@ export default function ShareCartButton({
   items,
   total,
   accentColor,
+  productMinStepMap,
 }: Props) {
   // Don't render if cart is empty (defensive — caller also guards this)
   if (items.length === 0) return null;
@@ -61,6 +65,29 @@ export default function ShareCartButton({
   async function handleShare() {
     // Edge case: items could be empty if called programmatically despite the guard
     if (items.length === 0) return;
+
+    // D3: pre-validate min_quantity and qty_step (grouped by product_id)
+    if (productMinStepMap && productMinStepMap.size > 0) {
+      const qtyByProduct = new Map<string, number>();
+      for (const item of items) {
+        qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) ?? 0) + item.quantity);
+      }
+      for (const [productId, totalQty] of qtyByProduct.entries()) {
+        const rules = productMinStepMap.get(productId);
+        if (!rules) continue;
+        const { min_quantity, qty_step } = rules;
+        if (totalQty < min_quantity) {
+          const productName = items.find((i) => i.productId === productId)?.name ?? productId;
+          toast.error(`Necesitás al menos ${min_quantity} unidades de '${productName}' para compartir el pedido.`);
+          return;
+        }
+        if (qty_step > 1 && totalQty % qty_step !== 0) {
+          const productName = items.find((i) => i.productId === productId)?.name ?? productId;
+          toast.error(`La cantidad de '${productName}' debe ser múltiplo de ${qty_step}.`);
+          return;
+        }
+      }
+    }
 
     const text = buildShareText(storeName, slug, items, total);
     const url = `https://wapy.com.ar/${slug}`;

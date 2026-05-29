@@ -11,4 +11,6 @@ export interface UIProduct {
   image: string;
   imageUrls: string[]; // all images for the gallery
   stock: number | null; // null = no tracking, 0 = out of stock, N = N units available
+  min_quantity: number; // minimum units per order (default 1)
+  qty_step: number; // increment step (default 1)
 }

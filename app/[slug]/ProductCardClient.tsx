@@ -29,6 +29,8 @@ export interface SimpleProduct {
   image: string;
   stock: number | null;
   description: string;
+  min_quantity: number; // default 1
+  qty_step: number; // default 1
 }
 
 interface Props<T extends SimpleProduct> {
@@ -46,6 +48,11 @@ interface Props<T extends SimpleProduct> {
 
 // ─── Simple product card (no variants) ───────────────────────────────────────
 
+/** D4: quantity to add on a single click. First add = min_quantity; subsequent = qty_step. */
+function quantityToAdd(minQty: number, step: number, currentQty: number): number {
+  return currentQty === 0 ? minQty : step;
+}
+
 function SimpleProductCard<T extends SimpleProduct>({
   product,
   accentColor,
@@ -57,21 +64,48 @@ function SimpleProductCard<T extends SimpleProduct>({
   onOpenModal: (p: T) => void;
   isHighlighted?: boolean;
 }) {
-  const { addItem, openCart } = useCart();
+  const { addItem, setQty, items, openCart } = useCart();
   const isOutOfStock = product.stock === 0;
   const isLowStock = product.stock !== null && product.stock >= 1 && product.stock <= 5;
+  const minQty = product.min_quantity ?? 1;
+  const step = product.qty_step ?? 1;
+
+  // Sum all line items for this product (across any variants) to compute currentQty
+  const currentQtyInCart = items
+    .filter((i) => i.productId === product.id)
+    .reduce((s, i) => s + i.quantity, 0);
 
   function handleAdd(e: React.MouseEvent) {
     e.stopPropagation();
     if (isOutOfStock) return;
-    addItem({
-      productId: product.id,
-      name: product.name,
-      price: product.price,
-      image: product.image,
-    });
+    const toAdd = quantityToAdd(minQty, step, currentQtyInCart);
+    const existingItem = items.find((i) => i.productId === product.id && !i.variantId);
+    if (existingItem) {
+      const key = cartItemKey(product.id, null);
+      setQty(key, existingItem.quantity + toAdd);
+    } else {
+      addItem({
+        productId: product.id,
+        name: product.name,
+        price: product.price,
+        image: product.image,
+      });
+      if (toAdd > 1) {
+        // addItem sets quantity to 1; correct it via setQty after a tick
+        // (CartContext's ADD action starts at 1 for new items)
+        const key = cartItemKey(product.id, null);
+        setQty(key, toAdd);
+      }
+    }
     openCart();
   }
+
+  const showMinStepLabel = minQty > 1 || step > 1;
+  const minStepLabel = minQty > 1 && step > 1
+    ? `Mín. ${minQty}, de a ${step}`
+    : minQty > 1
+    ? `Mín. ${minQty}`
+    : `De a ${step}`;
 
   return (
     <article
@@ -123,6 +157,12 @@ function SimpleProductCard<T extends SimpleProduct>({
         >
           {product.name}
         </h3>
+        {/* D9: sub-label shown only when there's a restriction */}
+        {showMinStepLabel && (
+          <p className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
+            {minStepLabel}
+          </p>
+        )}
         <div className="flex items-center justify-between gap-2 mt-auto">
           <span className="text-sm sm:text-base font-bold" style={{ color: "var(--store-ink)" }}>
             {formatARS(product.price)}
@@ -162,7 +202,15 @@ function VariantProductCard<T extends SimpleProduct>({
   priceCents: number;
   isHighlighted?: boolean;
 }) {
-  const { addItem, openCart } = useCart();
+  const { addItem, setQty, items, openCart } = useCart();
+  const minQty = product.min_quantity ?? 1;
+  const step = product.qty_step ?? 1;
+  const showMinStepLabel = minQty > 1 || step > 1;
+  const minStepLabel = minQty > 1 && step > 1
+    ? `Mín. ${minQty}, de a ${step}`
+    : minQty > 1
+    ? `Mín. ${minQty}`
+    : `De a ${step}`;
 
   // State: for each optionTypeId, which optionValueId is selected (undefined = not yet picked)
   const [selectedValues, setSelectedValues] = useState<Record<string, string>>({});
@@ -236,19 +284,37 @@ function VariantProductCard<T extends SimpleProduct>({
     setSelectedValues((prev) => ({ ...prev, [optionTypeId]: optionValueId }));
   }
 
+  // Sum of all line items for this product to compute quantityToAdd
+  const totalQtyInCart = items
+    .filter((i) => i.productId === product.id)
+    .reduce((s, i) => s + i.quantity, 0);
+
   function handleAdd(e: React.MouseEvent) {
     e.stopPropagation();
     if (!canAdd || !activeVariant) return;
-    addItem({
-      productId: product.id,
-      name: product.name,
-      price: effectivePrice,
-      image: effectiveImage ?? PLACEHOLDER_IMAGE,
-      variantId: activeVariant.id,
-      variantLabel,
-      variantPrice: effectivePrice,
-      variantImageUrl: activeVariant.image_url,
-    });
+    const toAdd = quantityToAdd(minQty, step, totalQtyInCart);
+    const existingVariantItem = items.find(
+      (i) => i.productId === product.id && i.variantId === activeVariant.id
+    );
+    if (existingVariantItem) {
+      const key = cartItemKey(product.id, activeVariant.id);
+      setQty(key, existingVariantItem.quantity + toAdd);
+    } else {
+      addItem({
+        productId: product.id,
+        name: product.name,
+        price: effectivePrice,
+        image: effectiveImage ?? PLACEHOLDER_IMAGE,
+        variantId: activeVariant.id,
+        variantLabel,
+        variantPrice: effectivePrice,
+        variantImageUrl: activeVariant.image_url,
+      });
+      if (toAdd > 1) {
+        const key = cartItemKey(product.id, activeVariant.id);
+        setQty(key, toAdd);
+      }
+    }
     openCart();
   }
 
@@ -310,6 +376,13 @@ function VariantProductCard<T extends SimpleProduct>({
         >
           {product.name}
         </h3>
+
+        {/* D9: sub-label shown only when there's a restriction */}
+        {showMinStepLabel && (
+          <p className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
+            {minStepLabel}
+          </p>
+        )}
 
         {/* Option selectors — one per type */}
         {optionTypes

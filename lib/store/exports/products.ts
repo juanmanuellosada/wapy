@@ -75,11 +75,26 @@ export async function exportProductsCsv(): Promise<ExportProductsCsvResult> {
   const admin = createAdminClient();
 
   // 1. Fetch all products with section name
-  const { data: products } = await admin
+  // min_quantity and qty_step are not yet in the generated Supabase types; cast via any.
+  type ProductExportRow = {
+    id: string;
+    name: string;
+    description: string | null;
+    price_cents: number;
+    stock: number | null;
+    is_active: boolean;
+    image_urls: string[];
+    section_id: string | null;
+    min_quantity: number;
+    qty_step: number;
+    sections: { name: string } | null;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: products } = (await (admin as any)
     .from('products')
-    .select('id, name, description, price_cents, stock, is_active, image_urls, section_id, sections(name)')
+    .select('id, name, description, price_cents, stock, is_active, image_urls, section_id, min_quantity, qty_step, sections(name)')
     .eq('store_id', store.id)
-    .order('position', { ascending: true });
+    .order('position', { ascending: true })) as { data: ProductExportRow[] | null };
 
   if (!products || products.length === 0) return { error: 'empty' };
 
@@ -144,7 +159,7 @@ export async function exportProductsCsv(): Promise<ExportProductsCsvResult> {
   }
 
   // 3. Build CSV rows
-  const HEADER = 'Nombre,Descripción,Precio,Stock,Activo,Imagen,Sección,Variante';
+  const HEADER = 'Nombre,Descripción,Precio,Stock,Activo,Imagen,Sección,Variante,CantidadMínima,VenderDeA';
 
   const rows: string[] = [];
 
@@ -152,6 +167,9 @@ export async function exportProductsCsv(): Promise<ExportProductsCsvResult> {
     const sectionName = (product.sections as { name: string } | null)?.name ?? '';
     const activo = product.is_active ? 'Sí' : 'No';
     const variants = variantsByProduct.get(product.id);
+
+    const minQtyStr = String(product.min_quantity ?? 1);
+    const qtyStepStr = String(product.qty_step ?? 1);
 
     if (!variants || variants.length === 0) {
       // 7.1 Producto simple — una fila, columna Variante vacía
@@ -167,6 +185,8 @@ export async function exportProductsCsv(): Promise<ExportProductsCsvResult> {
           csvEscape(imagenStr),
           csvEscape(sectionName),
           '', // Variante vacía para simples
+          minQtyStr,
+          qtyStepStr,
         ].join(',')
       );
     } else {
@@ -194,6 +214,8 @@ export async function exportProductsCsv(): Promise<ExportProductsCsvResult> {
             csvEscape(imagenStr),
             csvEscape(sectionName),
             csvEscape(variantLabel),
+            minQtyStr,
+            qtyStepStr,
           ].join(',')
         );
       }

@@ -655,17 +655,33 @@ function ProductModal({
   const overlayRef = useRef<HTMLDivElement>(null);
   const accentForeground = "#ffffff";
 
+  const minQty = product.min_quantity ?? 1;
+  const step = product.qty_step ?? 1;
+
   // For modal: simple product (no variant), key is just the productId
   const itemKey = cartItemKey(product.id, null);
   const existingItem = items.find((i) => cartItemKey(i.productId, i.variantId) === itemKey);
   const existingQty = existingItem?.quantity ?? 0;
 
-  const [qty, setLocalQty] = useState(() => existingQty === 0 ? 1 : 1);
+  // Initial qty: min_quantity when cart is empty for this product, qty_step otherwise (D5)
+  const [qty, setLocalQty] = useState(() => existingQty === 0 ? minQty : step);
+
+  // Reset qty selector whenever the displayed product changes (e.g. clicking a related product)
+  useEffect(() => {
+    const currentExisting = items.find((i) => cartItemKey(i.productId, i.variantId) === cartItemKey(product.id, null));
+    const currentExistingQty = currentExisting?.quantity ?? 0;
+    setLocalQty(currentExistingQty === 0 ? minQty : step);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.id]);
 
   const isOutOfStock = product.stock === 0;
   // availableToAdd: how many more units the user can add (null = unlimited)
   const availableToAdd = product.stock !== null ? Math.max(0, product.stock - existingQty) : null;
-  const canAdd = !isOutOfStock && (availableToAdd === null || availableToAdd > 0);
+  // qty is invalid if adding it would leave the total below min_quantity
+  const wouldBeBelowMin = existingQty + qty < minQty;
+  // qty is invalid if it's not a multiple of step
+  const isNotMultipleOfStep = qty % step !== 0;
+  const canAdd = !isOutOfStock && (availableToAdd === null || availableToAdd > 0) && !wouldBeBelowMin && !isNotMultipleOfStep;
 
   // Close on Escape
   useEffect(() => {
@@ -685,16 +701,17 @@ function ProductModal({
   }, []);
 
   function handleIncrease() {
-    if (availableToAdd !== null && qty + 1 > availableToAdd) {
+    if (availableToAdd !== null && qty + step > availableToAdd) {
       toast.info(`Solo quedan ${product.stock} unidades disponibles`);
       return;
     }
-    setLocalQty(qty + 1);
+    setLocalQty(qty + step);
   }
 
   function handleDecrease() {
-    if (qty <= 1) return;
-    setLocalQty(qty - 1);
+    const next = qty - step;
+    if (next < step) return; // don't go below one step in the modal
+    setLocalQty(next);
   }
 
   function handleAdd() {
@@ -792,6 +809,17 @@ function ProductModal({
             </p>
           )}
 
+          {/* Sub-label for min/step restrictions (D9) */}
+          {(minQty > 1 || step > 1) && (
+            <p className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
+              {minQty > 1 && step > 1
+                ? `Mín. ${minQty}, de a ${step}`
+                : minQty > 1
+                ? `Mín. ${minQty}`
+                : `De a ${step}`}
+            </p>
+          )}
+
           {/* Quantity selector — hidden when out of stock */}
           {!isOutOfStock && (
             <div className="flex items-center gap-4">
@@ -804,8 +832,8 @@ function ProductModal({
               >
                 <button
                   onClick={handleDecrease}
-                  disabled={qty <= 1}
-                  className={`store-icon-btn flex h-10 w-10 items-center justify-center transition-colors${qty <= 1 ? " opacity-40 cursor-not-allowed" : " cursor-pointer"}`}
+                  disabled={qty <= step}
+                  className={`store-icon-btn flex h-10 w-10 items-center justify-center transition-colors${qty <= step ? " opacity-40 cursor-not-allowed" : " cursor-pointer"}`}
                   style={{ color: "var(--store-ink)" }}
                   aria-label="Reducir cantidad"
                 >
@@ -821,8 +849,8 @@ function ProductModal({
                 </span>
                 <button
                   onClick={handleIncrease}
-                  disabled={availableToAdd !== null && qty + 1 > availableToAdd}
-                  className={`store-icon-btn flex h-10 w-10 items-center justify-center transition-colors${availableToAdd !== null && qty + 1 > availableToAdd ? " opacity-40 cursor-not-allowed" : " cursor-pointer"}`}
+                  disabled={availableToAdd !== null && qty + step > availableToAdd}
+                  className={`store-icon-btn flex h-10 w-10 items-center justify-center transition-colors${availableToAdd !== null && qty + step > availableToAdd ? " opacity-40 cursor-not-allowed" : " cursor-pointer"}`}
                   style={{ color: "var(--store-ink)" }}
                   aria-label="Aumentar cantidad"
                 >
@@ -850,9 +878,14 @@ function ProductModal({
               disabled={!canAdd}
               className={`w-full rounded-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 transition-opacity${canAdd ? " cursor-pointer hover:opacity-85" : " opacity-50 cursor-not-allowed"}`}
               style={{ background: accentColor, color: accentForeground }}
+              title={wouldBeBelowMin ? `Mín. ${minQty} para agregar` : isNotMultipleOfStep ? `Debe ser múltiplo de ${step}` : undefined}
             >
               <ShoppingBag className="h-4 w-4" aria-hidden="true" />
-              {isOutOfStock ? "Sin stock disponible" : "Agregar al carrito"}
+              {isOutOfStock
+                ? "Sin stock disponible"
+                : wouldBeBelowMin
+                ? `Mín. ${minQty} para agregar`
+                : "Agregar al carrito"}
             </button>
           )}
 
@@ -873,6 +906,7 @@ function CartDrawer({
   accentColor,
   whatsappNumber,
   productStockMap,
+  productMinStepMap,
 }: {
   storeId: string;
   storeName: string;
@@ -880,6 +914,7 @@ function CartDrawer({
   accentColor: string;
   whatsappNumber: string | null;
   productStockMap: Map<string, number | null>;
+  productMinStepMap: Map<string, { min_quantity: number; qty_step: number }>;
 }) {
   const { items, open, totalPrice, removeItem, setQty, closeCart } = useCart();
   const accentForeground = "#ffffff";
@@ -901,6 +936,27 @@ function CartDrawer({
       const names = overStockedItems.map((i) => i.name).join(", ");
       toast.error(`Hay productos sin stock suficiente: ${names}. Revisá tu carrito.`);
       return;
+    }
+
+    // D3: client-side pre-validation of min_quantity and qty_step (grouped by product_id)
+    const qtyByProduct = new Map<string, number>();
+    for (const item of items) {
+      qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) ?? 0) + item.quantity);
+    }
+    for (const [productId, totalQty] of qtyByProduct.entries()) {
+      const rules = productMinStepMap.get(productId);
+      if (!rules) continue;
+      const { min_quantity, qty_step } = rules;
+      if (totalQty < min_quantity) {
+        const productName = items.find((i) => i.productId === productId)?.name ?? productId;
+        toast.error(`Necesitás al menos ${min_quantity} unidades de '${productName}' para comprar.`);
+        return;
+      }
+      if (qty_step > 1 && totalQty % qty_step !== 0) {
+        const productName = items.find((i) => i.productId === productId)?.name ?? productId;
+        toast.error(`La cantidad de '${productName}' debe ser múltiplo de ${qty_step}.`);
+        return;
+      }
     }
 
     const lines = items.map((i) => {
@@ -926,6 +982,10 @@ function CartDrawer({
         orderRef = `\n\nReferencia: #${result.order_id.slice(0, 8)}`;
       } else if ('error' in result && result.error === 'stock_insufficient') {
         toast.error("Algunos productos ya no tienen stock suficiente. Revisá tu carrito.");
+        return;
+      } else if ('error' in result && result.error === 'qty_violation') {
+        const v = result as { error: 'qty_violation'; productName: string; min: number; step: number };
+        toast.error(`Necesitás al menos ${v.min} unidades de '${v.productName}' para comprar.`);
         return;
       }
     } catch {
@@ -1035,6 +1095,12 @@ function CartDrawer({
                 // For image: use variantImageUrl if set, else item.image
                 const displayImage = item.variantImageUrl ?? item.image;
 
+                // D6: step controls
+                const productRules = productMinStepMap.get(item.productId);
+                const itemStep = productRules?.qty_step ?? 1;
+                // "-" becomes "Quitar" when decrementing would leave qty < itemStep
+                const decrementWouldRemove = item.quantity - itemStep < itemStep;
+
                 return (
                   <li
                     key={key}
@@ -1085,14 +1151,26 @@ function CartDrawer({
                           className="flex items-center rounded-full overflow-hidden"
                           style={{ border: `1px solid ${isOverStock ? "rgba(248,113,113,0.5)" : "var(--store-border-strong)"}` }}
                         >
-                          <button
-                            onClick={() => setQty(key, item.quantity - 1)}
-                            className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
-                            style={{ color: "var(--store-ink)" }}
-                            aria-label={`Reducir cantidad de ${item.name}`}
-                          >
-                            <Minus className="h-3 w-3" aria-hidden="true" />
-                          </button>
+                          {/* D6: "-" transforms into "Quitar" when decrement would remove */}
+                          {decrementWouldRemove ? (
+                            <button
+                              onClick={() => removeItem(key)}
+                              className="store-icon-btn flex h-7 items-center justify-center cursor-pointer transition-colors px-2"
+                              style={{ color: "var(--store-ink-muted)" }}
+                              aria-label={`Quitar ${item.name} del carrito`}
+                            >
+                              <span className="text-xs font-medium">Quitar</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setQty(key, item.quantity - itemStep)}
+                              className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
+                              style={{ color: "var(--store-ink)" }}
+                              aria-label={`Reducir cantidad de ${item.name}`}
+                            >
+                              <Minus className="h-3 w-3" aria-hidden="true" />
+                            </button>
+                          )}
                           <span
                             className="w-6 text-center text-xs font-semibold select-none"
                             style={{ color: isOverStock ? "rgb(248,113,113)" : "var(--store-ink)" }}
@@ -1100,7 +1178,7 @@ function CartDrawer({
                             {item.quantity}
                           </span>
                           <button
-                            onClick={() => setQty(key, item.quantity + 1)}
+                            onClick={() => setQty(key, item.quantity + itemStep)}
                             className="store-icon-btn flex h-7 w-7 items-center justify-center cursor-pointer transition-colors"
                             style={{ color: "var(--store-ink)" }}
                             aria-label={`Aumentar cantidad de ${item.name}`}
@@ -1163,6 +1241,7 @@ function CartDrawer({
               items={items}
               total={totalPrice}
               accentColor={accentColor}
+              productMinStepMap={productMinStepMap}
             />
 
             {/* WhatsApp CTA */}
@@ -1340,8 +1419,8 @@ export default function StoreClient({
         image: getProductImage(p),
         imageUrls: p.image_urls ?? [],
         stock: p.stock ?? null,
-        min_quantity: 1,
-        qty_step: 1,
+        min_quantity: (p as unknown as { min_quantity?: number }).min_quantity ?? 1,
+        qty_step: (p as unknown as { qty_step?: number }).qty_step ?? 1,
       })),
     [productRows]
   );
@@ -1350,17 +1429,6 @@ export default function StoreClient({
     () => new Map(products.map((p) => [p.id, p])),
     [products]
   );
-
-  // Map productId → stock (and productId::variantId → variantStock) for CartDrawer validation.
-  const productStockMap = useMemo(() => {
-    const map = new Map<string, number | null>(products.map((p) => [p.id, p.stock]));
-    for (const [productId, vd] of Object.entries(variantsByProduct)) {
-      for (const variant of vd.variants) {
-        map.set(`${productId}::${variant.id}`, variant.stock);
-      }
-    }
-    return map;
-  }, [products, variantsByProduct]);
 
   // ─── Related products state ───────────────────────────────────────────────
 
@@ -1382,6 +1450,23 @@ export default function StoreClient({
     () => (initialProductId && initialRelatedIds.length > 0 ? initialRelatedIds : [])
   );
   const [relatedLoading, setRelatedLoading] = useState(false);
+
+  // Map productId → stock (and productId::variantId → variantStock) for CartDrawer validation.
+  const productStockMap = useMemo(() => {
+    const map = new Map<string, number | null>(products.map((p) => [p.id, p.stock]));
+    for (const [productId, vd] of Object.entries(variantsByProduct)) {
+      for (const variant of vd.variants) {
+        map.set(`${productId}::${variant.id}`, variant.stock);
+      }
+    }
+    return map;
+  }, [products, variantsByProduct]);
+
+  // Map productId → { min_quantity, qty_step } for CartDrawer controls and checkout validation.
+  const productMinStepMap = useMemo(
+    () => new Map(products.map((p) => [p.id, { min_quantity: p.min_quantity, qty_step: p.qty_step }])),
+    [products]
+  );
 
   // ─── Filters state ───────────────────────────────────────────────────────────
 
@@ -1625,6 +1710,7 @@ export default function StoreClient({
         accentColor={accentColor}
         whatsappNumber={store.whatsapp_number}
         productStockMap={productStockMap}
+        productMinStepMap={productMinStepMap}
       />
 
       <FloatingCartButton accentColor={accentColor} />

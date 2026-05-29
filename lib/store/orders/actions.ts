@@ -20,7 +20,8 @@ type StockInsufficientDetail = {
 type CreateOrderResult =
   | { order_id: string }
   | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' }
-  | { error: 'stock_insufficient'; details: StockInsufficientDetail[] };
+  | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
+  | { error: 'qty_violation'; productId: string; productName: string; min: number; step: number };
 
 export async function createPendingOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
   const admin = createAdminClient();
@@ -50,13 +51,26 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     return { error: 'no_valid_items' };
   }
 
-  // 3. Fetch valid products with section info, filter to active + belonging to this store
-  const { data: products } = await admin
+  // 3. Fetch valid products with section info, filter to active + belonging to this store.
+  // min_quantity and qty_step are new columns not yet reflected in the generated Supabase types;
+  // cast the result to include them.
+  type ProductRow = {
+    id: string;
+    name: string;
+    price_cents: number;
+    stock: number | null;
+    section_id: string | null;
+    min_quantity: number;
+    qty_step: number;
+    sections: { name: string } | null;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: products } = (await (admin as any)
     .from('products')
-    .select('id, name, price_cents, stock, section_id, sections(name)')
+    .select('id, name, price_cents, stock, section_id, min_quantity, qty_step, sections(name)')
     .eq('store_id', input.store_id)
     .eq('is_active', true)
-    .in('id', productIds);
+    .in('id', productIds)) as { data: ProductRow[] | null };
 
   if (!products || products.length === 0) {
     return { error: 'no_valid_items' };
@@ -170,6 +184,24 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   }
   if (stockFailures.length > 0) {
     return { error: 'stock_insufficient', details: stockFailures };
+  }
+
+  // D7: validate min_quantity and qty_step per product (aggregated across all variants).
+  // Group valid items by product_id and sum quantities.
+  const qtyByProduct = new Map<string, number>();
+  for (const item of validItems) {
+    qtyByProduct.set(item.product_id, (qtyByProduct.get(item.product_id) ?? 0) + item.quantity);
+  }
+  for (const [productId, totalQty] of qtyByProduct.entries()) {
+    const p = productMap.get(productId)!;
+    const minQty: number = p.min_quantity ?? 1;
+    const qtyStep: number = p.qty_step ?? 1;
+    if (totalQty < minQty) {
+      return { error: 'qty_violation', productId, productName: p.name, min: minQty, step: qtyStep };
+    }
+    if (qtyStep > 1 && totalQty % qtyStep !== 0) {
+      return { error: 'qty_violation', productId, productName: p.name, min: minQty, step: qtyStep };
+    }
   }
 
   // 3.4 Compute effective price per item (variant.price_override ?? product.price_cents)

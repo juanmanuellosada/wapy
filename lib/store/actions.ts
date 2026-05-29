@@ -322,6 +322,8 @@ type ProductInput = {
   image_urls: string[];
   position: number;
   is_active?: boolean;
+  min_quantity?: number;
+  qty_step?: number;
 };
 
 export async function saveStoreProduct(
@@ -333,7 +335,8 @@ export async function saveStoreProduct(
   const admin = createAdminClient();
 
   if (product.id) {
-    const { error } = await admin
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (admin as any)
       .from('products')
       .update({
         name: product.name,
@@ -345,6 +348,8 @@ export async function saveStoreProduct(
         position: product.position,
         is_active: product.is_active ?? true,
         updated_at: new Date().toISOString(),
+        min_quantity: product.min_quantity ?? 1,
+        qty_step: product.qty_step ?? 1,
       })
       .eq('id', product.id)
       .eq('store_id', store.id);
@@ -368,7 +373,8 @@ export async function saveStoreProduct(
     }
   }
 
-  const { data: newProduct, error: insertError } = await admin
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: newProduct, error: insertError } = await (admin as any)
     .from('products')
     .insert({
       store_id: store.id,
@@ -381,6 +387,8 @@ export async function saveStoreProduct(
       position: product.position,
       is_active: true,
       currency: 'ARS',
+      min_quantity: product.min_quantity ?? 1,
+      qty_step: product.qty_step ?? 1,
     })
     .select('id')
     .single();
@@ -527,7 +535,8 @@ export async function duplicateProduct(
     newPosition = (maxRow?.position ?? -1) + 1;
   }
 
-  const { data: newProduct, error: insertError } = await admin
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: newProduct, error: insertError } = await (admin as any)
     .from('products')
     .insert({
       store_id: store.id,
@@ -540,6 +549,8 @@ export async function duplicateProduct(
       position: newPosition,
       is_active: false,
       currency: original.currency ?? 'ARS',
+      min_quantity: (original as unknown as { min_quantity?: number }).min_quantity ?? 1,
+      qty_step: (original as unknown as { qty_step?: number }).qty_step ?? 1,
     })
     .select('*')
     .single();

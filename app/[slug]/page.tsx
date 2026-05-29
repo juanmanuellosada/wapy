@@ -87,6 +87,8 @@ export default async function SlugPage({ params, searchParams }: Props) {
                   ),
             imageUrls: p.image_urls ?? [],
             stock: p.stock ?? null,
+            min_quantity: (p as unknown as { min_quantity?: number }).min_quantity ?? 1,
+            qty_step: (p as unknown as { qty_step?: number }).qty_step ?? 1,
           },
         ])
       );

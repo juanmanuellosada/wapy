@@ -19,6 +19,8 @@ const productFormSchema = z.object({
   price_display: z.string().min(1, 'El precio es requerido'),
   stock: z.string().optional(),
   section_id: z.string().optional(),
+  min_quantity: z.string().optional(),
+  qty_step: z.string().optional(),
 });
 
 type ProductFormData = z.infer<typeof productFormSchema>;
@@ -74,6 +76,8 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
       price_display: product ? formatPrice(product.price_cents) : '',
       stock: product?.stock != null ? String(product.stock) : '',
       section_id: product?.section_id ?? '',
+      min_quantity: product ? String((product as unknown as { min_quantity?: number }).min_quantity ?? 1) : '1',
+      qty_step: product ? String((product as unknown as { qty_step?: number }).qty_step ?? 1) : '1',
     },
   });
 
@@ -106,6 +110,8 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
     setServerError(null);
 
     const price_cents = parsePriceCents(data.price_display);
+    const min_quantity = Math.max(1, parseInt(data.min_quantity ?? '1', 10) || 1);
+    const qty_step = Math.max(1, parseInt(data.qty_step ?? '1', 10) || 1);
 
     const result = await saveStoreProduct({
       id: product?.id,
@@ -117,6 +123,8 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
       image_urls: imageUrls,
       position: product?.position ?? nextPosition,
       is_active: true,
+      min_quantity,
+      qty_step,
     });
 
     if ('error' in result) {
@@ -139,7 +147,9 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
       is_active: true,
       created_at: product?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    };
+      // New fields (cast needed until types regenerated)
+      ...(({ min_quantity, qty_step } as unknown as object)),
+    } as unknown as Product;
 
     onSaved(savedProduct);
   };
@@ -252,6 +262,53 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
               </div>
             )}
           </div>
+
+          {/* Min quantity + qty step */}
+          {(() => {
+            const watchedMin = parseInt(watch('min_quantity') ?? '1', 10) || 1;
+            const watchedStep = parseInt(watch('qty_step') ?? '1', 10) || 1;
+            const showStepWarning = watchedMin > 1 && watchedStep > 1 && watchedMin < watchedStep;
+            return (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="prod-min-qty" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
+                      Cantidad mínima
+                    </label>
+                    <input
+                      id="prod-min-qty"
+                      type="number"
+                      min="1"
+                      step="1"
+                      {...register('min_quantity')}
+                      className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="prod-qty-step" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
+                      Vender de a
+                    </label>
+                    <input
+                      id="prod-qty-step"
+                      type="number"
+                      min="1"
+                      step="1"
+                      {...register('qty_step')}
+                      className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-white/40 -mt-2">
+                  Ej.: para vender empanadas por docena, poné mínimo 12 y de a 6.
+                </p>
+                {showStepWarning && (
+                  <p className="text-xs text-amber-400 -mt-1">
+                    El mínimo ({watchedMin}) es menor al paso ({watchedStep}). Un cliente nunca podría alcanzar el mínimo exacto con un solo incremento.
+                  </p>
+                )}
+              </>
+            );
+          })()}
 
           {/* Section */}
           {sections.length > 0 && (
