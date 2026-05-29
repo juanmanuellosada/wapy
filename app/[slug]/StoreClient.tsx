@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Image from "next/image";
+import { useRouter, usePathname } from "next/navigation";
 // Note: hover affordances are CSS-driven via .store-scope rules in globals.css
 import {
   ShoppingBag,
@@ -23,6 +24,16 @@ import ProductCardClient from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
 import { toast } from "@/lib/toast";
+import ProductGallery from "./ProductGallery";
+import CatalogFiltersUI from "./CatalogFilters";
+import type { SectionLite } from "./CatalogFilters";
+import {
+  type CatalogFilters,
+  DEFAULT_FILTERS,
+  serializeFiltersToSearchParams,
+  applyFilters,
+} from "./filters";
+import type { UIProduct } from "./types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,13 +54,6 @@ function formatARS(amount: number): string {
   });
 }
 
-// Normalize a string for accent- and case-insensitive matching
-function normalize(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
-}
 
 function getAccentColor(theme: unknown): string {
   if (
@@ -162,16 +166,7 @@ function useDarkMode(slug: string) {
 
 // ─── Local types used in cart/UI ─────────────────────────────────────────────
 
-interface UIProduct {
-  id: string;
-  sectionId: string;
-  name: string;
-  description: string;
-  price: number; // ARS float (price_cents / 100)
-  priceCents: number; // raw cents — needed by ProductCardClient for variant price fallback
-  image: string;
-  stock: number | null; // null = no tracking, 0 = out of stock, N = N units available
-}
+// UIProduct is imported from ./types (shared with TopSellers, RelatedProducts, etc.)
 
 interface UISection {
   id: string;
@@ -616,11 +611,13 @@ function ProductCard({
   accentColor,
   onOpenModal,
   variantData,
+  isHighlighted,
 }: {
   product: UIProduct;
   accentColor: string;
   onOpenModal: (p: UIProduct) => void;
   variantData?: ProductVariantData;
+  isHighlighted?: boolean;
 }) {
   return (
     <ProductCardClient
@@ -630,6 +627,7 @@ function ProductCard({
       optionTypes={variantData?.optionTypes}
       variants={variantData?.variants}
       priceCents={product.priceCents}
+      isHighlighted={isHighlighted}
     />
   );
 }
@@ -641,14 +639,15 @@ function ProductModal({
   accentColor,
   onClose,
   hasVariants,
+  relatedSlot,
 }: {
   product: UIProduct;
   accentColor: string;
   onClose: () => void;
   hasVariants: boolean;
+  relatedSlot?: React.ReactNode;
 }) {
   const { addItem, setQty, items, openCart } = useCart();
-  const [qty, setLocalQty] = useState(1);
   const overlayRef = useRef<HTMLDivElement>(null);
   const accentForeground = "#ffffff";
 
@@ -656,6 +655,9 @@ function ProductModal({
   const itemKey = cartItemKey(product.id, null);
   const existingItem = items.find((i) => cartItemKey(i.productId, i.variantId) === itemKey);
   const existingQty = existingItem?.quantity ?? 0;
+
+  const [qty, setLocalQty] = useState(() => existingQty === 0 ? 1 : 1);
+
   const isOutOfStock = product.stock === 0;
   // availableToAdd: how many more units the user can add (null = unlimited)
   const availableToAdd = product.stock !== null ? Math.max(0, product.stock - existingQty) : null;
@@ -679,11 +681,16 @@ function ProductModal({
   }, []);
 
   function handleIncrease() {
-    if (availableToAdd !== null && qty >= availableToAdd) {
+    if (availableToAdd !== null && qty + 1 > availableToAdd) {
       toast.info(`Solo quedan ${product.stock} unidades disponibles`);
       return;
     }
     setLocalQty(qty + 1);
+  }
+
+  function handleDecrease() {
+    if (qty <= 1) return;
+    setLocalQty(qty - 1);
   }
 
   function handleAdd() {
@@ -740,18 +747,21 @@ function ProductModal({
           <X className="h-4 w-4" aria-hidden="true" />
         </button>
 
-        {/* Image */}
+        {/* Image / Gallery */}
         <div
-          className="relative w-full shrink-0"
-          style={{ aspectRatio: "4/3", background: "var(--store-border)" }}
+          className="w-full shrink-0"
+          style={{
+            // Single image: relative + aspectRatio so <Image fill> works.
+            // Multi-image: gallery manages its own layout (aspect ratio on slides).
+            position: product.imageUrls.length <= 1 ? "relative" : undefined,
+            aspectRatio: product.imageUrls.length <= 1 ? "4/3" : undefined,
+            background: "var(--store-border)",
+          }}
         >
-            <Image
-            src={product.image}
+          <ProductGallery
+            imageUrls={product.imageUrls}
             alt={product.name}
-            fill
-            sizes="(max-width: 640px) 100vw, 576px"
-            className="object-cover"
-            unoptimized={product.image.startsWith("data:")}
+            accentColor={accentColor}
           />
         </div>
 
@@ -789,8 +799,9 @@ function ProductModal({
                 style={{ border: "1px solid var(--store-border-strong)" }}
               >
                 <button
-                  onClick={() => setLocalQty(Math.max(1, qty - 1))}
-                  className="store-icon-btn flex h-10 w-10 items-center justify-center cursor-pointer transition-colors"
+                  onClick={handleDecrease}
+                  disabled={qty <= 1}
+                  className={`store-icon-btn flex h-10 w-10 items-center justify-center transition-colors${qty <= 1 ? " opacity-40 cursor-not-allowed" : " cursor-pointer"}`}
                   style={{ color: "var(--store-ink)" }}
                   aria-label="Reducir cantidad"
                 >
@@ -806,7 +817,8 @@ function ProductModal({
                 </span>
                 <button
                   onClick={handleIncrease}
-                  className={`store-icon-btn flex h-10 w-10 items-center justify-center transition-colors${availableToAdd !== null && qty >= availableToAdd ? " opacity-40 cursor-not-allowed" : " cursor-pointer"}`}
+                  disabled={availableToAdd !== null && qty + 1 > availableToAdd}
+                  className={`store-icon-btn flex h-10 w-10 items-center justify-center transition-colors${availableToAdd !== null && qty + 1 > availableToAdd ? " opacity-40 cursor-not-allowed" : " cursor-pointer"}`}
                   style={{ color: "var(--store-ink)" }}
                   aria-label="Aumentar cantidad"
                 >
@@ -839,6 +851,9 @@ function ProductModal({
               {isOutOfStock ? "Sin stock disponible" : "Agregar al carrito"}
             </button>
           )}
+
+          {/* Slot for related products — filled by wapy-storefront-growth */}
+          {relatedSlot}
         </div>
       </div>
     </div>
@@ -850,12 +865,14 @@ function ProductModal({
 function CartDrawer({
   storeId,
   storeName,
+  storeSlug,
   accentColor,
   whatsappNumber,
   productStockMap,
 }: {
   storeId: string;
   storeName: string;
+  storeSlug: string;
   accentColor: string;
   whatsappNumber: string | null;
   productStockMap: Map<string, number | null>;
@@ -1013,6 +1030,7 @@ function CartDrawer({
                 const displayPrice = item.variantPrice ?? item.price;
                 // For image: use variantImageUrl if set, else item.image
                 const displayImage = item.variantImageUrl ?? item.image;
+
                 return (
                   <li
                     key={key}
@@ -1185,12 +1203,14 @@ function SectionBlock({
   accentColor,
   onOpenModal,
   variantsByProduct,
+  highlightedProductId,
 }: {
   section: UISection;
   products: UIProduct[];
   accentColor: string;
   onOpenModal: (p: UIProduct) => void;
   variantsByProduct: Record<string, ProductVariantData>;
+  highlightedProductId?: string | null;
 }) {
   return (
     <section id={section.id} className="scroll-mt-24" aria-labelledby={`section-${section.id}`}>
@@ -1224,6 +1244,7 @@ function SectionBlock({
             accentColor={accentColor}
             onOpenModal={onOpenModal}
             variantData={variantsByProduct[p.id]}
+            isHighlighted={highlightedProductId === p.id}
           />
         ))}
       </div>
@@ -1231,105 +1252,6 @@ function SectionBlock({
   );
 }
 
-// ─── Search Results ───────────────────────────────────────────────────────────
-
-function SearchResults({
-  query,
-  results,
-  accentColor,
-  onOpenModal,
-  onClear,
-  variantsByProduct,
-}: {
-  query: string;
-  results: UIProduct[];
-  accentColor: string;
-  onOpenModal: (p: UIProduct) => void;
-  onClear: () => void;
-  variantsByProduct: Record<string, ProductVariantData>;
-}) {
-  const accentForeground = "#ffffff";
-  return (
-    <section aria-label="Resultados de búsqueda">
-      {/* Result header */}
-      <div className="flex items-center justify-between gap-3 mb-6 sm:mb-8">
-        <div className="flex items-center gap-3 min-w-0">
-          <h2
-            className="text-xl sm:text-2xl font-bold truncate"
-            style={{ color: "var(--store-ink)", fontFamily: "var(--font-rubik, Rubik)" }}
-          >
-            Resultados
-          </h2>
-          <span
-            className="shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold"
-            style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
-          >
-            {results.length} {results.length === 1 ? "producto" : "productos"}
-          </span>
-        </div>
-        <button
-          onClick={onClear}
-          className="shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold cursor-pointer transition-opacity hover:opacity-80"
-          style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
-          aria-label="Limpiar búsqueda y ver todos los productos"
-        >
-          <X className="h-3 w-3" aria-hidden="true" />
-          Limpiar
-        </button>
-      </div>
-
-      {/* Query pill */}
-      <p className="text-sm mb-6" style={{ color: "var(--store-ink-secondary)" }}>
-        Buscando:{" "}
-        <span
-          className="font-semibold px-2 py-0.5 rounded-full"
-          style={{ background: "var(--store-border)", color: "var(--store-ink)" }}
-        >
-          {query}
-        </span>
-      </p>
-
-      {results.length === 0 ? (
-        /* Empty state */
-        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
-          <div
-            className="flex h-16 w-16 items-center justify-center rounded-full"
-            style={{ background: "var(--store-border)" }}
-          >
-            <Search className="h-7 w-7" aria-hidden="true" style={{ color: "var(--store-ink-muted)" }} />
-          </div>
-          <div className="flex flex-col gap-1">
-            <p className="font-semibold text-base" style={{ color: "var(--store-ink)" }}>
-              Sin resultados
-            </p>
-            <p className="text-sm max-w-xs" style={{ color: "var(--store-ink-secondary)" }}>
-              No encontramos productos que coincidan con tu búsqueda.
-            </p>
-          </div>
-          <button
-            onClick={onClear}
-            className="mt-2 rounded-full px-5 py-2.5 text-sm font-semibold cursor-pointer transition-opacity hover:opacity-80"
-            style={{ background: accentColor, color: accentForeground }}
-          >
-            Ver todos los productos
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
-          {results.map((p) => (
-            <ProductCard
-              key={p.id}
-              product={p}
-              accentColor={accentColor}
-              onOpenModal={onOpenModal}
-              variantData={variantsByProduct[p.id]}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
 
 // ─── Floating Cart Button (mobile) ───────────────────────────────────────────
 
@@ -1362,16 +1284,27 @@ export default function StoreClient({
   sections: sectionRows,
   products: productRows,
   variantsByProduct,
+  initialFilters = DEFAULT_FILTERS,
+  initialProductId = null,
 }: {
   store: StoreRow;
   sections: SectionRow[];
   products: ProductRow[];
   variantsByProduct: Record<string, ProductVariantData>;
+  initialFilters?: CatalogFilters;
+  initialProductId?: string | null;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const accentColor = getAccentColor(store.theme);
 
   // Map Supabase rows to local UI types
   const sections: UISection[] = useMemo(
+    () => sectionRows.map((s) => ({ id: s.id, name: s.name })),
+    [sectionRows]
+  );
+
+  const sectionLites: SectionLite[] = useMemo(
     () => sectionRows.map((s) => ({ id: s.id, name: s.name })),
     [sectionRows]
   );
@@ -1386,24 +1319,20 @@ export default function StoreClient({
         price: p.price_cents / 100,
         priceCents: p.price_cents,
         image: getProductImage(p),
+        imageUrls: p.image_urls ?? [],
         stock: p.stock ?? null,
+        min_quantity: 1,
+        qty_step: 1,
       })),
     [productRows]
   );
 
-  const productsBySection = useMemo(() => {
-    const map = new Map<string, UIProduct[]>();
-    for (const s of sections) {
-      map.set(
-        s.id,
-        products.filter((p) => p.sectionId === s.id)
-      );
-    }
-    return map;
-  }, [sections, products]);
+  const productMap = useMemo(
+    () => new Map(products.map((p) => [p.id, p])),
+    [products]
+  );
 
   // Map productId → stock (and productId::variantId → variantStock) for CartDrawer validation.
-  // Variant items use the composite key so the warning reflects variant stock, not product stock.
   const productStockMap = useMemo(() => {
     const map = new Map<string, number | null>(products.map((p) => [p.id, p.stock]));
     for (const [productId, vd] of Object.entries(variantsByProduct)) {
@@ -1414,19 +1343,96 @@ export default function StoreClient({
     return map;
   }, [products, variantsByProduct]);
 
-  const [modalProduct, setModalProduct] = useState<UIProduct | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  // ─── Filters state ───────────────────────────────────────────────────────────
 
-  // Filter products by name and description — accent- and case-insensitive
-  const filteredProducts = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    const q = normalize(searchQuery.trim());
-    return products.filter(
-      (p) => normalize(p.name).includes(q) || normalize(p.description).includes(q)
+  const [filters, setFilters] = useState<CatalogFilters>(initialFilters);
+
+  // ─── URL sync helper ─────────────────────────────────────────────────────────
+
+  const updateUrl = useCallback(
+    (nextFilters: CatalogFilters, nextProductId: string | null) => {
+      const sp = serializeFiltersToSearchParams(nextFilters);
+      if (nextProductId) sp.set("p", nextProductId);
+      const query = sp.toString();
+      const url = query ? `${pathname}?${query}` : pathname;
+      router.replace(url, { scroll: false });
+    },
+    [pathname, router]
+  );
+
+  // ─── Modal state ─────────────────────────────────────────────────────────────
+
+  const [modalProduct, setModalProductState] = useState<UIProduct | null>(
+    () => (initialProductId ? (productMap.get(initialProductId) ?? null) : null)
+  );
+
+  const openModal = useCallback((p: UIProduct) => {
+    setModalProductState(p);
+  }, []);
+
+  const closeModal = useCallback(() => {
+    setModalProductState(null);
+  }, []);
+
+  // Single effect: sync URL whenever modal or filters change.
+  // Skip on the very first render (initial state matches server-rendered URL).
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    updateUrl(filters, modalProduct?.id ?? null);
+  }, [filters, modalProduct, updateUrl]);
+
+  // ─── Highlight state ─────────────────────────────────────────────────────────
+
+  const [highlightedProductId, setHighlightedProductId] = useState<string | null>(null);
+
+  // On mount: if opened via deep-link, scroll card into view + start highlight timer
+  useEffect(() => {
+    if (!initialProductId) return;
+    setHighlightedProductId(initialProductId);
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`product-${initialProductId}`)
+        ?.scrollIntoView({ block: "center", behavior: "instant" });
+    });
+    const timer = setTimeout(() => setHighlightedProductId(null), 2000);
+    return () => clearTimeout(timer);
+    // intentionally run only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ─── Filtered products for the grid ─────────────────────────────────────────
+
+  const visibleProducts = useMemo(
+    () => applyFilters(products, variantsByProduct, filters),
+    [products, variantsByProduct, filters]
+  );
+
+  const visibleProductsBySection = useMemo(() => {
+    const map = new Map<string, UIProduct[]>();
+    for (const s of sections) {
+      map.set(
+        s.id,
+        visibleProducts.filter((p) => p.sectionId === s.id)
+      );
+    }
+    return map;
+  }, [sections, visibleProducts]);
+
+  const hasActiveFilters = useMemo(() => {
+    return (
+      filters.q.trim().length > 0 ||
+      filters.priceMin !== null ||
+      filters.priceMax !== null ||
+      filters.sectionIds.length > 0 ||
+      filters.inStockOnly
     );
-  }, [searchQuery, products]);
+  }, [filters]);
 
-  const hasQuery = searchQuery.trim().length > 0;
+  const accentForeground = "#ffffff";
 
   return (
     // Inject accent CSS variable so child components can use var(--accent)
@@ -1437,8 +1443,8 @@ export default function StoreClient({
         accentColor={accentColor}
         logoUrl={store.logo_url}
         sections={sections}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
+        searchQuery={filters.q}
+        onSearchChange={(q) => setFilters((prev) => ({ ...prev, q }))}
       />
 
       <StoreHero
@@ -1451,29 +1457,84 @@ export default function StoreClient({
       />
 
       <main
-        className="mx-auto w-full max-w-6xl px-4 sm:px-6 md:px-8 py-10 sm:py-14 flex flex-col gap-14 sm:gap-20"
+        className="mx-auto w-full max-w-6xl px-4 sm:px-6 md:px-8 py-10 sm:py-14 flex flex-col gap-8 sm:gap-12"
         id="main-content"
       >
-        {hasQuery ? (
-          <SearchResults
-            query={searchQuery}
-            results={filteredProducts}
-            accentColor={accentColor}
-            onOpenModal={setModalProduct}
-            onClear={() => setSearchQuery("")}
-            variantsByProduct={variantsByProduct}
-          />
+        {/* Catalog filters */}
+        <CatalogFiltersUI
+          filters={filters}
+          onChange={setFilters}
+          sections={sectionLites}
+          accentColor={accentColor}
+        />
+
+        {/* Product grid area */}
+        {hasActiveFilters ? (
+          visibleProducts.length === 0 ? (
+            /* Empty state for active filters */
+            <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+              <div
+                className="flex h-16 w-16 items-center justify-center rounded-full"
+                style={{ background: "var(--store-border)" }}
+              >
+                <Search className="h-7 w-7" aria-hidden="true" style={{ color: "var(--store-ink-muted)" }} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <p className="font-semibold text-base" style={{ color: "var(--store-ink)" }}>
+                  Sin resultados
+                </p>
+                <p className="text-sm max-w-xs" style={{ color: "var(--store-ink-secondary)" }}>
+                  No encontramos productos con esos filtros.
+                </p>
+              </div>
+              <button
+                onClick={() => setFilters(DEFAULT_FILTERS)}
+                className="mt-2 rounded-full px-5 py-2.5 text-sm font-semibold cursor-pointer transition-opacity hover:opacity-80"
+                style={{ background: accentColor, color: accentForeground }}
+              >
+                Limpiar filtros
+              </button>
+            </div>
+          ) : (
+            /* Filtered results — show as a flat grid */
+            <section aria-label="Productos filtrados">
+              <div className="flex items-center justify-between gap-3 mb-6">
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-xs font-semibold"
+                  style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
+                >
+                  {visibleProducts.length} {visibleProducts.length === 1 ? "producto" : "productos"}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
+                {visibleProducts.map((p) => (
+                  <ProductCard
+                    key={p.id}
+                    product={p}
+                    accentColor={accentColor}
+                    onOpenModal={openModal}
+                    variantData={variantsByProduct[p.id]}
+                    isHighlighted={highlightedProductId === p.id}
+                  />
+                ))}
+              </div>
+            </section>
+          )
         ) : (
-          sections.map((s) => (
-            <SectionBlock
-              key={s.id}
-              section={s}
-              products={productsBySection.get(s.id) ?? []}
-              accentColor={accentColor}
-              onOpenModal={setModalProduct}
-              variantsByProduct={variantsByProduct}
-            />
-          ))
+          /* Default: show by section, keep gap for visual separation */
+          <div className="flex flex-col gap-14 sm:gap-20">
+            {sections.map((s) => (
+              <SectionBlock
+                key={s.id}
+                section={s}
+                products={visibleProductsBySection.get(s.id) ?? []}
+                accentColor={accentColor}
+                onOpenModal={openModal}
+                variantsByProduct={variantsByProduct}
+                highlightedProductId={highlightedProductId}
+              />
+            ))}
+          </div>
         )}
       </main>
 
@@ -1482,6 +1543,7 @@ export default function StoreClient({
       <CartDrawer
         storeId={store.id}
         storeName={store.name}
+        storeSlug={store.slug}
         accentColor={accentColor}
         whatsappNumber={store.whatsapp_number}
         productStockMap={productStockMap}
@@ -1493,7 +1555,7 @@ export default function StoreClient({
         <ProductModal
           product={modalProduct}
           accentColor={accentColor}
-          onClose={() => setModalProduct(null)}
+          onClose={closeModal}
           hasVariants={(variantsByProduct[modalProduct.id]?.optionTypes?.length ?? 0) > 0}
         />
       )}

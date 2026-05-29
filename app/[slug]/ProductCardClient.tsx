@@ -40,6 +40,8 @@ interface Props<T extends SimpleProduct> {
   variants?: StorefrontVariant[];
   /** Product price in cents — needed to resolve variant price_override */
   priceCents: number;
+  /** When true, renders a ring highlight (deep-link arrival effect) */
+  isHighlighted?: boolean;
 }
 
 // ─── Simple product card (no variants) ───────────────────────────────────────
@@ -48,10 +50,12 @@ function SimpleProductCard<T extends SimpleProduct>({
   product,
   accentColor,
   onOpenModal,
+  isHighlighted,
 }: {
   product: T;
   accentColor: string;
   onOpenModal: (p: T) => void;
+  isHighlighted?: boolean;
 }) {
   const { addItem, openCart } = useCart();
   const isOutOfStock = product.stock === 0;
@@ -71,11 +75,14 @@ function SimpleProductCard<T extends SimpleProduct>({
 
   return (
     <article
+      id={`product-${product.id}`}
       className={`store-card cursor-pointer flex flex-col rounded-2xl overflow-hidden${isOutOfStock ? " opacity-60" : ""}`}
       onClick={() => onOpenModal(product)}
       style={{
         background: "var(--store-surface)",
         border: "1px solid var(--store-border)",
+        boxShadow: isHighlighted ? `0 0 0 3px ${accentColor}` : undefined,
+        transition: "box-shadow 0.3s ease",
       }}
       aria-label={`${product.name}, ${formatARS(product.price)}${isOutOfStock ? ", sin stock" : ""}`}
     >
@@ -145,6 +152,7 @@ function VariantProductCard<T extends SimpleProduct>({
   optionTypes,
   variants,
   priceCents,
+  isHighlighted,
 }: {
   product: T;
   accentColor: string;
@@ -152,6 +160,7 @@ function VariantProductCard<T extends SimpleProduct>({
   optionTypes: StorefrontOptionType[];
   variants: StorefrontVariant[];
   priceCents: number;
+  isHighlighted?: boolean;
 }) {
   const { addItem, openCart } = useCart();
 
@@ -252,10 +261,13 @@ function VariantProductCard<T extends SimpleProduct>({
 
   return (
     <article
+      id={`product-${product.id}`}
       className="store-card flex flex-col rounded-2xl overflow-hidden"
       style={{
         background: "var(--store-surface)",
         border: "1px solid var(--store-border)",
+        boxShadow: isHighlighted ? `0 0 0 3px ${accentColor}` : undefined,
+        transition: "box-shadow 0.3s ease",
       }}
       aria-label={`${product.name}${variantLabel ? ` — ${variantLabel}` : ""}, ${formatARS(effectivePrice)}`}
     >
@@ -413,6 +425,7 @@ export default function ProductCardClient<T extends SimpleProduct>({
   optionTypes,
   variants,
   priceCents,
+  isHighlighted,
 }: Props<T>) {
   if (!optionTypes || optionTypes.length === 0) {
     return (
@@ -420,6 +433,7 @@ export default function ProductCardClient<T extends SimpleProduct>({
         product={product}
         accentColor={accentColor}
         onOpenModal={onOpenModal}
+        isHighlighted={isHighlighted}
       />
     );
   }
@@ -431,6 +445,7 @@ export default function ProductCardClient<T extends SimpleProduct>({
       optionTypes={optionTypes}
       variants={variants ?? []}
       priceCents={priceCents}
+      isHighlighted={isHighlighted}
     />
   );
 }
