@@ -3,7 +3,7 @@ import { logoutAction } from '@/lib/auth/logout-action';
 
 interface Props {
   email: string;
-  currentTab: 'leads' | 'whitelist';
+  currentTab: 'leads' | 'whitelist' | 'stores';
   children: React.ReactNode;
 }
 

@@ -473,54 +473,72 @@ export type Database = {
       }
       stores: {
         Row: {
+          blocked_at: string | null
           created_at: string
           description: string | null
           id: string
           logo_url: string | null
+          mp_preapproval_id: string | null
+          mp_subscription_status: string | null
           name: string
           onboarding_step: number
           owner_id: string
+          payment_exempt: boolean
+          payment_exempt_reason: string | null
           plan: string
           published_at: string | null
           slug: string
           social_links: Json
           status: string
+          subscription_status_changed_at: string | null
           theme: Json
           trial_ends_at: string | null
           updated_at: string
           whatsapp_number: string | null
         }
         Insert: {
+          blocked_at?: string | null
           created_at?: string
           description?: string | null
           id?: string
           logo_url?: string | null
+          mp_preapproval_id?: string | null
+          mp_subscription_status?: string | null
           name: string
           onboarding_step?: number
           owner_id: string
+          payment_exempt?: boolean
+          payment_exempt_reason?: string | null
           plan?: string
           published_at?: string | null
           slug: string
           social_links?: Json
           status?: string
+          subscription_status_changed_at?: string | null
           theme?: Json
           trial_ends_at?: string | null
           updated_at?: string
           whatsapp_number?: string | null
         }
         Update: {
+          blocked_at?: string | null
           created_at?: string
           description?: string | null
           id?: string
           logo_url?: string | null
+          mp_preapproval_id?: string | null
+          mp_subscription_status?: string | null
           name?: string
           onboarding_step?: number
           owner_id?: string
+          payment_exempt?: boolean
+          payment_exempt_reason?: string | null
           plan?: string
           published_at?: string | null
           slug?: string
           social_links?: Json
           status?: string
+          subscription_status_changed_at?: string | null
           theme?: Json
           trial_ends_at?: string | null
           updated_at?: string

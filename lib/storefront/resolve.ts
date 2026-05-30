@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/server';
 import type { Database } from '@/lib/supabase/types';
 import type { Tables } from '@/lib/supabase/types';
+import { isPubliclyAvailable } from '@/lib/subscription/state';
 
 export type StoreRow = Tables<'stores'>;
 export type SectionRow = Tables<'sections'>;
@@ -67,6 +68,11 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
     .maybeSingle();
 
   if (pub) {
+    // Decision 6: blocked stores show maintenance even when status='published'.
+    if (!isPubliclyAvailable(pub, new Date())) {
+      return { kind: 'maintenance', store: pub };
+    }
+
     const [sectionsResult, productsResult] = await Promise.all([
       anon
         .from('sections')

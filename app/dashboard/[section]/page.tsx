@@ -10,14 +10,16 @@ import { WhatsappPanel } from '../components/WhatsappPanel';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { OrdersPanel } from '../components/OrdersPanel';
 import { OrdersStats } from '../components/OrdersStats';
+import { SubscriptionPanel } from '../components/SubscriptionPanel';
 import { listOrders, getOrderStats } from '@/lib/store/orders/actions';
 import { getPlanLimits, isUnlimited, type PlanId } from '@/lib/plans/limits';
+import { getSubscriptionState, daysLeftInTrial } from '@/lib/subscription/state';
 import type { Metadata } from 'next';
 import type { Section, Product } from '@/lib/onboarding/state';
 
 export const dynamic = 'force-dynamic';
 
-const VALID_SECTIONS = ['info', 'image', 'sections', 'products', 'orders', 'whatsapp', 'settings'] as const;
+const VALID_SECTIONS = ['info', 'image', 'sections', 'products', 'orders', 'whatsapp', 'settings', 'subscription'] as const;
 type SectionSlug = (typeof VALID_SECTIONS)[number];
 
 function isValidSection(s: string): s is SectionSlug {
@@ -32,6 +34,7 @@ const SECTION_TITLES: Record<SectionSlug, string> = {
   orders: 'Pedidos',
   whatsapp: 'WhatsApp',
   settings: 'Configuración',
+  subscription: 'Suscripción',
 };
 
 export async function generateMetadata({ params }: { params: Promise<{ section: string }> }): Promise<Metadata> {
@@ -66,6 +69,15 @@ export default async function DashboardSectionPage({
 
   if (!store || store.status === 'draft') redirect('/onboarding');
 
+  // Decision 6: if subscription is blocked, only allow the subscription section.
+  const now = new Date();
+  const subState = getSubscriptionState(store, now);
+  const daysLeft = daysLeftInTrial(store, now);
+
+  if (subState === 'blocked' && section !== 'subscription') {
+    redirect('/dashboard/subscription');
+  }
+
   const [sectionsResult, productsResult] = await Promise.all([
     admin.from('sections').select('*').eq('store_id', store.id).order('position'),
     admin.from('products').select('*').eq('store_id', store.id).order('position'),
@@ -97,7 +109,7 @@ export default async function DashboardSectionPage({
       : '#F5C84B';
 
   return (
-    <DashboardShell store={store} currentSection={section}>
+    <DashboardShell store={store} currentSection={section} subState={subState} daysLeftInTrial={daysLeft}>
       {section === 'info' && <InfoPanel store={store} />}
       {section === 'image' && <ImagePanel store={store} />}
       {section === 'sections' && (
@@ -127,6 +139,9 @@ export default async function DashboardSectionPage({
       )}
       {section === 'whatsapp' && <WhatsappPanel store={store} />}
       {section === 'settings' && <SettingsPanel store={store} />}
+      {section === 'subscription' && (
+        <SubscriptionPanel store={store} subState={subState} daysLeft={daysLeft} />
+      )}
     </DashboardShell>
   );
 }

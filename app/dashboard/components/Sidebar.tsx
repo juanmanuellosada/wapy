@@ -10,6 +10,7 @@ import {
   ClipboardList,
   MessageCircle,
   Settings,
+  CreditCard,
   ExternalLink,
   LogOut,
   Menu,
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { id: 'orders', label: 'Pedidos', icon: ClipboardList },
   { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
   { id: 'settings', label: 'Configuración', icon: Settings },
+  { id: 'subscription', label: 'Suscripción', icon: CreditCard },
 ] as const;
 
 type Props = {

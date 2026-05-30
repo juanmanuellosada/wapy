@@ -137,6 +137,12 @@ export async function saveBasics(formData: {
     .ilike('email', user.email!)
     .maybeSingle();
 
+  // If the whitelist row already carries a trial_ends_at (manually set by admin),
+  // respect it; otherwise default to 14 days from now for new stores post-billing.
+  const trialEndsAt =
+    whitelistRow?.trial_ends_at ??
+    new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
   const { data: newStore, error: insertError } = await admin
     .from('stores')
     .insert({
@@ -147,7 +153,7 @@ export async function saveBasics(formData: {
       status: 'draft',
       onboarding_step: 1,
       plan: whitelistRow?.plan ?? 'inicial',
-      trial_ends_at: whitelistRow?.trial_ends_at ?? null,
+      trial_ends_at: trialEndsAt,
     })
     .select('id')
     .single();

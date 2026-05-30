@@ -1,13 +1,14 @@
 import Link from 'next/link';
 
 interface Props {
-  currentTab: 'leads' | 'whitelist';
+  currentTab: 'leads' | 'whitelist' | 'stores';
 }
 
 export function AdminNav({ currentTab }: Props) {
   const tabs = [
     { tab: 'leads' as const, href: '/admin/leads', label: 'Leads' },
     { tab: 'whitelist' as const, href: '/admin/whitelist', label: 'Whitelist' },
+    { tab: 'stores' as const, href: '/admin/stores', label: 'Tiendas' },
   ];
 
   return (

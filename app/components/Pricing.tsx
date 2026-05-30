@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Check, Star } from 'lucide-react';
 import { LeadFormModal } from './LeadFormModal';
+import { formatPlanPrice } from '@/lib/subscription/plans';
 
 const inicialFeatures: { label: string; highlight?: true }[] = [
   { label: 'Hasta 50 productos' },
@@ -77,7 +78,7 @@ export default function Pricing() {
                   className="text-4xl md:text-5xl font-bold text-white"
                   style={{ fontFamily: 'var(--font-agbalumo)' }}
                 >
-                  $9.900
+                  {formatPlanPrice('inicial')}
                 </span>
                 <span className="text-white/40 text-base">/mes</span>
               </div>
@@ -126,7 +127,7 @@ export default function Pricing() {
                   className="text-4xl md:text-5xl font-bold text-white"
                   style={{ fontFamily: 'var(--font-agbalumo)' }}
                 >
-                  $18.000
+                  {formatPlanPrice('pro')}
                 </span>
                 <span className="text-white/40 text-base">/mes</span>
               </div>
