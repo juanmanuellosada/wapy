@@ -118,7 +118,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const { data: currentStore, error: fetchError } = await admin
     .from('stores')
-    .select('mp_subscription_status')
+    .select('mp_subscription_status, mp_preapproval_id')
     .eq('id', storeId)
     .maybeSingle();
 
@@ -137,6 +137,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       preapprovalId,
     });
     return NextResponse.json({ ok: true });
+  }
+
+  // --- 4b. Cancel superseded preapproval (v2) ---
+  // When a new preapproval is authorized and it differs from the stored one,
+  // cancel the old one to avoid double-billing (e.g. after a plan change or reactivation).
+  // Non-fatal: if cancellation fails (e.g. already cancelled) we log and continue.
+  if (
+    mpStatus === 'authorized' &&
+    currentStore.mp_preapproval_id &&
+    currentStore.mp_preapproval_id !== preapprovalId
+  ) {
+    try {
+      await preApproval.update({ id: currentStore.mp_preapproval_id, body: { status: 'cancelled' } });
+      console.info('[webhook/mp] Cancelled superseded preapproval', {
+        old: currentStore.mp_preapproval_id,
+        new: preapprovalId,
+        storeId,
+      });
+    } catch (err) {
+      console.error('[webhook/mp] failed to cancel superseded preapproval', {
+        old: currentStore.mp_preapproval_id,
+        err,
+      });
+      // non-fatal: continue with DB update
+    }
   }
 
   // Only advance subscription_status_changed_at when the status actually changes

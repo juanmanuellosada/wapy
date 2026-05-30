@@ -162,13 +162,10 @@ export async function setStorePaymentExempt(
 //       no trial, since the store already has a subscription history).
 //
 // When the new subscription is authorized, the webhook will update mp_preapproval_id
-// to the new one. The old preapproval remains open until MP closes it or the user
-// cancels it.
-//
-// TODO: cancel the old preapproval automatically once the new one is authorized.
-//   This requires correlating the new preapproval_id in the webhook with a pending
-//   plan change. Not implemented in v1 — track old mp_preapproval_id before
-//   redirecting and cancel it via a follow-up webhook handler or a separate action.
+// to the new one. The old preapproval is automatically cancelled by the webhook handler
+// (v2): when a new preapproval with the same external_reference (= store_id) arrives as
+// "authorized" and its ID differs from the stored mp_preapproval_id, the webhook cancels
+// the old one before writing the new ID to the DB. See app/api/webhooks/mercadopago/route.ts.
 // ---------------------------------------------------------------------------
 
 export async function changePlan(targetPlan: PlanId): Promise<{ url: string } | { error: string }> {
