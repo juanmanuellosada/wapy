@@ -19,6 +19,8 @@ type Props = {
   productsCount: number;
   productsLimit: number;
   limitIsUnlimited: boolean;
+  maxImagesPerProduct: number;
+  allowVariants: boolean;
 };
 
 function formatPrice(cents: number): string {
@@ -29,7 +31,7 @@ function formatPrice(cents: number): string {
   }).format(cents / 100);
 }
 
-export function ProductsPanel({ store, initialProducts, sections, productsCount, productsLimit, limitIsUnlimited }: Props) {
+export function ProductsPanel({ store, initialProducts, sections, productsCount, productsLimit, limitIsUnlimited, maxImagesPerProduct, allowVariants }: Props) {
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const atProductsLimit = products.length >= productsLimit;
   const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined);
@@ -210,6 +212,8 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
           sections={sections}
           product={modalProduct}
           nextPosition={products.length}
+          maxImagesPerProduct={maxImagesPerProduct}
+          allowVariants={allowVariants}
           onSaved={handleProductSaved}
           onClose={() => setModalProduct(undefined)}
         />

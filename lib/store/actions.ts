@@ -334,6 +334,15 @@ export async function saveStoreProduct(
 
   const admin = createAdminClient();
 
+  // Validate image count against plan limit (applies to both create and edit).
+  const storePlan = (store as unknown as { plan: PlanId | null }).plan;
+  const { maxImagesPerProduct } = getPlanLimits(storePlan);
+  if (!isUnlimited(maxImagesPerProduct) && product.image_urls.length > maxImagesPerProduct) {
+    return {
+      error: `Tu plan permite hasta ${maxImagesPerProduct} imagen${maxImagesPerProduct === 1 ? '' : 'es'} por producto. Pasate a un plan superior para subir más.`,
+    };
+  }
+
   if (product.id) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (admin as any)
@@ -361,7 +370,6 @@ export async function saveStoreProduct(
   }
 
   // Plan limit: only enforce on INSERT (no product.id means new product).
-  const storePlan = (store as unknown as { plan: PlanId | null }).plan;
   const productLimit = getPlanLimits(storePlan).maxProducts;
   if (!isUnlimited(productLimit)) {
     const { count } = await admin

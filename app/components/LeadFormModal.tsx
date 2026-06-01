@@ -11,7 +11,7 @@ import { useState, useTransition } from 'react';
 interface Props {
   open: boolean;
   onClose: () => void;
-  plan: 'inicial' | 'pro';
+  plan: 'inicial' | 'medio' | 'pro';
 }
 
 export function LeadFormModal({ open, onClose, plan }: Props) {
@@ -72,7 +72,7 @@ export function LeadFormModal({ open, onClose, plan }: Props) {
     });
   }
 
-  const planLabel = plan === 'pro' ? 'Pro' : 'Inicial';
+  const planLabel = plan === 'pro' ? 'Pro' : plan === 'medio' ? 'Medio' : 'Inicial';
 
   return (
     <div

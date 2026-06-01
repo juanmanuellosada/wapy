@@ -8,6 +8,8 @@ import { ProductModal } from './ProductModal';
 import { removeProduct, saveProduct, advanceProductsStep } from '@/lib/onboarding/actions';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
+import { getPlanLimits } from '@/lib/plans/limits';
+import type { PlanId } from '@/lib/plans/limits';
 
 type Props = {
   store: Store;
@@ -26,6 +28,7 @@ function formatPrice(cents: number): string {
 export function StepProducts({ store, initialProducts, sections }: Props) {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>(initialProducts);
+  const planLimits = getPlanLimits(store.plan as PlanId | null);
   const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined); // undefined = closed
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -106,6 +109,8 @@ export function StepProducts({ store, initialProducts, sections }: Props) {
           sections={sections}
           product={modalProduct}
           nextPosition={products.length}
+          maxImagesPerProduct={planLimits.maxImagesPerProduct}
+          allowVariants={planLimits.allowVariants}
           onSaved={handleProductSaved}
           onClose={() => setModalProduct(undefined)}
         />

@@ -129,6 +129,8 @@ export default async function DashboardSectionPage({
           productsCount={products.length}
           productsLimit={limits.maxProducts}
           limitIsUnlimited={isUnlimited(limits.maxProducts)}
+          maxImagesPerProduct={limits.maxImagesPerProduct}
+          allowVariants={limits.allowVariants}
         />
       )}
       {section === 'orders' && (

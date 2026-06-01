@@ -111,9 +111,11 @@ export default async function AdminStoresPage() {
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
                           row.plan === 'pro'
                             ? 'bg-[#F5C84B]/20 text-[#7B5C00] border border-[#F5C84B]/40'
+                            : row.plan === 'medio'
+                            ? 'bg-teal-50 text-teal-800 border border-teal-200'
                             : 'bg-[#16222E]/8 text-[#16222E] border border-[#16222E]/15'
                         }`}>
-                          {row.plan === 'pro' ? 'Pro' : 'Inicial'}
+                          {row.plan === 'pro' ? 'Pro' : row.plan === 'medio' ? 'Medio' : 'Inicial'}
                         </span>
                       </td>
                       <td className="px-4 py-3">

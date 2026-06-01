@@ -58,6 +58,7 @@ const ROLE_BADGE: Record<string, string> = {
 
 const PLAN_BADGE: Record<string, string> = {
   inicial: 'bg-[#16222E]/8 text-[#16222E] border border-[#16222E]/15',
+  medio: 'bg-teal-50 text-teal-800 border border-teal-200',
   pro: 'bg-[#F5C84B]/20 text-[#7B5C00] border border-[#F5C84B]/40',
 };
 
@@ -116,7 +117,7 @@ export function WhitelistTable({ rows }: Props) {
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${planBadge}`}
                     >
-                      {row.plan === 'pro' ? 'Pro' : 'Inicial'}
+                      {row.plan === 'pro' ? 'Pro' : row.plan === 'medio' ? 'Medio' : 'Inicial'}
                     </span>
                   ) : (
                     <span className="text-[#16222E]/30 text-xs">—</span>

@@ -63,7 +63,7 @@ export async function getMyCheckoutUrl(plan?: PlanId): Promise<{ url: string } |
   if (!store) return { error: 'No se encontró la tienda.' };
 
   const appPlan: PlanId =
-    plan ?? (store.plan === 'pro' || store.plan === 'inicial' ? (store.plan as PlanId) : 'inicial');
+    plan ?? (store.plan === 'pro' || store.plan === 'medio' || store.plan === 'inicial' ? (store.plan as PlanId) : 'inicial');
 
   // isReturning = has had a subscription before (Decision 2)
   const isReturning = store.mp_preapproval_id !== null;

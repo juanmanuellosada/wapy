@@ -1,9 +1,10 @@
 import type { PlanId } from '@/lib/plans/limits';
 
-/** Monthly price in ARS cents for each plan. */
+/** Monthly price in ARS for each plan. */
 export const PLAN_PRICES: Record<PlanId, number> = {
-  inicial: 9900,
-  pro: 18000,
+  inicial: 7000,
+  medio:   9000,
+  pro:    18000,
 };
 
 /**

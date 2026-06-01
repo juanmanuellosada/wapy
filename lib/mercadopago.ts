@@ -42,7 +42,7 @@ export function verifyWebhookSignature(
 
 /**
  * Returns the correct Mercado Pago Preapproval Plan ID based on:
- * - the app plan ('inicial' | 'pro')
+ * - the app plan ('inicial' | 'medio' | 'pro')
  * - whether the store already had a subscription (isReturning)
  *
  * isReturning = true  → plan WITHOUT free trial (mp_preapproval_id is NOT NULL)
@@ -53,6 +53,11 @@ export function pickPlanId(appPlan: PlanId, isReturning: boolean): string {
     return isReturning
       ? process.env.MP_PREAPPROVAL_PLAN_ID_PRO_RETURNING!
       : process.env.MP_PREAPPROVAL_PLAN_ID_PRO!;
+  }
+  if (appPlan === 'medio') {
+    return isReturning
+      ? process.env.MP_PREAPPROVAL_PLAN_ID_MEDIO_RETURNING!
+      : process.env.MP_PREAPPROVAL_PLAN_ID_MEDIO!;
   }
   return isReturning
     ? process.env.MP_PREAPPROVAL_PLAN_ID_INICIAL_RETURNING!

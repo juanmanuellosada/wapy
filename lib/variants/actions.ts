@@ -5,6 +5,8 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
+import { getPlanLimits } from '@/lib/plans/limits';
+import type { PlanId } from '@/lib/plans/limits';
 
 // ---------------------------------------------------------------------------
 // Auth guard (mirrors pattern in lib/store/actions.ts)
@@ -19,7 +21,7 @@ async function requireOwnerStore() {
   const admin = createAdminClient();
   const { data: store } = await admin
     .from('stores')
-    .select('id')
+    .select('id, plan')
     .eq('owner_id', user.id)
     .maybeSingle();
   return { user, store };
@@ -105,6 +107,11 @@ export async function upsertProductOptions(
 ): Promise<UpsertProductOptionsResult> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'No se encontró la tienda.' };
+
+  const { allowVariants } = getPlanLimits((store as unknown as { plan: PlanId | null }).plan);
+  if (!allowVariants) {
+    return { error: 'Tu plan no incluye variedades. Pasate a un plan superior para habilitarlas.' };
+  }
 
   const parsed = upsertProductOptionsSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
@@ -394,6 +401,11 @@ export async function addOptionValue(
 ): Promise<AddOptionValueResult> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'No se encontró la tienda.' };
+
+  const { allowVariants } = getPlanLimits((store as unknown as { plan: PlanId | null }).plan);
+  if (!allowVariants) {
+    return { error: 'Tu plan no incluye variedades. Pasate a un plan superior para habilitarlas.' };
+  }
 
   const parsed = addOptionValueSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0].message };

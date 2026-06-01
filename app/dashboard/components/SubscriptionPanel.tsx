@@ -36,6 +36,7 @@ const STATE_LABELS: Record<SubscriptionState, string> = {
 
 const PLAN_LABELS: Record<string, string> = {
   inicial: 'Inicial',
+  medio: 'Medio',
   pro: 'Pro',
 };
 
@@ -63,10 +64,10 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
-  const [changePlanConfirmOpen, setChangePlanConfirmOpen] = useState(false);
+  const [targetPlan, setTargetPlan] = useState<PlanId | null>(null);
 
-  const currentPlan = (store.plan === 'pro' ? 'pro' : 'inicial') as PlanId;
-  const otherPlan: PlanId = currentPlan === 'inicial' ? 'pro' : 'inicial';
+  const planId: PlanId = (store.plan === 'pro' ? 'pro' : store.plan === 'medio' ? 'medio' : 'inicial');
+  const otherPlans: PlanId[] = (['inicial', 'medio', 'pro'] as PlanId[]).filter((p) => p !== planId);
 
   // ---- Actions ---------------------------------------------------------------
 
@@ -94,9 +95,10 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
   }
 
   async function handleChangePlanConfirm() {
+    if (!targetPlan) return;
     setError(null);
-    const result = await changePlan(otherPlan);
-    setChangePlanConfirmOpen(false);
+    const result = await changePlan(targetPlan);
+    setTargetPlan(null);
     if ('error' in result) {
       setError(result.error);
       return;
@@ -122,8 +124,8 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
           <div>
             <p className="text-xs text-white/40 mb-0.5">Plan actual</p>
             <p className="text-lg font-bold text-[#FBF7EC]">
-              {PLAN_LABELS[currentPlan] ?? currentPlan}{' '}
-              <span className="text-sm font-normal text-white/50">{formatPlanPrice(currentPlan)}/mes</span>
+              {PLAN_LABELS[planId] ?? planId}{' '}
+              <span className="text-sm font-normal text-white/50">{formatPlanPrice(planId)}/mes</span>
             </p>
           </div>
           <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${stateBadge(subState)}`}>
@@ -165,7 +167,7 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
         {subState === 'trial' && (
           <button
             type="button"
-            onClick={() => handleCheckout(currentPlan)}
+            onClick={() => handleCheckout(planId)}
             disabled={isPending}
             className="w-full min-h-[44px] px-6 rounded-xl bg-[#F5C84B] text-[#16222E] font-bold text-sm hover:bg-[#FAE08A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
@@ -189,7 +191,7 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
         {(subState === 'grace' || subState === 'blocked') && (
           <button
             type="button"
-            onClick={() => handleCheckout(currentPlan)}
+            onClick={() => handleCheckout(planId)}
             disabled={isPending}
             className="w-full min-h-[44px] px-6 rounded-xl bg-[#F5C84B] text-[#16222E] font-bold text-sm hover:bg-[#FAE08A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
@@ -201,7 +203,7 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
         {subState === 'exempt' && (
           <button
             type="button"
-            onClick={() => handleCheckout(currentPlan)}
+            onClick={() => handleCheckout(planId)}
             disabled={isPending}
             className="w-full min-h-[44px] px-6 rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] font-semibold text-sm hover:bg-white/12 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
@@ -213,24 +215,34 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
 
       {/* Change plan */}
       <div className="mt-6 bg-white/5 border border-white/10 rounded-2xl p-5">
-        <p className="text-sm font-semibold text-[#FBF7EC] mb-1">Cambiar de plan</p>
-        <p className="text-xs text-white/50 mb-4">
-          Cambiá a{' '}
-          <span className="font-semibold text-white/70">{PLAN_LABELS[otherPlan] ?? otherPlan}</span>
-          {' '}por{' '}
-          <span className="font-semibold text-white/70">{formatPlanPrice(otherPlan)}/mes</span>.
-          {otherPlan === 'pro'
-            ? ' Accedés a productos y secciones ilimitadas.'
-            : ' Volvés al límite de 50 productos y 3 secciones (los existentes no se eliminan).'}
-        </p>
-        <button
-          type="button"
-          onClick={() => setChangePlanConfirmOpen(true)}
-          disabled={isPending}
-          className="min-h-[40px] px-5 rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] font-semibold text-sm hover:bg-white/12 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
-        >
-          Cambiar a {PLAN_LABELS[otherPlan] ?? otherPlan}
-        </button>
+        <p className="text-sm font-semibold text-[#FBF7EC] mb-4">Cambiar de plan</p>
+        <div className="space-y-3">
+          {otherPlans.map((plan) => (
+            <div key={plan} className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-sm font-semibold text-white/80">
+                  {PLAN_LABELS[plan]}{' '}
+                  <span className="text-xs font-normal text-white/40">{formatPlanPrice(plan)}/mes</span>
+                </p>
+                <p className="text-xs text-white/40">
+                  {plan === 'pro'
+                    ? 'Productos, secciones e imágenes ilimitadas + variantes'
+                    : plan === 'medio'
+                    ? 'Hasta 50 productos, 3 secciones, imágenes ilimitadas + variantes'
+                    : 'Hasta 20 productos, 1 sección, 1 imagen por producto'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTargetPlan(plan)}
+                disabled={isPending}
+                className="flex-shrink-0 min-h-[36px] px-4 rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] font-semibold text-sm hover:bg-white/12 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Cambiar a {PLAN_LABELS[plan]}
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Cancel confirmation */}
@@ -245,14 +257,16 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
       />
 
       {/* Change plan confirmation */}
-      <ConfirmModal
-        open={changePlanConfirmOpen}
-        onClose={() => setChangePlanConfirmOpen(false)}
-        onConfirm={handleChangePlanConfirm}
-        title={`Cambiar a plan ${PLAN_LABELS[otherPlan] ?? otherPlan}`}
-        message={`Tu plan cambiará a ${PLAN_LABELS[otherPlan] ?? otherPlan} (${formatPlanPrice(otherPlan)}/mes). Se te redirigirá a MercadoPago para ajustar el cobro. Los límites del nuevo plan se aplicarán de inmediato.`}
-        confirmLabel={`Cambiar a ${PLAN_LABELS[otherPlan] ?? otherPlan}`}
-      />
+      {targetPlan && (
+        <ConfirmModal
+          open={true}
+          onClose={() => setTargetPlan(null)}
+          onConfirm={handleChangePlanConfirm}
+          title={`Cambiar a plan ${PLAN_LABELS[targetPlan] ?? targetPlan}`}
+          message={`Tu plan cambiará a ${PLAN_LABELS[targetPlan] ?? targetPlan} (${formatPlanPrice(targetPlan)}/mes). Se te redirigirá a MercadoPago para ajustar el cobro. Los límites del nuevo plan se aplicarán de inmediato.`}
+          confirmLabel={`Cambiar a ${PLAN_LABELS[targetPlan] ?? targetPlan}`}
+        />
+      )}
     </div>
   );
 }

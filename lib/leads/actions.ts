@@ -7,6 +7,8 @@ import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { sendInviteEmail } from '@/lib/resend';
 import { leadFormSchema, normalizeWhatsapp } from './schemas';
 import type { Database } from '@/lib/supabase/types';
+import { PLAN_PRICES, formatPlanPrice } from '@/lib/subscription/plans';
+import type { PlanId } from '@/lib/plans/limits';
 
 type LeadRow = Database['public']['Tables']['leads']['Row'];
 
@@ -44,7 +46,9 @@ async function sendNewLeadEmail({ lead }: { lead: LeadRow }) {
 
   const resend = new Resend(apiKey);
 
-  const planLabel = lead.plan === 'pro' ? 'Pro ($20.000)' : 'Inicial ($12.000)';
+  const planId = (lead.plan && lead.plan in PLAN_PRICES ? lead.plan : 'inicial') as PlanId;
+  const PLAN_NAMES: Record<PlanId, string> = { inicial: 'Inicial', medio: 'Medio', pro: 'Pro' };
+  const planLabel = `${PLAN_NAMES[planId]} (${formatPlanPrice(planId)})`;
 
   const html = `<!DOCTYPE html>
 <html lang="es">

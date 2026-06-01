@@ -30,6 +30,8 @@ type Props = {
   sections: Section[];
   product?: Product | null; // null = new
   nextPosition: number;
+  maxImagesPerProduct: number;
+  allowVariants: boolean;
   onSaved: (product: Product) => void;
   onClose: () => void;
 };
@@ -45,7 +47,7 @@ function parsePriceCents(display: string): number {
   return Math.round(num * 100);
 }
 
-export function ProductModal({ storeId, sections, product, nextPosition, onSaved, onClose }: Props) {
+export function ProductModal({ storeId, sections, product, nextPosition, maxImagesPerProduct, allowVariants, onSaved, onClose }: Props) {
   const isEdit = !!product;
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
   const [saving, setSaving] = useState(false);
@@ -339,11 +341,13 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
           {/* Images */}
           <div>
             <label className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
-              Imágenes <span className="text-white/30 font-normal">(hasta 5)</span>
+              {maxImagesPerProduct === 1
+                ? 'Imagen'
+                : `Imágenes ${maxImagesPerProduct === Infinity ? '' : `(hasta ${maxImagesPerProduct})`}`}
             </label>
             <ImageUpload
               images={imageUrls.map((url) => ({ url }))}
-              maxCount={5}
+              maxCount={maxImagesPerProduct === Infinity ? 99 : maxImagesPerProduct}
               accept={{
                 'image/png': ['.png'],
                 'image/jpeg': ['.jpg', '.jpeg'],
@@ -361,11 +365,20 @@ export function ProductModal({ storeId, sections, product, nextPosition, onSaved
             <label className="block text-sm font-semibold text-[#FBF7EC] mb-2">
               Variedades <span className="text-white/30 font-normal">(color, talle, etc.)</span>
             </label>
-            <VariantsSection
-              productId={product?.id ?? null}
-              productPriceCents={parsePriceCents(watch('price_display') ?? '') ?? product?.price_cents ?? 0}
-              onVariantsChange={handleVariantsChange}
-            />
+            {allowVariants ? (
+              <VariantsSection
+                productId={product?.id ?? null}
+                productPriceCents={parsePriceCents(watch('price_display') ?? '') ?? product?.price_cents ?? 0}
+                onVariantsChange={handleVariantsChange}
+              />
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-xl px-4 py-4 text-sm text-white/40">
+                Las variedades están disponibles en los planes Medio y Pro.{' '}
+                <a href="/#precios" className="text-[#F5C84B]/70 hover:text-[#F5C84B] transition-colors">
+                  Conocé los planes →
+                </a>
+              </div>
+            )}
           </div>
 
           {/* Save */}
