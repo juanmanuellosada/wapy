@@ -82,12 +82,13 @@ function stateBadge(state: SubscriptionState) {
 const BRICK_CONTAINER_ID = 'mp-card-payment-brick-container';
 
 interface CardBrickProps {
+  amount: number;
   onToken: (cardTokenId: string) => void;
   onError: (msg: string) => void;
   disabled: boolean;
 }
 
-function CardPaymentBrick({ onToken, onError, disabled }: CardBrickProps) {
+function CardPaymentBrick({ amount, onToken, onError, disabled }: CardBrickProps) {
   const brickRef = useRef<{ unmount: () => void } | null>(null);
   const mountedRef = useRef(false);
 
@@ -107,7 +108,7 @@ function CardPaymentBrick({ onToken, onError, disabled }: CardBrickProps) {
       const bricks = mp.bricks();
       const brick = await bricks.create('cardPayment', BRICK_CONTAINER_ID, {
         initialization: {
-          amount: 0, // placeholder; actual amount is determined server-side
+          amount,
           payer: {},
         },
         customization: {
@@ -144,7 +145,7 @@ function CardPaymentBrick({ onToken, onError, disabled }: CardBrickProps) {
       console.error('[CardPaymentBrick] mount error', err);
       onError('No se pudo cargar el formulario de tarjeta. Recargá la página.');
     }
-  }, [onToken, onError]);
+  }, [amount, onToken, onError]);
 
   useEffect(() => {
     // Load the MP SDK script, then mount the brick
@@ -293,6 +294,7 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
           </div>
         ) : (
           <CardPaymentBrick
+            amount={view === 'change-plan' && pendingTargetPlan ? PLAN_PRICES[pendingTargetPlan] : PLAN_PRICES[planId]}
             onToken={handleToken}
             onError={(msg) => setError(msg)}
             disabled={isPending}
