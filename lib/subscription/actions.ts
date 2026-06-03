@@ -3,10 +3,8 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
-import { preApproval, pickPlanId } from '@/lib/mercadopago';
+import { preApproval, createSubscriptionPreapproval } from '@/lib/mercadopago';
 import type { PlanId } from '@/lib/plans/limits';
-
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
 // ---------------------------------------------------------------------------
 // Internal auth helpers (same pattern as lib/onboarding/actions.ts)
@@ -50,39 +48,67 @@ async function requireSuperadmin() {
 }
 
 // ---------------------------------------------------------------------------
-// 6.1 getMyCheckoutUrl
+// subscribeWithCard
 //
-// Generates a MercadoPago hosted checkout URL for the owner's store.
-// Decision 10: Works even when the store is exempt (lets owner link real payment
-// without losing the exemption — payment_exempt is only changed by superadmin).
-// Decision 2: Uses trial plan if no prior subscription, returning plan otherwise.
+// Server action that receives a card_token_id from the client-side MP Bricks
+// tokenization and creates a preapproval by API (without an associated plan).
+// The free_trial is derived dynamically from the store's trial_ends_at.
+//
+// Decision 2 (design.md): card data never touches the server — only card_token_id.
+// Decision 5 (design.md): returns typed result; does not persist if creation fails.
 // ---------------------------------------------------------------------------
 
-export async function getMyCheckoutUrl(plan?: PlanId): Promise<{ url: string } | { error: string }> {
-  const { store } = await requireOwnerStore().catch(() => ({ store: null }));
-  if (!store) return { error: 'No se encontró la tienda.' };
+export async function subscribeWithCard(
+  cardTokenId: string
+): Promise<{ ok: true } | { error: string }> {
+  const { user, store } = await requireOwnerStore().catch(() => ({ user: null, store: null }));
+  if (!user || !store) return { error: 'No se encontró la tienda.' };
 
-  const appPlan: PlanId =
-    plan ?? (store.plan === 'pro' || store.plan === 'medio' || store.plan === 'inicial' ? (store.plan as PlanId) : 'inicial');
+  const planId: PlanId =
+    store.plan === 'pro' || store.plan === 'medio' || store.plan === 'inicial'
+      ? (store.plan as PlanId)
+      : 'inicial';
 
-  // isReturning = has had a subscription before (Decision 2)
-  const isReturning = store.mp_preapproval_id !== null;
-
-  const planId = pickPlanId(appPlan, isReturning);
-
-  const params = new URLSearchParams({
-    preapproval_plan_id: planId,
-    external_reference: store.id,
-    back_url: `${APP_URL}/dashboard/subscription`,
+  const result = await createSubscriptionPreapproval({
+    store: {
+      id: store.id,
+      plan: planId,
+      trial_ends_at: store.trial_ends_at,
+    },
+    cardTokenId,
+    payerEmail: user.email ?? '',
   });
 
-  const url = `https://www.mercadopago.com.ar/subscriptions/checkout?${params.toString()}`;
+  if (!result.ok) {
+    return { error: result.error };
+  }
 
-  return { url };
+  const admin = createAdminClient();
+  const now = new Date().toISOString();
+
+  const { error: dbError } = await admin
+    .from('stores')
+    .update({
+      mp_preapproval_id: result.mpPreapprovalId,
+      mp_subscription_status: result.mpStatus,
+      subscription_status_changed_at: now,
+      updated_at: now,
+    })
+    .eq('id', store.id);
+
+  if (dbError) {
+    console.error('[subscription/subscribeWithCard] DB error after MP success', { dbError });
+    // The preapproval was created in MP but we failed to persist locally.
+    // Log for manual recovery — do not surface the technical detail to the user.
+    return { error: 'Suscripción creada en MercadoPago pero hubo un error al guardar. Contactá soporte.' };
+  }
+
+  revalidatePath('/dashboard');
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
-// 6.2 cancelSubscription
+// cancelSubscription
 //
 // Cancels the store owner's MercadoPago preapproval.
 // The actual state change is reflected once the webhook arrives — we do NOT
@@ -112,7 +138,7 @@ export async function cancelSubscription(): Promise<{ ok: true } | { error: stri
 }
 
 // ---------------------------------------------------------------------------
-// 6.3 setStorePaymentExempt
+// setStorePaymentExempt
 //
 // Superadmin-only: sets or clears payment exemption on any store.
 // Decision 10: Setting exempt = true does NOT change blocked_at (still owned by cron).
@@ -152,24 +178,24 @@ export async function setStorePaymentExempt(
 }
 
 // ---------------------------------------------------------------------------
-// 6.4 changePlan
+// changePlan
 //
 // Applies a plan change (upgrade/downgrade) for the store owner.
 //
-// Decision 9:
-//   (a) Updates stores.plan immediately → limits in lib/plans/limits.ts apply at once.
-//   (b) Returns the checkout URL for the destination MP plan (always "returning",
-//       no trial, since the store already has a subscription history).
+// (a) Updates stores.plan immediately → limits in lib/plans/limits.ts apply at once.
+// (b) Creates a new preapproval by API for the destination plan without free_trial
+//     (store already has billing history → trial_ends_at is in the past → díasRestantes <= 0).
+// (c) The old preapproval will be cancelled by the webhook handler when the new one
+//     arrives as "authorized" with a different ID (same external_reference = store_id).
 //
-// When the new subscription is authorized, the webhook will update mp_preapproval_id
-// to the new one. The old preapproval is automatically cancelled by the webhook handler
-// (v2): when a new preapproval with the same external_reference (= store_id) arrives as
-// "authorized" and its ID differs from the stored mp_preapproval_id, the webhook cancels
-// the old one before writing the new ID to the DB. See app/api/webhooks/mercadopago/route.ts.
+// The card_token_id must come from a fresh client-side tokenization.
 // ---------------------------------------------------------------------------
 
-export async function changePlan(targetPlan: PlanId): Promise<{ url: string } | { error: string }> {
-  const { store } = await requireOwnerStore();
+export async function changePlan(
+  targetPlan: PlanId,
+  cardTokenId: string
+): Promise<{ ok: true } | { error: string }> {
+  const { user, store } = await requireOwnerStore();
 
   if (store.plan === targetPlan) {
     return { error: `La tienda ya está en el plan ${targetPlan}.` };
@@ -178,7 +204,7 @@ export async function changePlan(targetPlan: PlanId): Promise<{ url: string } | 
   const admin = createAdminClient();
 
   // (a) Apply new plan limits immediately
-  const { error: updateError } = await admin
+  const { error: updatePlanError } = await admin
     .from('stores')
     .update({
       plan: targetPlan,
@@ -186,24 +212,53 @@ export async function changePlan(targetPlan: PlanId): Promise<{ url: string } | 
     })
     .eq('id', store.id);
 
-  if (updateError) {
-    console.error('[subscription/changePlan] DB error', { updateError });
+  if (updatePlanError) {
+    console.error('[subscription/changePlan] DB error updating plan', { updatePlanError });
     return { error: 'No se pudo cambiar el plan. Intentá de nuevo.' };
   }
 
   revalidatePath('/dashboard');
 
-  // (b) Return checkout URL for the target plan
-  // Always "returning" (no trial) because the store already has billing history.
-  const planId = pickPlanId(targetPlan, true);
-
-  const params = new URLSearchParams({
-    preapproval_plan_id: planId,
-    external_reference: store.id,
-    back_url: `${APP_URL}/dashboard/subscription`,
+  // (b) Create new preapproval for the target plan.
+  // trial_ends_at is already in the past for a store with billing history,
+  // so díasRestantes will be <= 0 → no free_trial → immediate charge.
+  const result = await createSubscriptionPreapproval({
+    store: {
+      id: store.id,
+      plan: targetPlan,
+      trial_ends_at: store.trial_ends_at,
+    },
+    cardTokenId,
+    payerEmail: user.email ?? '',
   });
 
-  const url = `https://www.mercadopago.com.ar/subscriptions/checkout?${params.toString()}`;
+  if (!result.ok) {
+    // Roll back the plan change to avoid an inconsistent state
+    await admin
+      .from('stores')
+      .update({ plan: store.plan, updated_at: new Date().toISOString() })
+      .eq('id', store.id);
+    revalidatePath('/dashboard');
+    return { error: result.error };
+  }
 
-  return { url };
+  const now = new Date().toISOString();
+
+  const { error: dbError } = await admin
+    .from('stores')
+    .update({
+      mp_preapproval_id: result.mpPreapprovalId,
+      mp_subscription_status: result.mpStatus,
+      subscription_status_changed_at: now,
+      updated_at: now,
+    })
+    .eq('id', store.id);
+
+  if (dbError) {
+    console.error('[subscription/changePlan] DB error after MP success', { dbError });
+    return { error: 'Plan actualizado en MercadoPago pero hubo un error al guardar. Contactá soporte.' };
+  }
+
+  revalidatePath('/dashboard');
+  return { ok: true };
 }

@@ -1,5 +1,7 @@
 import { MercadoPagoConfig, PreApproval, WebhookSignatureValidator } from 'mercadopago';
+import type { AutoRecurringWithFreeTrial } from 'mercadopago/dist/clients/preApproval/commonTypes';
 import type { PlanId } from '@/lib/plans/limits';
+import { PLAN_PRICES } from '@/lib/subscription/plans';
 
 // ---------------------------------------------------------------------------
 // Singleton client (server-only, never imported from client components)
@@ -37,29 +39,83 @@ export function verifyWebhookSignature(
 }
 
 // ---------------------------------------------------------------------------
-// Plan ID selection
+// Subscription creation (API without plan, free_trial dinámico)
 // ---------------------------------------------------------------------------
 
+export interface CreateSubscriptionPreapprovalParams {
+  store: {
+    id: string;
+    plan: PlanId;
+    trial_ends_at: string | null;
+  };
+  cardTokenId: string;
+  payerEmail: string;
+}
+
+export type CreateSubscriptionResult =
+  | { ok: true; mpPreapprovalId: string; mpStatus: string }
+  | { ok: false; error: string };
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+
 /**
- * Returns the correct Mercado Pago Preapproval Plan ID based on:
- * - the app plan ('inicial' | 'medio' | 'pro')
- * - whether the store already had a subscription (isReturning)
+ * Creates a MercadoPago preapproval by API (without an associated plan).
+ * The free_trial period is derived dynamically from the store's trial_ends_at.
  *
- * isReturning = true  → plan WITHOUT free trial (mp_preapproval_id is NOT NULL)
- * isReturning = false → plan WITH free trial    (mp_preapproval_id IS NULL)
+ * - If díasRestantes >= 1: includes free_trial so the first charge is deferred to the end of trial.
+ * - If díasRestantes <= 0: omits free_trial → immediate charge (reactivation after block).
  */
-export function pickPlanId(appPlan: PlanId, isReturning: boolean): string {
-  if (appPlan === 'pro') {
-    return isReturning
-      ? process.env.MP_PREAPPROVAL_PLAN_ID_PRO_RETURNING!
-      : process.env.MP_PREAPPROVAL_PLAN_ID_PRO!;
+export async function createSubscriptionPreapproval(
+  params: CreateSubscriptionPreapprovalParams
+): Promise<CreateSubscriptionResult> {
+  const { store, cardTokenId, payerEmail } = params;
+
+  // Calculate days remaining in the trial (UTC, ceil to favor the subscriber)
+  let diasRestantes = 0;
+  if (store.trial_ends_at) {
+    const trialEnd = new Date(store.trial_ends_at);
+    const now = new Date();
+    const diffMs = trialEnd.getTime() - now.getTime();
+    diasRestantes = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
   }
-  if (appPlan === 'medio') {
-    return isReturning
-      ? process.env.MP_PREAPPROVAL_PLAN_ID_MEDIO_RETURNING!
-      : process.env.MP_PREAPPROVAL_PLAN_ID_MEDIO!;
+
+  const autoRecurring: AutoRecurringWithFreeTrial = {
+    frequency: 1,
+    frequency_type: 'months',
+    transaction_amount: PLAN_PRICES[store.plan],
+    currency_id: 'ARS',
+    ...(diasRestantes >= 1
+      ? { free_trial: { frequency: diasRestantes, frequency_type: 'days' } }
+      : {}),
+  };
+
+  try {
+    const response = await preApproval.create({
+      body: {
+        status: 'authorized',
+        card_token_id: cardTokenId,
+        payer_email: payerEmail,
+        external_reference: store.id,
+        reason: `Wapy — Plan ${store.plan.charAt(0).toUpperCase() + store.plan.slice(1)}`,
+        back_url: `${APP_URL}/dashboard`,
+        // AutoRecurringWithFreeTrial is a superset of AutoRecurringRequest; cast is safe
+        auto_recurring: autoRecurring as Parameters<typeof preApproval.create>[0]['body']['auto_recurring'],
+      },
+    });
+
+    if (!response.id) {
+      return { ok: false, error: 'MP no devolvió un ID de preapproval.' };
+    }
+
+    return {
+      ok: true,
+      mpPreapprovalId: response.id,
+      mpStatus: response.status ?? 'authorized',
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : 'Error al crear la suscripción en MercadoPago.';
+    console.error('[mercadopago/createSubscriptionPreapproval] error', { err });
+    return { ok: false, error: message };
   }
-  return isReturning
-    ? process.env.MP_PREAPPROVAL_PLAN_ID_INICIAL_RETURNING!
-    : process.env.MP_PREAPPROVAL_PLAN_ID_INICIAL!;
 }
