@@ -1,0 +1,4 @@
+- [Wapy: estado del proyecto](wapy-project-state.md) — Roadmap de 6 fases para transición demo → SaaS real. Fase 1 (infra) completa 2026-05-23.
+- [Decisiones de infra de Wapy](wapy-infra-decisions.md) — Stack confirmado: Supabase Auth + Storage, routing en raíz `/[slug]`, 1 dueño:1 tienda, whitelist con invite via Resend.
+- [Supabase Storage + ES256 JWT gotcha](wapy-storage-jwt-gotcha.md) — Storage worker no verifica ES256, `auth.uid()` queda NULL, toda RLS con subquery falla. Subir SIEMPRE vía Server Action + admin client.
+- [Cobro con Mercado Pago en Wapy](wapy-mercadopago-billing.md) — Suscripciones MP: 4 preapproval plans (con/sin trial), webhook registra + cron bloquea, exención, bloqueo dual. Migración 027 creada, PENDIENTE de aplicar a prod.
