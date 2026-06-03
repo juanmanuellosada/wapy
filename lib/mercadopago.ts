@@ -48,12 +48,11 @@ export interface CreateSubscriptionPreapprovalParams {
     plan: PlanId;
     trial_ends_at: string | null;
   };
-  cardTokenId: string;
   payerEmail: string;
 }
 
 export type CreateSubscriptionResult =
-  | { ok: true; mpPreapprovalId: string; mpStatus: string }
+  | { ok: true; initPoint: string }
   | { ok: false; error: string };
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
@@ -68,7 +67,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 export async function createSubscriptionPreapproval(
   params: CreateSubscriptionPreapprovalParams
 ): Promise<CreateSubscriptionResult> {
-  const { store, cardTokenId, payerEmail } = params;
+  const { store, payerEmail } = params;
 
   // Calculate days remaining in the trial (UTC, ceil to favor the subscriber)
   let diasRestantes = 0;
@@ -92,8 +91,7 @@ export async function createSubscriptionPreapproval(
   try {
     const response = await preApproval.create({
       body: {
-        status: 'authorized',
-        card_token_id: cardTokenId,
+        status: 'pending',
         payer_email: payerEmail,
         external_reference: store.id,
         reason: `Wapy — Plan ${store.plan.charAt(0).toUpperCase() + store.plan.slice(1)}`,
@@ -103,15 +101,18 @@ export async function createSubscriptionPreapproval(
       },
     });
 
-    if (!response.id) {
-      return { ok: false, error: 'MP no devolvió un ID de preapproval.' };
+    // Prefer sandbox_init_point in non-production environments.
+    // Cast via unknown because PreApprovalResponse lacks an index signature.
+    const r = response as unknown as Record<string, unknown>;
+    const initPoint =
+      (r.sandbox_init_point as string | undefined) ??
+      (r.init_point as string | undefined);
+
+    if (!initPoint) {
+      return { ok: false, error: 'MP no devolvió un init_point para el checkout.' };
     }
 
-    return {
-      ok: true,
-      mpPreapprovalId: response.id,
-      mpStatus: response.status ?? 'authorized',
-    };
+    return { ok: true, initPoint };
   } catch (err) {
     const message =
       err instanceof Error ? err.message : 'Error al crear la suscripción en MercadoPago.';
