@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from '@/lib/toast';
-import { Plus, X, Loader2, Upload, ImageIcon, Info } from 'lucide-react';
+import { Plus, X, Loader2, Upload, ImageIcon, Info, ChevronDown, ChevronRight } from 'lucide-react';
 import {
   upsertProductOptions,
   updateVariant,
@@ -26,16 +26,8 @@ const MAX_VARIANTS = 25;
 // ---------------------------------------------------------------------------
 
 type DraftOptionType = {
-  /** Defined when the type already exists in the DB */
-  id?: string;
   name: string;
-  values: DraftOptionValue[];
-};
-
-type DraftOptionValue = {
-  /** Defined when the value already exists in the DB */
-  id?: string;
-  value: string;
+  values: string[]; // simple strings for the "add new type" draft
 };
 
 type Props = {
@@ -75,6 +67,61 @@ function variantLabel(
 }
 
 // ---------------------------------------------------------------------------
+// Validate draft before calling upsertProductOptions
+// ---------------------------------------------------------------------------
+function validateNewTypeDraft(
+  draft: DraftOptionType,
+  existingTypeNames: string[],
+  existingVariantCount: number,
+  existingTypesWithValueCounts: Array<{ valueCount: number }>
+): string[] {
+  const errors: string[] = [];
+  const name = draft.name.trim();
+
+  if (!name) {
+    errors.push('El nombre del tipo de opción no puede estar vacío.');
+    return errors;
+  }
+  if (name.length > MAX_LABEL_LEN) {
+    errors.push(`El nombre "${name}" supera los ${MAX_LABEL_LEN} caracteres.`);
+  }
+  if (existingTypeNames.some((n) => n === name)) {
+    errors.push(`Ya existe un tipo llamado "${name}".`);
+  }
+
+  const nonEmpty = draft.values.filter((v) => v.trim());
+  if (nonEmpty.length === 0) {
+    errors.push('Agregá al menos un valor antes de guardar.');
+    return errors;
+  }
+
+  for (const v of draft.values) {
+    if (!v.trim()) {
+      errors.push('Un valor está vacío. Completalo o eliminalo.');
+    } else if (v.trim().length > MAX_LABEL_LEN) {
+      errors.push(`El valor "${v}" supera los ${MAX_LABEL_LEN} caracteres.`);
+    }
+  }
+
+  const trimmed = draft.values.map((v) => v.trim()).filter(Boolean);
+  const dup = trimmed.find((v, i) => trimmed.indexOf(v) !== i);
+  if (dup) errors.push(`El valor "${dup}" está duplicado.`);
+
+  // Cap check: existing combos × new values
+  if (existingVariantCount > 0) {
+    const existingCombos = existingTypesWithValueCounts.reduce((acc, t) => acc * t.valueCount, 1);
+    const projected = existingCombos * nonEmpty.length;
+    if (projected > MAX_VARIANTS) {
+      errors.push(
+        `Agregar este tipo generaría ${projected} variedades (${existingCombos} × ${nonEmpty.length}), superando el límite de ${MAX_VARIANTS}.`
+      );
+    }
+  }
+
+  return errors;
+}
+
+// ---------------------------------------------------------------------------
 // VariantsSection
 // ---------------------------------------------------------------------------
 
@@ -85,14 +132,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  // ---- draft (option type editor) ----
-  const [draftTypes, setDraftTypes] = useState<DraftOptionType[]>([]);
-  const [isEditing, setIsEditing] = useState(false);
-  const [saveLoading, setSaveLoading] = useState(false);
-  const [validationErrors, setValidationErrors] = useState<string[]>([]);
-
   // ---- per-variant editing ----
-  // stockInput[variantId] = string value of the input
   const [stockInputs, setStockInputs] = useState<Record<string, string>>({});
   const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
   const [variantErrors, setVariantErrors] = useState<Record<string, string>>({});
@@ -107,20 +147,40 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   const [addValueLoading, setAddValueLoading] = useState(false);
   const [addValueError, setAddValueError] = useState<string | null>(null);
 
-  // ---- remove value loading ----
+  // ---- remove value / type loading ----
   const [removingValueId, setRemovingValueId] = useState<string | null>(null);
-
-  // ---- remove type loading ----
   const [removingTypeId, setRemovingTypeId] = useState<string | null>(null);
+
+  // ---- accordion collapsed state per type id ----
+  const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
+
+  // ---- "add new type" draft ----
+  const [showNewTypeDraft, setShowNewTypeDraft] = useState(false);
+  const [newTypeDraft, setNewTypeDraft] = useState<DraftOptionType>({ name: '', values: [''] });
+  const [newTypeSaving, setNewTypeSaving] = useState(false);
+  const [newTypeDraftErrors, setNewTypeDraftErrors] = useState<string[]>([]);
+
+  // ---- global mutating flag: serializes structural changes ----
+  const [mutating, setMutating] = useState(false);
 
   const hasVariants = variants.length > 0;
   const hasOptionTypes = optionTypes.length > 0;
-  // For tracked variants (stock !== null) sum their stock; untracked ones are "infinite"
+  // For tracked variants (stock !== null) sum their stock
   const trackedVariants = variants.filter((v) => v.stock !== null);
   const untrackedCount = variants.length - trackedVariants.length;
   const totalTrackedStock = trackedVariants.reduce((sum, v) => sum + (v.stock as number), 0);
-  // Legacy: totalStock for onVariantsChange (sum of tracked only, untracked contributes 0)
   const totalStock = totalTrackedStock;
+
+  // Current combination count (for counter display)
+  const currentCombinationCount = variants.length;
+
+  // Projected count if new type draft were confirmed (client-side estimate)
+  const draftNonEmptyValues = newTypeDraft.values.filter((v) => v.trim()).length;
+  const projectedCount = showNewTypeDraft && draftNonEmptyValues > 0
+    ? (currentCombinationCount > 0
+        ? currentCombinationCount * draftNonEmptyValues
+        : draftNonEmptyValues)
+    : currentCombinationCount;
 
   // Notify parent of variant state changes
   useEffect(() => {
@@ -144,7 +204,6 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       const stocks: Record<string, string> = {};
       const prices: Record<string, string> = {};
       for (const v of result.variants) {
-        // null stock = no tracking; show empty input (placeholder "∞")
         stocks[v.id] = v.stock !== null ? String(v.stock) : '';
         prices[v.id] = v.price_override != null ? formatPrice(v.price_override) : '';
       }
@@ -161,162 +220,11 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
     loadData();
   }, [loadData]);
 
-  // ---- Validation for draft types ----
-  function validateDraft(types: DraftOptionType[]): string[] {
-    const errors: string[] = [];
-    if (types.length === 0) return errors;
-
-    const typeNames = types.map((t) => t.name.trim());
-    const duplicateType = typeNames.find((n, i) => typeNames.indexOf(n) !== i);
-    if (duplicateType) errors.push(`El tipo "${duplicateType}" aparece más de una vez.`);
-
-    for (const type of types) {
-      const typeName = type.name.trim() || '(sin nombre)';
-      if (!type.name.trim()) {
-        errors.push('El nombre del tipo de opción no puede estar vacío.');
-      } else if (type.name.trim().length > MAX_LABEL_LEN) {
-        errors.push(`El nombre "${type.name}" supera los ${MAX_LABEL_LEN} caracteres.`);
-      }
-      const nonEmptyValues = type.values.filter((v) => v.value.trim());
-      if (type.values.length === 0 || nonEmptyValues.length === 0) {
-        errors.push(`El tipo "${typeName}" necesita al menos un valor. Agregalo antes de guardar.`);
-      }
-      const vals = type.values.map((v) => v.value.trim());
-      const duplicateVal = vals.find((v, i) => v && vals.indexOf(v) !== i);
-      if (duplicateVal) errors.push(`El valor "${duplicateVal}" aparece más de una vez en "${typeName}".`);
-      for (const val of type.values) {
-        if (!val.value.trim()) {
-          errors.push(`Un valor en "${typeName}" está vacío.`);
-        } else if (val.value.trim().length > MAX_LABEL_LEN) {
-          errors.push(`El valor "${val.value}" supera los ${MAX_LABEL_LEN} caracteres.`);
-        }
-      }
-    }
-
-    // Cap check (client-side estimate)
-    if (types.length > 0) {
-      const nonEmptyTypes = types.filter((t) => t.values.some((v) => v.value.trim()));
-      const count = nonEmptyTypes.reduce((acc, t) => acc * t.values.filter((v) => v.value.trim()).length, 1);
-      if (count > MAX_VARIANTS) {
-        errors.push(`Esta combinación generaría ${count} variedades, superando el límite de ${MAX_VARIANTS}.`);
-      }
-    }
-
-    return errors;
-  }
-
-  // ---- Start editing option types ----
-  const handleStartEditing = () => {
-    if (hasVariants) {
-      // Only editing existing types/values is allowed; initialize from DB state
-      setDraftTypes(
-        optionTypes.map((t) => ({
-          id: t.id,
-          name: t.name,
-          values: t.values.map((v) => ({ id: v.id, value: v.value })),
-        }))
-      );
-    } else {
-      // Fresh — start with one empty type
-      setDraftTypes([{ name: '', values: [{ value: '' }] }]);
-    }
-    setIsEditing(true);
-    setValidationErrors([]);
-  };
-
-  const handleCancelEditing = () => {
-    setIsEditing(false);
-    setDraftTypes([]);
-    setValidationErrors([]);
-  };
-
-  // ---- Draft type/value manipulation ----
-  const updateDraftTypeName = (index: number, name: string) => {
-    setDraftTypes((prev) => prev.map((t, i) => (i === index ? { ...t, name } : t)));
-  };
-
-  const updateDraftValue = (typeIndex: number, valueIndex: number, value: string) => {
-    setDraftTypes((prev) =>
-      prev.map((t, i) =>
-        i === typeIndex
-          ? {
-              ...t,
-              values: t.values.map((v, j) => (j === valueIndex ? { ...v, value } : v)),
-            }
-          : t
-      )
-    );
-  };
-
-  const addDraftValue = (typeIndex: number) => {
-    setDraftTypes((prev) =>
-      prev.map((t, i) =>
-        i === typeIndex ? { ...t, values: [...t.values, { value: '' }] } : t
-      )
-    );
-  };
-
-  const removeDraftValue = (typeIndex: number, valueIndex: number) => {
-    setDraftTypes((prev) =>
-      prev.map((t, i) =>
-        i === typeIndex
-          ? { ...t, values: t.values.filter((_, j) => j !== valueIndex) }
-          : t
-      )
-    );
-  };
-
-  const addDraftType = () => {
-    setDraftTypes((prev) => [...prev, { name: '', values: [{ value: '' }] }]);
-  };
-
-  const removeDraftType = (index: number) => {
-    setDraftTypes((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  // ---- Save option types (upsertProductOptions) ----
-  const handleSaveTypes = async () => {
-    if (!productId) return;
-    const errors = validateDraft(draftTypes);
-    if (errors.length > 0) {
-      setValidationErrors(errors);
-      toast.error(errors[0]);
-      return;
-    }
-    setValidationErrors([]);
-    setSaveLoading(true);
-    setServerError(null);
-    try {
-      const result = await upsertProductOptions({
-        productId,
-        optionTypes: draftTypes.map((t) => ({
-          name: t.name.trim(),
-          values: t.values.map((v) => v.value.trim()),
-        })),
-      });
-      if ('error' in result) {
-        setServerError(result.error);
-        toast.error(result.error);
-        return;
-      }
-      setIsEditing(false);
-      setDraftTypes([]);
-      toast.success('Variedades generadas');
-      await loadData();
-    } catch {
-      setServerError('No se pudo guardar las opciones.');
-      toast.error('No se pudo guardar las opciones.');
-    } finally {
-      setSaveLoading(false);
-    }
-  };
-
   // ---- Per-variant stock/price save (on blur) ----
   const handleVariantBlur = async (variantId: string) => {
     const stockStr = (stockInputs[variantId] ?? '').trim();
     const priceStr = priceInputs[variantId] ?? '';
 
-    // Empty string = null (no tracking). Otherwise parse as integer.
     const stock: number | null = stockStr === '' ? null : parseInt(stockStr, 10);
     const priceOverride = parsePriceCents(priceStr);
 
@@ -345,7 +253,6 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
         setVariantErrors((prev) => ({ ...prev, [variantId]: result.error }));
         toast.error(result.error);
       } else {
-        // Update local state
         setVariants((prev) =>
           prev.map((v) => (v.id === variantId ? { ...v, stock, price_override: priceOverride } : v))
         );
@@ -365,6 +272,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
     if (value.length > MAX_LABEL_LEN) { setAddValueError(`Máximo ${MAX_LABEL_LEN} caracteres.`); return; }
     setAddValueError(null);
     setAddValueLoading(true);
+    setMutating(true);
     try {
       const result = await addOptionValue({ optionTypeId, value });
       if ('error' in result) {
@@ -381,6 +289,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       toast.error('Error al agregar el valor.');
     } finally {
       setAddValueLoading(false);
+      setMutating(false);
     }
   };
 
@@ -388,6 +297,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   const handleRemoveValue = async (optionValueId: string) => {
     setRemovingValueId(optionValueId);
     setServerError(null);
+    setMutating(true);
     try {
       const result = await removeOptionValue({ optionValueId });
       if ('error' in result) {
@@ -404,6 +314,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       toast.error('Error al eliminar el valor.');
     } finally {
       setRemovingValueId(null);
+      setMutating(false);
     }
   };
 
@@ -412,6 +323,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
     if (!confirm(`¿Borrar el tipo "${typeName}" y todas sus variedades?`)) return;
     setRemovingTypeId(optionTypeId);
     setServerError(null);
+    setMutating(true);
     try {
       const result = await removeOptionType({ optionTypeId });
       if ('error' in result) {
@@ -430,12 +342,67 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       toast.error('Error al eliminar el tipo.');
     } finally {
       setRemovingTypeId(null);
+      setMutating(false);
+    }
+  };
+
+  // ---- Confirm new type draft ----
+  const handleConfirmNewType = async () => {
+    if (!productId) return;
+
+    const errors = validateNewTypeDraft(
+      newTypeDraft,
+      optionTypes.map((t) => t.name),
+      currentCombinationCount,
+      optionTypes.map((t) => ({ valueCount: t.values.length }))
+    );
+
+    if (errors.length > 0) {
+      setNewTypeDraftErrors(errors);
+      toast.error(errors[0]);
+      return;
+    }
+
+    setNewTypeDraftErrors([]);
+    setNewTypeSaving(true);
+    setMutating(true);
+
+    try {
+      // Build full desired state: existing types + new type
+      const existingTypesInput = optionTypes.map((t) => ({
+        name: t.name,
+        values: t.values.map((v) => v.value),
+      }));
+      const newTypeInput = {
+        name: newTypeDraft.name.trim(),
+        values: newTypeDraft.values.map((v) => v.trim()).filter(Boolean),
+      };
+
+      const result = await upsertProductOptions({
+        productId,
+        optionTypes: [...existingTypesInput, newTypeInput],
+      });
+
+      if ('error' in result) {
+        setNewTypeDraftErrors([result.error]);
+        toast.error(result.error);
+      } else {
+        toast.success(`Tipo "${newTypeInput.name}" agregado`);
+        setShowNewTypeDraft(false);
+        setNewTypeDraft({ name: '', values: [''] });
+        await loadData();
+      }
+    } catch {
+      setNewTypeDraftErrors(['Error al guardar el tipo.']);
+      toast.error('Error al guardar el tipo.');
+    } finally {
+      setNewTypeSaving(false);
+      setMutating(false);
     }
   };
 
   // ---- Image upload for a variant ----
   const handleImageUpload = async (variantId: string, file: File) => {
-    // Validar tipo MIME
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
     if (!allowedTypes.includes(file.type)) {
       setServerError('Formato no permitido. Usá JPG, PNG, WEBP, o GIF.');
@@ -443,7 +410,6 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       return;
     }
 
-    // Validar tamaño original
     if (file.size > MAX_ORIGINAL_BYTES) {
       setServerError('La imagen supera los 25 MB. Probá con una más liviana.');
       toast.error('La imagen supera los 25 MB. Probá con una más liviana.');
@@ -456,7 +422,6 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
     try {
       const compressed = await compressImage(file);
 
-      // Validar tamaño final
       if (compressed.size > MAX_FINAL_BYTES) {
         setServerError('La imagen sigue siendo demasiado pesada (máx 5 MB). Probá con otra.');
         toast.error('La imagen sigue siendo demasiado pesada (máx 5 MB). Probá con otra.');
@@ -488,6 +453,16 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
     }
   };
 
+  // ---- Toggle accordion ----
+  const toggleCollapse = (typeId: string) => {
+    setCollapsedTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(typeId)) next.delete(typeId);
+      else next.add(typeId);
+      return next;
+    });
+  };
+
   // ---------------------------------------------------------------------------
   // Render: no productId (new product)
   // ---------------------------------------------------------------------------
@@ -512,176 +487,14 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   }
 
   // ---------------------------------------------------------------------------
-  // Render: editor mode (defining option types + values from scratch)
+  // Render: no option types yet → illustrative banner + CTA
   // ---------------------------------------------------------------------------
-  if (isEditing) {
-    return (
-      <div className="space-y-4">
-        {/* Illustrative banner in editor mode too (if no types yet) */}
-        {!hasVariants && (
-          <div className="flex gap-2.5 bg-white/4 border border-white/10 rounded-xl px-4 py-3">
-            <Info size={14} className="text-white/40 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-white/50 leading-relaxed">
-              <strong className="text-white/70">Ejemplo:</strong> si vendés remeras en varios colores y talles, creá UN tipo{' '}
-              <span className="text-white/70">&ldquo;Color&rdquo;</span> (con valores Rojo, Azul) y OTRO tipo{' '}
-              <span className="text-white/70">&ldquo;Talle&rdquo;</span> (con valores S, M, L).
-              Se generan automáticamente todas las combinaciones.
-            </p>
-          </div>
-        )}
-        <p className="text-xs text-white/50">
-          Definí los tipos de opción (ej. Color, Talle) y sus valores. Una vez guardado se generarán las variedades.
-        </p>
-
-        {validationErrors.length > 0 && (
-          <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-xs text-red-300 space-y-1">
-            {validationErrors.map((e, i) => <p key={i}>{e}</p>)}
-          </div>
-        )}
-
-        <div className="space-y-4">
-          {draftTypes.map((type, typeIdx) => {
-            // Block adding a new type if there are already variants (D5)
-            const isNewType = !type.id;
-            const isBlockedNewType = isNewType && hasVariants;
-
-            return (
-              <div key={typeIdx} className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
-                <div className="space-y-1.5">
-                  <label className="block text-xs text-white/50 font-medium">
-                    Nombre del tipo de opción
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      placeholder="ej. Color, Talle, Versión"
-                      value={type.name}
-                      onChange={(e) => updateDraftTypeName(typeIdx, e.target.value)}
-                      maxLength={MAX_LABEL_LEN}
-                      disabled={isBlockedNewType}
-                      className="flex-1 rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-3 py-2 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors disabled:opacity-40"
-                    />
-                    {draftTypes.length > 1 && !hasVariants && (
-                      <button
-                        type="button"
-                        onClick={() => removeDraftType(typeIdx)}
-                        className="w-7 h-7 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
-                        aria-label="Quitar tipo de opción"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                  </div>
-                  {!isBlockedNewType && (
-                    <p className="text-xs text-white/35">
-                      Es el nombre de la categoría que el cliente elige. Los valores específicos los cargás abajo.
-                    </p>
-                  )}
-                </div>
-
-                {isBlockedNewType && (
-                  <p className="text-xs text-amber-400">
-                    Ya hay variedades. Para agregar este tipo debés borrar las variedades existentes.
-                  </p>
-                )}
-
-                {/* Values chips */}
-                <div className="space-y-2">
-                  <label className="block text-xs text-white/50 font-medium">Valores</label>
-                  <div className="flex flex-wrap gap-2">
-                    {type.values.map((val, valIdx) => (
-                      <div key={valIdx} className="flex items-center gap-1 bg-white/10 border border-white/15 rounded-full px-3 py-1">
-                        <input
-                          type="text"
-                          value={val.value}
-                          onChange={(e) => updateDraftValue(typeIdx, valIdx, e.target.value)}
-                          maxLength={MAX_LABEL_LEN}
-                          placeholder="ej. Rojo"
-                          className="bg-transparent text-[#FBF7EC] placeholder-white/30 text-xs outline-none w-20 min-w-0"
-                          style={{ width: `${Math.max(val.value.length * 8, 64)}px` }}
-                        />
-                        {type.values.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeDraftValue(typeIdx, valIdx)}
-                            className="text-white/40 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
-                            aria-label={`Quitar valor ${val.value}`}
-                          >
-                            <X size={10} />
-                          </button>
-                        )}
-                      </div>
-                    ))}
-
-                    <button
-                      type="button"
-                      onClick={() => addDraftValue(typeIdx)}
-                      className="flex items-center gap-1 text-xs text-[#F5C84B]/70 hover:text-[#F5C84B] transition-colors cursor-pointer px-2 py-1 rounded-full border border-dashed border-[#F5C84B]/30 hover:border-[#F5C84B]/60"
-                    >
-                      <Plus size={11} /> Agregar valor
-                    </button>
-                  </div>
-                  <p className="text-xs text-white/35">
-                    Cada valor es una opción que el cliente puede elegir
-                    {type.name.trim()
-                      ? <> (ej. para &ldquo;{type.name}&rdquo;: Rojo, Azul, Verde)</>
-                      : <> (ej. para &ldquo;Color&rdquo;: Rojo, Azul, Verde)</>
-                    }.
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Add new type button — blocked if variants exist */}
-        {hasVariants ? (
-          <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
-            Para agregar otro tipo de opción (ej. Talle si ya hay Color), borrá las variedades existentes primero.
-          </p>
-        ) : (
-          <button
-            type="button"
-            onClick={addDraftType}
-            className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 transition-colors cursor-pointer"
-          >
-            <Plus size={14} /> + Agregar tipo (ej. Color, Talle)
-          </button>
-        )}
-
-        {/* Actions */}
-        <div className="flex gap-2 pt-1">
-          <button
-            type="button"
-            onClick={handleCancelEditing}
-            className="flex-1 min-h-[38px] rounded-lg border border-white/20 text-white/60 text-sm font-medium hover:border-white/40 hover:text-white transition-colors cursor-pointer"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            onClick={handleSaveTypes}
-            disabled={saveLoading}
-            className="flex-1 min-h-[38px] rounded-lg bg-[#F5C84B] text-[#16222E] text-sm font-bold hover:bg-[#FAE08A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer"
-          >
-            {saveLoading && <Loader2 size={13} className="animate-spin" />}
-            Generar variedades
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Render: no option types yet → show CTA
-  // ---------------------------------------------------------------------------
-  if (!hasOptionTypes) {
+  if (!hasOptionTypes && !showNewTypeDraft) {
     return (
       <div className="space-y-3">
         {serverError && (
           <p role="alert" className="text-xs text-red-400">{serverError}</p>
         )}
-        {/* Illustrative banner */}
         <div className="flex gap-2.5 bg-white/4 border border-white/10 rounded-xl px-4 py-3">
           <Info size={14} className="text-white/40 flex-shrink-0 mt-0.5" />
           <p className="text-xs text-white/50 leading-relaxed">
@@ -697,7 +510,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
           </p>
           <button
             type="button"
-            onClick={handleStartEditing}
+            onClick={() => { setShowNewTypeDraft(true); setNewTypeDraft({ name: '', values: [''] }); setNewTypeDraftErrors([]); }}
             className="inline-flex items-center gap-1.5 text-sm text-[#F5C84B] hover:text-[#FAE08A] font-semibold transition-colors cursor-pointer"
           >
             <Plus size={15} /> + Agregar tipo (ej. Color, Talle)
@@ -708,7 +521,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   }
 
   // ---------------------------------------------------------------------------
-  // Render: has option types — show type/value summary + variants table
+  // Render: has option types (or new type draft from empty state) — live editor
   // ---------------------------------------------------------------------------
   return (
     <div className="space-y-4">
@@ -718,107 +531,222 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
         </div>
       )}
 
-      {/* Option types summary with inline add-value */}
-      <div className="space-y-3">
-        {optionTypes.map((type) => (
-          <div key={type.id} className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-white/60 uppercase tracking-wide">{type.name}</p>
-              <button
-                type="button"
-                disabled={removingTypeId === type.id}
-                onClick={() => handleRemoveType(type.id, type.name)}
-                className="text-xs text-white/30 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-                aria-label={`Quitar tipo ${type.name}`}
-              >
-                {removingTypeId === type.id
-                  ? <Loader2 size={11} className="animate-spin" />
-                  : <X size={11} />}
-                Quitar tipo
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-1.5 items-center">
-              {type.values.map((val) => (
-                <div
-                  key={val.id}
-                  className="flex items-center gap-1 bg-white/10 rounded-full px-2.5 py-0.5"
-                >
-                  <span className="text-xs text-[#FBF7EC]">{val.value}</span>
-                  <button
-                    type="button"
-                    disabled={removingValueId === val.id}
-                    onClick={() => handleRemoveValue(val.id)}
-                    className="text-white/30 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                    aria-label={`Quitar ${val.value}`}
-                  >
-                    {removingValueId === val.id
-                      ? <Loader2 size={9} className="animate-spin" />
-                      : <X size={9} />}
-                  </button>
-                </div>
-              ))}
-
-              {/* Add value inline */}
-              {addingValueTypeId === type.id ? (
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="text"
-                    value={addValueInput}
-                    onChange={(e) => setAddValueInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { e.preventDefault(); handleAddValue(type.id); }
-                      if (e.key === 'Escape') { setAddingValueTypeId(null); setAddValueInput(''); setAddValueError(null); }
-                    }}
-                    maxLength={MAX_LABEL_LEN}
-                    placeholder="Nuevo valor"
-                    autoFocus
-                    className="rounded-full bg-white/8 border border-white/20 text-[#FBF7EC] placeholder-white/30 px-2.5 py-0.5 text-xs focus:outline-none focus:border-[#F5C84B]/70 w-28"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleAddValue(type.id)}
-                    disabled={addValueLoading}
-                    className="text-[#F5C84B] hover:text-[#FAE08A] text-xs font-semibold cursor-pointer disabled:opacity-40"
-                  >
-                    {addValueLoading ? <Loader2 size={11} className="animate-spin" /> : 'OK'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setAddingValueTypeId(null); setAddValueInput(''); setAddValueError(null); }}
-                    className="text-white/40 hover:text-white/70 cursor-pointer"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ) : (
+      {/* Option types accordion */}
+      <div className="space-y-2">
+        {optionTypes.map((type) => {
+          const isCollapsed = collapsedTypes.has(type.id);
+          return (
+            <div key={type.id} className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+              {/* Accordion header */}
+              <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                 <button
                   type="button"
-                  onClick={() => { setAddingValueTypeId(type.id); setAddValueInput(''); setAddValueError(null); }}
-                  className="text-xs text-[#F5C84B]/60 hover:text-[#F5C84B] transition-colors cursor-pointer px-2 py-0.5 rounded-full border border-dashed border-[#F5C84B]/20 hover:border-[#F5C84B]/50 flex items-center gap-0.5"
+                  onClick={() => toggleCollapse(type.id)}
+                  className="flex items-center gap-2 flex-1 min-w-0 text-left"
                 >
-                  <Plus size={9} /> valor
+                  {isCollapsed
+                    ? <ChevronRight size={13} className="text-white/40 flex-shrink-0" />
+                    : <ChevronDown size={13} className="text-white/40 flex-shrink-0" />
+                  }
+                  <p className="text-xs font-semibold text-white/60 uppercase tracking-wide truncate">{type.name}</p>
+                  <span className="text-xs text-white/30 flex-shrink-0">({type.values.length})</span>
                 </button>
+                <button
+                  type="button"
+                  disabled={mutating || removingTypeId === type.id}
+                  onClick={() => handleRemoveType(type.id, type.name)}
+                  className="text-xs text-white/30 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 flex-shrink-0"
+                  aria-label={`Quitar tipo ${type.name}`}
+                >
+                  {removingTypeId === type.id
+                    ? <Loader2 size={11} className="animate-spin" />
+                    : <X size={11} />}
+                  Quitar tipo
+                </button>
+              </div>
+
+              {/* Accordion body — values + add value */}
+              {!isCollapsed && (
+                <div className="px-3 pb-3 space-y-2 border-t border-white/5 pt-2">
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    {type.values.map((val) => (
+                      <div
+                        key={val.id}
+                        className="flex items-center gap-1 bg-white/10 rounded-full px-2.5 py-0.5"
+                      >
+                        <span className="text-xs text-[#FBF7EC]">{val.value}</span>
+                        <button
+                          type="button"
+                          disabled={mutating || removingValueId === val.id}
+                          onClick={() => handleRemoveValue(val.id)}
+                          className="text-white/30 hover:text-red-400 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                          aria-label={`Quitar ${val.value}`}
+                        >
+                          {removingValueId === val.id
+                            ? <Loader2 size={9} className="animate-spin" />
+                            : <X size={9} />}
+                        </button>
+                      </div>
+                    ))}
+
+                    {/* Add value inline */}
+                    {addingValueTypeId === type.id ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={addValueInput}
+                          onChange={(e) => setAddValueInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.preventDefault(); handleAddValue(type.id); }
+                            if (e.key === 'Escape') { setAddingValueTypeId(null); setAddValueInput(''); setAddValueError(null); }
+                          }}
+                          maxLength={MAX_LABEL_LEN}
+                          placeholder="Nuevo valor"
+                          autoFocus
+                          className="rounded-full bg-white/8 border border-white/20 text-[#FBF7EC] placeholder-white/30 px-2.5 py-0.5 text-xs focus:outline-none focus:border-[#F5C84B]/70 w-28"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddValue(type.id)}
+                          disabled={addValueLoading}
+                          className="text-[#F5C84B] hover:text-[#FAE08A] text-xs font-semibold cursor-pointer disabled:opacity-40"
+                        >
+                          {addValueLoading ? <Loader2 size={11} className="animate-spin" /> : 'OK'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setAddingValueTypeId(null); setAddValueInput(''); setAddValueError(null); }}
+                          className="text-white/40 hover:text-white/70 cursor-pointer"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={mutating}
+                        onClick={() => { setAddingValueTypeId(type.id); setAddValueInput(''); setAddValueError(null); }}
+                        className="text-xs text-[#F5C84B]/60 hover:text-[#F5C84B] transition-colors cursor-pointer px-2 py-0.5 rounded-full border border-dashed border-[#F5C84B]/20 hover:border-[#F5C84B]/50 flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Plus size={9} /> valor
+                      </button>
+                    )}
+                  </div>
+                  {addingValueTypeId === type.id && addValueError && (
+                    <p role="alert" className="text-xs text-red-400">{addValueError}</p>
+                  )}
+                </div>
               )}
             </div>
-            {addingValueTypeId === type.id && addValueError && (
-              <p role="alert" className="text-xs text-red-400">{addValueError}</p>
-            )}
+          );
+        })}
+      </div>
+
+      {/* New type draft panel */}
+      {showNewTypeDraft && (
+        <div className="bg-white/5 border border-[#F5C84B]/20 rounded-xl p-4 space-y-3">
+          <p className="text-xs font-semibold text-white/60 uppercase tracking-wide">Nuevo tipo</p>
+
+          {newTypeDraftErrors.length > 0 && (
+            <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2 text-xs text-red-300 space-y-1">
+              {newTypeDraftErrors.map((e, i) => <p key={i}>{e}</p>)}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="block text-xs text-white/50">Nombre del tipo</label>
+            <input
+              type="text"
+              placeholder="ej. Color, Talle, Versión"
+              value={newTypeDraft.name}
+              onChange={(e) => setNewTypeDraft((d) => ({ ...d, name: e.target.value }))}
+              maxLength={MAX_LABEL_LEN}
+              className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-3 py-2 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+            />
           </div>
-        ))}
-      </div>
 
-      {/* Block adding new type when variants exist */}
-      <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
-        <p className="text-xs text-amber-400">
-          Para agregar otro tipo de opción (ej. Talle si ya hay Color), borrá las variedades existentes primero.
-        </p>
-      </div>
+          <div className="space-y-1.5">
+            <label className="block text-xs text-white/50">Valores</label>
+            <div className="flex flex-wrap gap-2">
+              {newTypeDraft.values.map((val, idx) => (
+                <div key={idx} className="flex items-center gap-1 bg-white/10 border border-white/15 rounded-full px-3 py-1">
+                  <input
+                    type="text"
+                    value={val}
+                    onChange={(e) => {
+                      const vals = [...newTypeDraft.values];
+                      vals[idx] = e.target.value;
+                      setNewTypeDraft((d) => ({ ...d, values: vals }));
+                    }}
+                    maxLength={MAX_LABEL_LEN}
+                    placeholder="ej. Rojo"
+                    className="bg-transparent text-[#FBF7EC] placeholder-white/30 text-xs outline-none w-20 min-w-0"
+                    style={{ width: `${Math.max(val.length * 8, 64)}px` }}
+                  />
+                  {newTypeDraft.values.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setNewTypeDraft((d) => ({ ...d, values: d.values.filter((_, i) => i !== idx) }))}
+                      className="text-white/40 hover:text-red-400 transition-colors cursor-pointer flex-shrink-0"
+                    >
+                      <X size={10} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setNewTypeDraft((d) => ({ ...d, values: [...d.values, ''] }))}
+                className="flex items-center gap-1 text-xs text-[#F5C84B]/70 hover:text-[#F5C84B] transition-colors cursor-pointer px-2 py-1 rounded-full border border-dashed border-[#F5C84B]/30 hover:border-[#F5C84B]/60"
+              >
+                <Plus size={11} /> Agregar valor
+              </button>
+            </div>
+          </div>
 
-      {/* Variants table */}
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => { setShowNewTypeDraft(false); setNewTypeDraft({ name: '', values: [''] }); setNewTypeDraftErrors([]); }}
+              disabled={newTypeSaving}
+              className="flex-1 min-h-[36px] rounded-lg border border-white/20 text-white/60 text-sm font-medium hover:border-white/40 hover:text-white transition-colors cursor-pointer disabled:opacity-40"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmNewType}
+              disabled={newTypeSaving || mutating}
+              className="flex-1 min-h-[36px] rounded-lg bg-[#F5C84B] text-[#16222E] text-sm font-bold hover:bg-[#FAE08A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {newTypeSaving && <Loader2 size={13} className="animate-spin" />}
+              Confirmar tipo
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Add type button — always visible */}
+      {!showNewTypeDraft && (
+        <button
+          type="button"
+          disabled={mutating}
+          onClick={() => { setShowNewTypeDraft(true); setNewTypeDraft({ name: '', values: [''] }); setNewTypeDraftErrors([]); }}
+          className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Plus size={14} /> + Agregar tipo (ej. Color, Talle)
+        </button>
+      )}
+
+      {/* Variants table with combination counter */}
       {hasVariants && (
         <div>
           <p className="text-xs font-semibold text-white/50 uppercase tracking-wide mb-2">
-            Variedades ({variants.length}) — Stock:{' '}
+            Variedades{' '}
+            <span className={projectedCount > MAX_VARIANTS ? 'text-red-400' : ''}>
+              {projectedCount} / {MAX_VARIANTS}
+            </span>
+            {' '}— Stock:{' '}
             {untrackedCount === 0
               ? totalTrackedStock
               : untrackedCount === variants.length

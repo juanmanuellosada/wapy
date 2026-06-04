@@ -73,21 +73,280 @@ async function requireProductOwnership(productId: string, storeId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Internal: reconcileVariants
+//
+// Core reconciliation algorithm. Receives the desired full state (ordered
+// types + values, already upserted to DB with their IDs), along with the
+// current active variants from DB, and performs:
+//   1. Cartesian product of desired value-id arrays (types ordered by position).
+//   2. Cap check (MAX_VARIANTS).
+//   3. Matching with inheritance:
+//      - Exact match  → keep variant untouched (same stock/price/image).
+//      - Partial match (shared types only) → inherit stock/price/image from
+//        first unused match; subsequent combos of same partial key get 0.
+//      - No match → stock=null if DB was empty before, stock=0 otherwise.
+//   4. Insert new variants, soft-delete or hard-delete stale ones.
+//
+// Ordering convention for cartesian product:
+//   Preexisting/shared types are the MOST significant digits; the newly-added
+//   type (if any) is the LEAST significant. This ensures that, for a combo like
+//   S+Rojo, S is the shared type (more significant) and Rojo is the new value.
+//   The first combo for each shared-type key (e.g. S/Rojo before S/Azul)
+//   inherits the real stock so that S/Rojo=10, S/Azul=0.
+// ---------------------------------------------------------------------------
+
+type ActiveVariant = {
+  id: string;
+  stock: number | null;
+  price_override: number | null;
+  image_url: string | null;
+  position: number;
+  valueIds: Set<string>; // all option_value_ids for this variant
+};
+
+type ReconcileInput = {
+  productId: string;
+  /** Desired types with their DB ids and value DB ids, ordered by position (index = position). */
+  desiredTypes: Array<{
+    id: string;
+    valueIds: string[]; // ordered by position
+  }>;
+  /** The types that existed BEFORE this call (used to determine sharedTypeIds). */
+  previousTypeIds: Set<string>;
+  /** Current active variants already loaded from DB. */
+  currentVariants: ActiveVariant[];
+  admin: ReturnType<typeof createAdminClient>;
+};
+
+type ReconcileResult =
+  | { ok: true; variantCount: number }
+  | { error: string };
+
+async function reconcileVariants(input: ReconcileInput): Promise<ReconcileResult> {
+  const { productId, desiredTypes, previousTypeIds, currentVariants, admin } = input;
+
+  // Was there a matrix before this call?
+  const hadMatrixBefore = currentVariants.length > 0;
+
+  // Build value-id arrays per type for cartesian.
+  // Shared/preexisting types first (most significant), new types last.
+  const sharedTypes = desiredTypes.filter((t) => previousTypeIds.has(t.id));
+  const newTypes = desiredTypes.filter((t) => !previousTypeIds.has(t.id));
+  // Ordered: shared first, new last — within each group, preserve position order.
+  const orderedTypes = [...sharedTypes, ...newTypes];
+
+  const valueIdArrays = orderedTypes.map((t) => t.valueIds);
+
+  // Compute cartesian product
+  const combinations = cartesian(valueIdArrays);
+
+  if (combinations.length > MAX_VARIANTS) {
+    // Build a human-friendly explanation of the multiplication
+    const breakdown = orderedTypes
+      .map((t, i) => `${valueIdArrays[i].length}`)
+      .join(' × ');
+    return {
+      error: `La combinación genera ${combinations.length} variedades (${breakdown} = ${combinations.length}), superando el límite de ${MAX_VARIANTS}. Reducí la cantidad de tipos o valores.`,
+    };
+  }
+
+  // sharedTypeIds: types present in both desired AND previous
+  const sharedTypeIds = new Set(sharedTypes.map((t) => t.id));
+
+  // Build a map: valueId → typeId (for every desired value)
+  const valueToTypeId = new Map<string, string>();
+  for (const t of desiredTypes) {
+    for (const vid of t.valueIds) {
+      valueToTypeId.set(vid, t.id);
+    }
+  }
+
+  // For each existing variant, build its "shared projection" (only values
+  // belonging to shared types).
+  function sharedKey(valueIds: Set<string>): string {
+    const sharedVids: string[] = [];
+    for (const vid of valueIds) {
+      const tid = valueToTypeId.get(vid);
+      if (tid && sharedTypeIds.has(tid)) sharedVids.push(vid);
+    }
+    return sharedVids.sort().join(',');
+  }
+
+  // Build "used" tracking set (variant id → consumed)
+  const unusedVariants = new Map<string, ActiveVariant>(
+    currentVariants.map((v) => [v.id, v])
+  );
+
+  // For partial matching, group unused variants by their shared projection.
+  // We'll build this lazily: partialMap[sharedKey] = [variantId, ...]
+  const partialMap = new Map<string, string[]>();
+  for (const v of currentVariants) {
+    const key = sharedKey(v.valueIds);
+    if (!partialMap.has(key)) partialMap.set(key, []);
+    partialMap.get(key)!.push(v.id);
+  }
+
+  // For each desired combo, determine what to do.
+  type ComboAction =
+    | { kind: 'keep'; variantId: string }
+    | { kind: 'insert'; stock: number | null; price_override: number | null; image_url: string | null }
+    | { kind: 'insert-inherit'; stock: number | null; price_override: number | null; image_url: string | null };
+
+  const actions: ComboAction[] = [];
+
+  // First pass: exact matches
+  const comboSetKeys = combinations.map((combo) => [...combo].sort().join(','));
+
+  for (let i = 0; i < combinations.length; i++) {
+    const sigKey = comboSetKeys[i];
+    let matched: ActiveVariant | undefined;
+    for (const v of unusedVariants.values()) {
+      const vSig = [...v.valueIds].sort().join(',');
+      if (vSig === sigKey) {
+        matched = v;
+        break;
+      }
+    }
+    if (matched) {
+      actions.push({ kind: 'keep', variantId: matched.id });
+      unusedVariants.delete(matched.id);
+    } else {
+      // Placeholder — will be resolved in second pass
+      actions.push({ kind: 'insert', stock: null, price_override: null, image_url: null });
+    }
+  }
+
+  // Second pass: partial inheritance for unmatched combos
+  // Track which partial keys have already been "inherited" (first of group gets real stock)
+  const inheritedPartialKeys = new Set<string>();
+
+  for (let i = 0; i < combinations.length; i++) {
+    if (actions[i].kind !== 'insert') continue;
+
+    const combo = combinations[i];
+    const comboValueSet = new Set(combo);
+    const pKey = sharedKey(comboValueSet);
+
+    // Find first unused variant whose shared projection matches
+    let inherited: ActiveVariant | undefined;
+    const candidates = partialMap.get(pKey) ?? [];
+    for (const vid of candidates) {
+      if (unusedVariants.has(vid)) {
+        inherited = unusedVariants.get(vid)!;
+        break;
+      }
+    }
+
+    if (inherited && !inheritedPartialKeys.has(pKey)) {
+      // First combo for this shared key inherits real values
+      inheritedPartialKeys.add(pKey);
+      unusedVariants.delete(inherited.id);
+      actions[i] = {
+        kind: 'insert-inherit',
+        stock: inherited.stock,
+        price_override: inherited.price_override,
+        image_url: inherited.image_url,
+      };
+    } else if (hadMatrixBefore) {
+      // Matrix existed before but no partial match → stock=0
+      actions[i] = { kind: 'insert', stock: 0, price_override: null, image_url: null };
+    } else {
+      // No previous matrix → stock=null (no tracking)
+      actions[i] = { kind: 'insert', stock: null, price_override: null, image_url: null };
+    }
+  }
+
+  // Determine stale variants (not matched by exact match)
+  const staleVariantIds = [...unusedVariants.keys()];
+
+  // Soft-delete stale variants that appear in order_items; hard-delete the rest
+  if (staleVariantIds.length > 0) {
+    const { data: orderItems } = await admin
+      .from('order_items')
+      .select('variant_id')
+      .in('variant_id', staleVariantIds);
+
+    const inOrderIds = new Set(
+      (orderItems ?? [])
+        .map((oi: { variant_id: string | null }) => oi.variant_id)
+        .filter((id): id is string => id !== null)
+    );
+    const toSoftDelete = staleVariantIds.filter((id) => inOrderIds.has(id));
+    const toHardDelete = staleVariantIds.filter((id) => !inOrderIds.has(id));
+
+    if (toSoftDelete.length > 0) {
+      const { error } = await admin
+        .from('product_variants')
+        .update({ deleted_at: new Date().toISOString() })
+        .in('id', toSoftDelete);
+      if (error) return { error: 'No se pudieron archivar las variedades obsoletas.' };
+    }
+
+    if (toHardDelete.length > 0) {
+      const { error } = await admin
+        .from('product_variants')
+        .delete()
+        .in('id', toHardDelete);
+      if (error) return { error: 'No se pudieron eliminar las variedades obsoletas.' };
+    }
+  }
+
+  // Insert new variants (combos with kind !== 'keep')
+  // Reorder combinations back to original desired order (not the orderedTypes order).
+  // Build a mapping from orderedTypes index to desiredTypes index for the combo arrays.
+  // Since we reordered types as [...sharedTypes, ...newTypes], we need to reconstruct
+  // the join rows with the correct value ids from the combo.
+  // The combo array is indexed by orderedTypes position. Join rows need only the valueIds,
+  // so we can use the combo directly.
+
+  for (let i = 0; i < combinations.length; i++) {
+    const action = actions[i];
+    if (action.kind === 'keep') continue;
+
+    const combo = combinations[i];
+
+    const { data: variant, error: variantError } = await admin
+      .from('product_variants')
+      .insert({
+        product_id: productId,
+        stock: action.stock,
+        price_override: action.price_override,
+        image_url: action.image_url,
+        position: i,
+      })
+      .select('id')
+      .single();
+
+    if (variantError || !variant) {
+      return { error: 'No se pudo crear la variedad.' };
+    }
+
+    const joinRows = combo.map((valueId) => ({
+      variant_id: variant.id,
+      option_value_id: valueId,
+    }));
+
+    const { error: joinError } = await admin
+      .from('product_variant_option_values')
+      .insert(joinRows);
+
+    if (joinError) {
+      return { error: 'No se pudo asociar los valores a la variedad.' };
+    }
+  }
+
+  return { ok: true, variantCount: combinations.length };
+}
+
+// ---------------------------------------------------------------------------
 // 2.2 upsertProductOptions
 //
-// Creates / updates option types + values for a product and generates the
-// full cartesian matrix of product_variants. Call this on first setup only
-// (no variants exist yet) or when adding/removing VALUES (not adding new types
-// to an existing matrix — that's blocked per D5).
+// Full reconciliation: receives the complete desired state (ordered types +
+// values), upserts types/values in the DB, then calls reconcileVariants to
+// diff and update the variant matrix while preserving stock where possible.
 //
-// Flow for fresh setup:
-//   1. Validate input
-//   2. Block if product already has variants AND new option types are being added
-//   3. Upsert option types (by name, trim)
-//   4. Upsert option values (by value, trim) per type
-//   5. Compute cartesian product of value id arrays
-//   6. Check cap (max 25 variants)
-//   7. Insert new variant rows + join rows (don't touch existing variants)
+// This replaces the old "first setup only" semantics — it can be called at
+// any time, including when adding a new type to an existing matrix.
 // ---------------------------------------------------------------------------
 
 export type UpsertProductOptionsInput = {
@@ -122,186 +381,123 @@ export async function upsertProductOptions(
   if (!product) return { error: 'Producto no encontrado.' };
 
   try {
-  const admin = createAdminClient();
+    const admin = createAdminClient();
 
-  // Check for unique type names within this call
-  const typeNames = rawTypes.map((t) => t.name);
-  if (new Set(typeNames).size !== typeNames.length) {
-    return { error: 'Los tipos de opción deben tener nombres únicos.' };
-  }
-
-  // D5: If product already has variants, block adding NEW types
-  const { data: existingTypes } = await admin
-    .from('product_option_types')
-    .select('id, name')
-    .eq('product_id', productId);
-
-  const { data: existingVariants } = await admin
-    .from('product_variants')
-    .select('id')
-    .eq('product_id', productId)
-    .is('deleted_at', null)
-    .limit(1);
-
-  const hasVariants = (existingVariants ?? []).length > 0;
-  const existingTypeNames = new Set((existingTypes ?? []).map((t) => t.name));
-
-  if (hasVariants) {
-    const newTypeNames = typeNames.filter((n) => !existingTypeNames.has(n));
-    if (newTypeNames.length > 0) {
-      return {
-        error: `No se puede agregar el tipo "${newTypeNames[0]}" porque el producto ya tiene variedades. Borrá las variedades existentes antes de cambiar la dimensionalidad.`,
-      };
-    }
-  }
-
-  // Upsert option types (by name — DB has UNIQUE(product_id, name))
-  const typeIdMap: Record<string, string> = {};
-
-  for (let i = 0; i < rawTypes.length; i++) {
-    const { name } = rawTypes[i];
-
-    // Check if type already exists
-    const existing = (existingTypes ?? []).find((t) => t.name === name);
-    if (existing) {
-      typeIdMap[name] = existing.id;
-      // Update position
-      await admin
-        .from('product_option_types')
-        .update({ position: i })
-        .eq('id', existing.id);
-    } else {
-      const { data: inserted, error } = await admin
-        .from('product_option_types')
-        .insert({ product_id: productId, name, position: i })
-        .select('id')
-        .single();
-      if (error || !inserted) {
-        return { error: `No se pudo crear el tipo de opción "${name}".` };
-      }
-      typeIdMap[name] = inserted.id;
-    }
-  }
-
-  // Upsert option values per type and collect value id arrays for cartesian product
-  const valueIdsByType: string[][] = [];
-
-  for (const { name, values } of rawTypes) {
-    // Check unique values within type
-    const trimmedValues = values.map((v) => v.trim());
-    if (new Set(trimmedValues).size !== trimmedValues.length) {
-      return { error: `Los valores del tipo "${name}" deben ser únicos.` };
+    // Check for unique type names within this call
+    const typeNames = rawTypes.map((t) => t.name);
+    if (new Set(typeNames).size !== typeNames.length) {
+      return { error: 'Los tipos de opción deben tener nombres únicos.' };
     }
 
-    const typeId = typeIdMap[name];
+    // Load current DB state: existing types and active variants
+    const { data: existingTypes } = await admin
+      .from('product_option_types')
+      .select('id, name, position')
+      .eq('product_id', productId);
 
-    // Fetch existing values for this type
-    const { data: existingValues } = await admin
-      .from('product_option_values')
-      .select('id, value')
-      .eq('option_type_id', typeId);
+    const { data: existingVariantRows } = await admin
+      .from('product_variants')
+      .select('id, stock, price_override, image_url, position, product_variant_option_values(option_value_id)')
+      .eq('product_id', productId)
+      .is('deleted_at', null);
 
-    const existingValueMap = new Map((existingValues ?? []).map((v) => [v.value, v.id]));
+    const previousTypeIds = new Set((existingTypes ?? []).map((t) => t.id));
 
-    const valueIds: string[] = [];
+    const currentVariants: ActiveVariant[] = (existingVariantRows ?? []).map((v) => ({
+      id: v.id,
+      stock: v.stock,
+      price_override: v.price_override,
+      image_url: v.image_url,
+      position: v.position,
+      valueIds: new Set(
+        (v.product_variant_option_values as Array<{ option_value_id: string }> | null ?? [])
+          .map((ov) => ov.option_value_id)
+      ),
+    }));
 
-    for (let j = 0; j < trimmedValues.length; j++) {
-      const val = trimmedValues[j];
-      if (existingValueMap.has(val)) {
-        const existingId = existingValueMap.get(val)!;
-        valueIds.push(existingId);
-        // Update position
+    // Upsert option types (by name — DB has UNIQUE(product_id, name))
+    const typeIdMap: Record<string, string> = {};
+
+    for (let i = 0; i < rawTypes.length; i++) {
+      const { name } = rawTypes[i];
+      const existing = (existingTypes ?? []).find((t) => t.name === name);
+      if (existing) {
+        typeIdMap[name] = existing.id;
         await admin
-          .from('product_option_values')
-          .update({ position: j })
-          .eq('id', existingId);
+          .from('product_option_types')
+          .update({ position: i })
+          .eq('id', existing.id);
       } else {
         const { data: inserted, error } = await admin
-          .from('product_option_values')
-          .insert({ option_type_id: typeId, value: val, position: j })
+          .from('product_option_types')
+          .insert({ product_id: productId, name, position: i })
           .select('id')
           .single();
         if (error || !inserted) {
-          return { error: `No se pudo crear el valor "${val}" para el tipo "${name}".` };
+          return { error: `No se pudo crear el tipo de opción "${name}".` };
         }
-        valueIds.push(inserted.id);
+        typeIdMap[name] = inserted.id;
       }
     }
 
-    valueIdsByType.push(valueIds);
-  }
+    // Upsert option values per type and collect ordered value id arrays
+    const desiredTypes: Array<{ id: string; valueIds: string[] }> = [];
 
-  // Compute cartesian product of all value id arrays
-  const combinations = cartesian(valueIdsByType);
+    for (const { name, values } of rawTypes) {
+      const trimmedValues = values.map((v) => v.trim());
+      if (new Set(trimmedValues).size !== trimmedValues.length) {
+        return { error: `Los valores del tipo "${name}" deben ser únicos.` };
+      }
 
-  // Check cap
-  if (combinations.length > MAX_VARIANTS) {
-    return {
-      error: `La combinación genera ${combinations.length} variedades, lo que supera el límite de ${MAX_VARIANTS}. Reducí la cantidad de valores.`,
-    };
-  }
+      const typeId = typeIdMap[name];
 
-  // Find existing variant combinations to avoid duplicates
-  const { data: existingVariantRows } = await admin
-    .from('product_variants')
-    .select('id, product_variant_option_values(option_value_id)')
-    .eq('product_id', productId)
-    .is('deleted_at', null);
+      const { data: existingValues } = await admin
+        .from('product_option_values')
+        .select('id, value')
+        .eq('option_type_id', typeId);
 
-  // Build a set of existing combination signatures (sorted value ids joined)
-  const existingSignatures = new Set(
-    (existingVariantRows ?? []).map((v) => {
-      const ids = (v.product_variant_option_values ?? [])
-        .map((ov: { option_value_id: string }) => ov.option_value_id)
-        .sort()
-        .join(',');
-      return ids;
-    })
-  );
+      const existingValueMap = new Map((existingValues ?? []).map((v) => [v.value, v.id]));
 
-  // Insert only new combinations
-  let newCount = 0;
-  for (let pos = 0; pos < combinations.length; pos++) {
-    const combo = combinations[pos];
-    const sig = [...combo].sort().join(',');
-    if (existingSignatures.has(sig)) continue;
+      const valueIds: string[] = [];
 
-    // Insert variant row — stock: null means "no tracking" (infinite), matches products.stock = null
-    const { data: variant, error: variantError } = await admin
-      .from('product_variants')
-      .insert({
-        product_id: productId,
-        stock: null,
-        price_override: null,
-        image_url: null,
-        position: pos,
-      })
-      .select('id')
-      .single();
+      for (let j = 0; j < trimmedValues.length; j++) {
+        const val = trimmedValues[j];
+        if (existingValueMap.has(val)) {
+          const existingId = existingValueMap.get(val)!;
+          valueIds.push(existingId);
+          await admin
+            .from('product_option_values')
+            .update({ position: j })
+            .eq('id', existingId);
+        } else {
+          const { data: inserted, error } = await admin
+            .from('product_option_values')
+            .insert({ option_type_id: typeId, value: val, position: j })
+            .select('id')
+            .single();
+          if (error || !inserted) {
+            return { error: `No se pudo crear el valor "${val}" para el tipo "${name}".` };
+          }
+          valueIds.push(inserted.id);
+        }
+      }
 
-    if (variantError || !variant) {
-      return { error: 'No se pudo crear la variedad.' };
+      desiredTypes.push({ id: typeId, valueIds });
     }
 
-    // Insert join rows
-    const joinRows = combo.map((valueId) => ({
-      variant_id: variant.id,
-      option_value_id: valueId,
-    }));
+    // Reconcile variants (cap check + matching + persistence)
+    const result = await reconcileVariants({
+      productId,
+      desiredTypes,
+      previousTypeIds,
+      currentVariants,
+      admin,
+    });
 
-    const { error: joinError } = await admin
-      .from('product_variant_option_values')
-      .insert(joinRows);
+    if ('error' in result) return result;
 
-    if (joinError) {
-      return { error: 'No se pudo asociar los valores a la variedad.' };
-    }
-
-    newCount++;
-  }
-
-  revalidatePath('/dashboard', 'layout');
-  return { ok: true, variantCount: combinations.length };
+    revalidatePath('/dashboard', 'layout');
+    return result;
   } catch (err) {
     Sentry.captureException(err, { tags: { action: 'upsertProductOptions' }, extra: { productId: input.productId } });
     return { error: 'Error inesperado al guardar las opciones.' };
@@ -382,14 +578,10 @@ export async function updateVariant(
 // ---------------------------------------------------------------------------
 // 2.4 addOptionValue
 //
-// Adds a new value to an existing option type and creates the new variant rows
-// for all combinations the new value produces (without touching existing ones).
+// Thin wrapper: loads current state from DB, appends the new value to the
+// target type, then delegates to upsertProductOptions so stock inheritance
+// follows the same reconciliation path.
 // ---------------------------------------------------------------------------
-
-const addOptionValueSchema = z.object({
-  optionTypeId: z.string().uuid(),
-  value: z.string().trim().min(1, 'El valor no puede estar vacío').max(MAX_LABEL_LEN, `Máximo ${MAX_LABEL_LEN} caracteres`),
-});
 
 export type AddOptionValueInput = { optionTypeId: string; value: string };
 export type AddOptionValueResult =
@@ -407,153 +599,67 @@ export async function addOptionValue(
     return { error: 'Tu plan no incluye variedades. Pasate a un plan superior para habilitarlas.' };
   }
 
-  const parsed = addOptionValueSchema.safeParse(input);
-  if (!parsed.success) return { error: parsed.error.issues[0].message };
-
-  const { optionTypeId, value } = parsed.data;
+  const value = input.value?.trim();
+  if (!value) return { error: 'El valor no puede estar vacío.' };
+  if (value.length > MAX_LABEL_LEN) return { error: `Máximo ${MAX_LABEL_LEN} caracteres.` };
 
   try {
-  const admin = createAdminClient();
+    const admin = createAdminClient();
 
-  // Verify the option type belongs to a product owned by this store
-  const { data: optionType } = await admin
-    .from('product_option_types')
-    .select('id, product_id, products(store_id)')
-    .eq('id', optionTypeId)
-    .maybeSingle();
+    // Verify the option type belongs to a product owned by this store
+    const { data: optionType } = await admin
+      .from('product_option_types')
+      .select('id, product_id, products(store_id)')
+      .eq('id', input.optionTypeId)
+      .maybeSingle();
 
-  const optionTypeWithProduct = optionType as typeof optionType & {
-    products: { store_id: string } | null;
-  };
-
-  if (!optionTypeWithProduct || optionTypeWithProduct.products?.store_id !== store.id) {
-    return { error: 'Tipo de opción no encontrado.' };
-  }
-
-  const productId = optionTypeWithProduct.product_id;
-
-  // Check value uniqueness within type (DB also enforces this but return friendly error)
-  const { data: existingValues } = await admin
-    .from('product_option_values')
-    .select('id, value')
-    .eq('option_type_id', optionTypeId);
-
-  if ((existingValues ?? []).some((v) => v.value === value)) {
-    return { error: `El valor "${value}" ya existe en este tipo de opción.` };
-  }
-
-  // D5: Block adding a new TYPE — this function adds a value to an existing type,
-  // which is allowed. But let's check total variant count after the new value would
-  // generate new combinations.
-
-  // Fetch all other types for this product with their value ids
-  const { data: allTypes } = await admin
-    .from('product_option_types')
-    .select('id, product_option_values(id)')
-    .eq('product_id', productId);
-
-  // Build value id arrays per type (using existing values + new value for the target type)
-  const valueIdsByType: string[][] = [];
-  for (const type of allTypes ?? []) {
-    const ids = (type.product_option_values ?? []).map((v: { id: string }) => v.id);
-    if (type.id === optionTypeId) {
-      // We'll add the new value, but its id isn't known yet — use placeholder
-      // We just need the COUNT for the cap check
-      ids.push('__new__');
-    }
-    if (ids.length > 0) valueIdsByType.push(ids);
-  }
-
-  const totalCombinations = valueIdsByType.reduce((acc, ids) => acc * ids.length, 1);
-  if (totalCombinations > MAX_VARIANTS) {
-    return {
-      error: `Agregar este valor generaría ${totalCombinations} variedades, superando el límite de ${MAX_VARIANTS}.`,
+    const optionTypeWithProduct = optionType as typeof optionType & {
+      products: { store_id: string } | null;
     };
-  }
 
-  // Insert the new option value
-  const { data: newValue, error: insertValueError } = await admin
-    .from('product_option_values')
-    .insert({ option_type_id: optionTypeId, value, position: (existingValues ?? []).length })
-    .select('id')
-    .single();
-
-  if (insertValueError || !newValue) {
-    return { error: `No se pudo agregar el valor "${value}".` };
-  }
-
-  const newValueId = newValue.id;
-
-  // For each existing variant (active, not deleted), create a new variant that is
-  // the existing variant's values + the new value.
-  // This produces one new variant per existing variant (for the other types' current combinations).
-  const { data: existingVariants } = await admin
-    .from('product_variants')
-    .select('id, position, product_variant_option_values(option_value_id)')
-    .eq('product_id', productId)
-    .is('deleted_at', null);
-
-  // If there are no existing variants yet (product had no variants), the cartesian product
-  // for this type × other types needs to be done from scratch.
-  // But addOptionValue is only called when at least one type already exists.
-  // If there are 0 existing variants but types exist, the initial setup wasn't done — treat as fresh.
-  if ((existingVariants ?? []).length === 0) {
-    // Just inserted the value; let upsertProductOptions handle building the full matrix.
-    revalidatePath('/dashboard', 'layout');
-    return { ok: true, newVariantCount: 0 };
-  }
-
-  // Get all value ids for the OTHER types (not the one we just added to)
-  // For each existing variant, we know which value it has for each other type.
-  // A new variant = existing variant's other-type values + new value for this type.
-  let newVariantCount = 0;
-  const maxPosition = Math.max(...(existingVariants ?? []).map((v) => v.position ?? 0));
-
-  for (const existingVariant of existingVariants ?? []) {
-    const existingValueIds = (existingVariant.product_variant_option_values ?? []).map(
-      (ov: { option_value_id: string }) => ov.option_value_id
-    );
-
-    // Check if this existing variant already includes the new value (shouldn't happen)
-    if (existingValueIds.includes(newValueId)) continue;
-
-    // New variant = existing other-type values + new value
-    const newVariantValueIds = [...existingValueIds, newValueId];
-
-    const { data: newVariant, error: variantError } = await admin
-      .from('product_variants')
-      .insert({
-        product_id: productId,
-        stock: null,
-        price_override: null,
-        image_url: null,
-        position: maxPosition + newVariantCount + 1,
-      })
-      .select('id')
-      .single();
-
-    if (variantError || !newVariant) {
-      return { error: 'No se pudo crear la variedad nueva.' };
+    if (!optionTypeWithProduct || optionTypeWithProduct.products?.store_id !== store.id) {
+      return { error: 'Tipo de opción no encontrado.' };
     }
 
-    const joinRows = newVariantValueIds.map((valueId) => ({
-      variant_id: newVariant.id,
-      option_value_id: valueId,
-    }));
+    const productId = optionTypeWithProduct.product_id;
 
-    const { error: joinError } = await admin
-      .from('product_variant_option_values')
-      .insert(joinRows);
+    // Load all current types + values for this product
+    const { data: allTypes } = await admin
+      .from('product_option_types')
+      .select('id, name, position, product_option_values(id, value, position)')
+      .eq('product_id', productId)
+      .order('position');
 
-    if (joinError) {
-      return { error: 'No se pudo asociar los valores a la variedad nueva.' };
+    if (!allTypes) return { error: 'No se pudo cargar los tipos de opción.' };
+
+    // Build the desired state: same types/values, but append the new value to the target type
+    const optionTypes = allTypes.map((t) => {
+      const sortedValues = ((t.product_option_values as Array<{ id: string; value: string; position: number }> | null) ?? [])
+        .slice()
+        .sort((a, b) => a.position - b.position)
+        .map((v) => v.value);
+
+      if (t.id === input.optionTypeId) {
+        // Check uniqueness before appending
+        if (sortedValues.includes(value)) {
+          return { name: t.name, values: sortedValues }; // will be caught below
+        }
+        return { name: t.name, values: [...sortedValues, value] };
+      }
+      return { name: t.name, values: sortedValues };
+    });
+
+    // Check if value already exists (would cause duplicate error in upsert)
+    const targetType = allTypes.find((t) => t.id === input.optionTypeId);
+    const existing = (targetType?.product_option_values as Array<{ value: string }> | null ?? []);
+    if (existing.some((v) => v.value === value)) {
+      return { error: `El valor "${value}" ya existe en este tipo de opción.` };
     }
 
-    newVariantCount++;
-  }
+    const result = await upsertProductOptions({ productId, optionTypes });
+    if ('error' in result) return result;
 
-  revalidatePath('/dashboard', 'layout');
-  return { ok: true, newVariantCount };
+    return { ok: true, newVariantCount: result.variantCount };
   } catch (err) {
     Sentry.captureException(err, { tags: { action: 'addOptionValue' }, extra: { optionTypeId: input.optionTypeId, value: input.value } });
     return { error: 'Error inesperado al agregar el valor.' };
@@ -801,48 +907,6 @@ export async function removeOptionType(
     Sentry.captureException(err, { tags: { action: 'removeOptionType' }, extra: { optionTypeId: input.optionTypeId } });
     return { error: 'Error inesperado al eliminar el tipo de opción.' };
   }
-}
-
-// ---------------------------------------------------------------------------
-// 2.6 Guard: block adding a new option TYPE when product already has variants.
-// This logic is embedded in upsertProductOptions (D5 block above), but we also
-// expose a standalone function for explicit UI checks.
-// ---------------------------------------------------------------------------
-
-export type CanAddOptionTypeResult =
-  | { canAdd: true }
-  | { canAdd: false; reason: string };
-
-export async function canAddOptionType(productId: string): Promise<CanAddOptionTypeResult> {
-  const { store } = await requireOwnerStore();
-  if (!store) return { canAdd: false, reason: 'No se encontró la tienda.' };
-
-  const admin = createAdminClient();
-
-  const { data: product } = await admin
-    .from('products')
-    .select('id')
-    .eq('id', productId)
-    .eq('store_id', store.id)
-    .maybeSingle();
-
-  if (!product) return { canAdd: false, reason: 'Producto no encontrado.' };
-
-  const { data: existingVariants } = await admin
-    .from('product_variants')
-    .select('id')
-    .eq('product_id', productId)
-    .is('deleted_at', null)
-    .limit(1);
-
-  if ((existingVariants ?? []).length > 0) {
-    return {
-      canAdd: false,
-      reason: 'El producto ya tiene variedades. Borrá las variedades existentes antes de cambiar la dimensionalidad.',
-    };
-  }
-
-  return { canAdd: true };
 }
 
 // ---------------------------------------------------------------------------
