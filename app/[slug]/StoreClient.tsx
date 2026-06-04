@@ -20,7 +20,7 @@ import { extractSocialHandle } from "@/lib/store/social-links";
 import type { StoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
 import { parseBanner } from "@/lib/store/theme";
 import { useCart, cartItemKey } from "./CartContext";
-import ProductCardClient from "./ProductCardClient";
+import ProductCardClient, { VariantSelector } from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
 import { toast } from "@/lib/toast";
@@ -648,13 +648,13 @@ function ProductModal({
   product,
   accentColor,
   onClose,
-  hasVariants,
+  variantData,
   relatedSlot,
 }: {
   product: UIProduct;
   accentColor: string;
   onClose: () => void;
-  hasVariants: boolean;
+  variantData?: ProductVariantData;
   relatedSlot?: React.ReactNode;
 }) {
   const { addItem, setQty, items, openCart } = useCart();
@@ -826,8 +826,8 @@ function ProductModal({
             </p>
           )}
 
-          {/* Quantity selector — hidden when out of stock */}
-          {!isOutOfStock && (
+          {/* Quantity selector — hidden when out of stock or when product has variants */}
+          {!isOutOfStock && !(variantData && variantData.optionTypes.length > 0) && (
             <div className="flex items-center gap-4">
               <span className="text-sm font-medium" style={{ color: "var(--store-ink)" }}>
                 Cantidad
@@ -871,13 +871,21 @@ function ProductModal({
             </div>
           )}
 
-          {hasVariants ? (
-            <p
-              className="w-full text-center text-sm py-3.5 rounded-full"
-              style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
-            >
-              Elegí una variedad en la card para agregar
-            </p>
+          {variantData && variantData.optionTypes.length > 0 ? (
+            <VariantSelector
+              product={{
+                id: product.id,
+                name: product.name,
+                image: product.image,
+                min_quantity: product.min_quantity ?? 1,
+                qty_step: product.qty_step ?? 1,
+              }}
+              accentColor={accentColor}
+              optionTypes={variantData.optionTypes}
+              variants={variantData.variants}
+              priceCents={Math.round(product.price * 100)}
+              layout="modal"
+            />
           ) : (
             <button
               onClick={handleAdd}
@@ -1727,7 +1735,7 @@ export default function StoreClient({
           product={modalProduct}
           accentColor={accentColor}
           onClose={closeModal}
-          hasVariants={(variantsByProduct[modalProduct.id]?.optionTypes?.length ?? 0) > 0}
+          variantData={variantsByProduct[modalProduct.id]}
           relatedSlot={
             relatedLoading ? (
               /* Loading skeletons while fetching related products */

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { Plus } from "lucide-react";
 import type { StorefrontOptionType, StorefrontVariant } from "@/lib/storefront/resolve";
@@ -21,6 +21,99 @@ function formatARS(amount: number): string {
     maximumFractionDigits: 0,
   });
 }
+
+// ─── Variant selection hook ───────────────────────────────────────────────────
+
+export interface VariantSelectionState {
+  selectedValues: Record<string, string>;
+  handleSelect: (optionTypeId: string, optionValueId: string) => void;
+  isValueReachable: (optionTypeId: string, optionValueId: string) => boolean;
+  activeVariant: StorefrontVariant | null;
+  isSelectionComplete: boolean;
+  effectivePriceCents: number;
+  effectivePrice: number;
+  effectiveImage: string | null;
+  effectiveStock: number | null;
+  isOutOfStock: boolean;
+  variantLabel: string | null;
+}
+
+export function useVariantSelection(
+  optionTypes: StorefrontOptionType[],
+  variants: StorefrontVariant[],
+  priceCents: number,
+  productImage: string
+): VariantSelectionState {
+  const [selectedValues, setSelectedValues] = useState<Record<string, string>>({});
+
+  const isSelectionComplete = useMemo(
+    () => optionTypes.every((ot) => selectedValues[ot.id] !== undefined),
+    [optionTypes, selectedValues]
+  );
+
+  const activeVariant = useMemo<StorefrontVariant | null>(() => {
+    if (!isSelectionComplete) return null;
+    return (
+      variants.find((v) =>
+        optionTypes.every((ot) => v.optionValues[ot.id] === selectedValues[ot.id])
+      ) ?? null
+    );
+  }, [isSelectionComplete, variants, optionTypes, selectedValues]);
+
+  const effectivePriceCents = activeVariant?.price_override ?? priceCents;
+  const effectivePrice = effectivePriceCents / 100;
+  const effectiveImage = activeVariant?.image_url ?? productImage;
+  const effectiveStock = activeVariant?.stock ?? null;
+  const isOutOfStock = isSelectionComplete && effectiveStock === 0;
+
+  const isValueReachable = useCallback(
+    (optionTypeId: string, optionValueId: string): boolean => {
+      const otherSelections = Object.entries(selectedValues).filter(
+        ([typeId]) => typeId !== optionTypeId
+      );
+      return variants.some((v) => {
+        if (v.optionValues[optionTypeId] !== optionValueId) return false;
+        for (const [typeId, valueId] of otherSelections) {
+          if (v.optionValues[typeId] !== valueId) return false;
+        }
+        return true;
+      });
+    },
+    [selectedValues, variants]
+  );
+
+  const variantLabel = useMemo<string | null>(() => {
+    if (!isSelectionComplete) return null;
+    const sorted = [...optionTypes].sort((a, b) => a.position - b.position);
+    const parts: string[] = [];
+    for (const ot of sorted) {
+      const valueId = selectedValues[ot.id];
+      const value = ot.values.find((v) => v.id === valueId)?.value;
+      if (value) parts.push(value);
+    }
+    return parts.join(" / ") || null;
+  }, [isSelectionComplete, optionTypes, selectedValues]);
+
+  const handleSelect = useCallback((optionTypeId: string, optionValueId: string) => {
+    setSelectedValues((prev) => ({ ...prev, [optionTypeId]: optionValueId }));
+  }, []);
+
+  return {
+    selectedValues,
+    handleSelect,
+    isValueReachable,
+    activeVariant,
+    isSelectionComplete,
+    effectivePriceCents,
+    effectivePrice,
+    effectiveImage,
+    effectiveStock,
+    isOutOfStock,
+    variantLabel,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface SimpleProduct {
   id: string;
@@ -183,108 +276,65 @@ function SimpleProductCard<T extends SimpleProduct>({
   );
 }
 
-// ─── Variant product card ─────────────────────────────────────────────────────
+// ─── Shared variant selector (selectors + add button) ────────────────────────
+// Used by both VariantProductCard and ProductModal.
 
-function VariantProductCard<T extends SimpleProduct>({
+export interface VariantSelectorProduct {
+  id: string;
+  name: string;
+  image: string;
+  min_quantity: number;
+  qty_step: number;
+}
+
+/**
+ * Renders option-type selectors and an "Agregar" button for a product with
+ * variants. Handles all selection state, reachability, and cart interaction.
+ *
+ * layout="card"  — compact pill button + price row (used inside product cards)
+ * layout="modal" — full-width button without price row (modal already has it)
+ *
+ * Pass `externalState` to use controlled mode (state managed by the caller,
+ * e.g. VariantProductCard). Without it the component manages its own state.
+ */
+export function VariantSelector({
   product,
   accentColor,
-  onOpenModal,
   optionTypes,
   variants,
   priceCents,
-  isHighlighted,
+  layout = "card",
+  externalState,
 }: {
-  product: T;
+  product: VariantSelectorProduct;
   accentColor: string;
-  onOpenModal: (p: T) => void;
   optionTypes: StorefrontOptionType[];
   variants: StorefrontVariant[];
   priceCents: number;
-  isHighlighted?: boolean;
+  layout?: "card" | "modal";
+  externalState?: VariantSelectionState;
 }) {
   const { addItem, setQty, items, openCart } = useCart();
   const minQty = product.min_quantity ?? 1;
   const step = product.qty_step ?? 1;
-  const showMinStepLabel = minQty > 1 || step > 1;
-  const minStepLabel = minQty > 1 && step > 1
-    ? `Mín. ${minQty}, de a ${step}`
-    : minQty > 1
-    ? `Mín. ${minQty}`
-    : `De a ${step}`;
 
-  // State: for each optionTypeId, which optionValueId is selected (undefined = not yet picked)
-  const [selectedValues, setSelectedValues] = useState<Record<string, string>>({});
+  // Self-managed state (used when no externalState is provided, e.g. modal)
+  const selfState = useVariantSelection(optionTypes, variants, priceCents, product.image);
 
-  // Is the selection complete? (all option types have a chosen value)
-  const isSelectionComplete = useMemo(
-    () => optionTypes.every((ot) => selectedValues[ot.id] !== undefined),
-    [optionTypes, selectedValues]
-  );
-
-  // Find the active variant: the one whose optionValues map exactly matches selectedValues
-  const activeVariant = useMemo<StorefrontVariant | null>(() => {
-    if (!isSelectionComplete) return null;
-    return (
-      variants.find((v) => {
-        // Every selected value must be present in this variant's optionValues
-        return optionTypes.every(
-          (ot) => v.optionValues[ot.id] === selectedValues[ot.id]
-        );
-      }) ?? null
-    );
-  }, [isSelectionComplete, variants, optionTypes, selectedValues]);
-
-  // Effective display values from active variant (or defaults)
-  const effectivePriceCents = activeVariant?.price_override ?? priceCents;
-  const effectivePrice = effectivePriceCents / 100;
-  const effectiveImage = activeVariant?.image_url ?? product.image;
-  const effectiveStock = activeVariant?.stock ?? null;
-
-  const isOutOfStock = isSelectionComplete && effectiveStock === 0;
-  const isLowStock =
-    isSelectionComplete &&
-    effectiveStock !== null &&
-    effectiveStock >= 1 &&
-    effectiveStock <= 5;
+  const {
+    selectedValues,
+    handleSelect,
+    isValueReachable,
+    activeVariant,
+    isSelectionComplete,
+    effectivePrice,
+    effectiveImage,
+    isOutOfStock,
+    variantLabel,
+  } = externalState ?? selfState;
 
   const canAdd = isSelectionComplete && !isOutOfStock;
 
-  // For a given optionType, which valueIds are "reachable" given current selection of OTHER types?
-  // A value is reachable if there exists at least one non-deleted variant that has that value
-  // AND matches all currently selected values for other types.
-  function isValueReachable(optionTypeId: string, optionValueId: string): boolean {
-    const otherSelections = Object.entries(selectedValues).filter(
-      ([typeId]) => typeId !== optionTypeId
-    );
-    return variants.some((v) => {
-      // Variant must have this value for this type
-      if (v.optionValues[optionTypeId] !== optionValueId) return false;
-      // Variant must also have the currently selected values for all other types
-      for (const [typeId, valueId] of otherSelections) {
-        if (v.optionValues[typeId] !== valueId) return false;
-      }
-      return true;
-    });
-  }
-
-  // Build variant label from current selection (sorted by type position)
-  const variantLabel = useMemo<string | null>(() => {
-    if (!isSelectionComplete) return null;
-    const sorted = [...optionTypes].sort((a, b) => a.position - b.position);
-    const parts: string[] = [];
-    for (const ot of sorted) {
-      const valueId = selectedValues[ot.id];
-      const value = ot.values.find((v) => v.id === valueId)?.value;
-      if (value) parts.push(value);
-    }
-    return parts.join(" / ") || null;
-  }, [isSelectionComplete, optionTypes, selectedValues]);
-
-  function handleSelect(optionTypeId: string, optionValueId: string) {
-    setSelectedValues((prev) => ({ ...prev, [optionTypeId]: optionValueId }));
-  }
-
-  // Sum of all line items for this product to compute quantityToAdd
   const totalQtyInCart = items
     .filter((i) => i.productId === product.id)
     .reduce((s, i) => s + i.quantity, 0);
@@ -318,12 +368,168 @@ function VariantProductCard<T extends SimpleProduct>({
     openCart();
   }
 
-  // Button label
   let btnLabel = "Agregar";
   if (!isSelectionComplete) btnLabel = "Elegí opción";
   else if (isOutOfStock) btnLabel = "Sin stock";
 
-  const displayImage = effectiveImage || PLACEHOLDER_IMAGE;
+  const btnAriaLabel = !isSelectionComplete
+    ? `Elegí las opciones de ${product.name} para agregar`
+    : isOutOfStock
+    ? `${product.name} sin stock`
+    : `Agregar ${product.name}${variantLabel ? ` (${variantLabel})` : ""} al carrito`;
+
+  return (
+    <>
+      {/* Option selectors — one per type */}
+      {optionTypes
+        .slice()
+        .sort((a, b) => a.position - b.position)
+        .map((ot) => (
+          <div key={ot.id} className="flex flex-col gap-1">
+            <span
+              className="text-xs font-medium"
+              style={{ color: "var(--store-ink-secondary)" }}
+            >
+              {ot.name}
+            </span>
+            {/* Mobile: native select for compact layout */}
+            <div className="sm:hidden">
+              <select
+                value={selectedValues[ot.id] ?? ""}
+                onChange={(e) => {
+                  if (e.target.value) handleSelect(ot.id, e.target.value);
+                }}
+                className="w-full rounded-lg px-2 py-1.5 text-xs border"
+                style={{
+                  background: "var(--store-surface)",
+                  color: "var(--store-ink)",
+                  border: "1px solid var(--store-border-strong)",
+                }}
+                aria-label={`Elegir ${ot.name}`}
+              >
+                <option value="">Elegir...</option>
+                {ot.values
+                  .slice()
+                  .sort((a, b) => a.position - b.position)
+                  .map((ov) => {
+                    const reachable = isValueReachable(ot.id, ov.id);
+                    return (
+                      <option key={ov.id} value={ov.id} disabled={!reachable}>
+                        {ov.value}{!reachable ? " (no disponible)" : ""}
+                      </option>
+                    );
+                  })}
+              </select>
+            </div>
+            {/* Desktop: button group */}
+            <div className="hidden sm:flex flex-wrap gap-1">
+              {ot.values
+                .slice()
+                .sort((a, b) => a.position - b.position)
+                .map((ov) => {
+                  const reachable = isValueReachable(ot.id, ov.id);
+                  const isSelected = selectedValues[ot.id] === ov.id;
+                  return (
+                    <button
+                      key={ov.id}
+                      type="button"
+                      disabled={!reachable}
+                      onClick={() => handleSelect(ot.id, ov.id)}
+                      className={`px-2 py-1 rounded-md text-xs font-medium border transition-colors${
+                        isSelected
+                          ? " cursor-pointer"
+                          : reachable
+                          ? " cursor-pointer hover:opacity-80"
+                          : " opacity-40 cursor-not-allowed line-through"
+                      }`}
+                      style={
+                        isSelected
+                          ? { background: accentColor, color: "#ffffff", border: `1px solid ${accentColor}` }
+                          : { background: "var(--store-surface)", color: "var(--store-ink)", border: "1px solid var(--store-border-strong)" }
+                      }
+                      aria-pressed={isSelected}
+                      aria-label={`${ot.name}: ${ov.value}${!reachable ? " (no disponible)" : ""}`}
+                    >
+                      {ov.value}
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+        ))}
+
+      {/* Price + Add button row (card layout) or full-width button (modal layout) */}
+      {layout === "card" ? (
+        <div className="flex items-center justify-between gap-2 mt-auto">
+          <span className="text-sm sm:text-base font-bold" style={{ color: "var(--store-ink)" }}>
+            {formatARS(effectivePrice)}
+          </span>
+          <button
+            onClick={handleAdd}
+            disabled={!canAdd}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-opacity${canAdd ? " cursor-pointer hover:opacity-80" : " opacity-40 cursor-not-allowed"}`}
+            style={{ background: accentColor, color: "#ffffff" }}
+            aria-label={btnAriaLabel}
+          >
+            <Plus className="h-3 w-3" aria-hidden="true" />
+            {btnLabel}
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={handleAdd}
+          disabled={!canAdd}
+          className={`w-full rounded-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2 transition-opacity${canAdd ? " cursor-pointer hover:opacity-85" : " opacity-50 cursor-not-allowed"}`}
+          style={{ background: accentColor, color: "#ffffff" }}
+          aria-label={btnAriaLabel}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          {isOutOfStock ? "Sin stock disponible" : btnLabel}
+        </button>
+      )}
+    </>
+  );
+}
+
+// ─── Variant product card ─────────────────────────────────────────────────────
+
+function VariantProductCard<T extends SimpleProduct>({
+  product,
+  accentColor,
+  onOpenModal,
+  optionTypes,
+  variants,
+  priceCents,
+  isHighlighted,
+}: {
+  product: T;
+  accentColor: string;
+  onOpenModal: (p: T) => void;
+  optionTypes: StorefrontOptionType[];
+  variants: StorefrontVariant[];
+  priceCents: number;
+  isHighlighted?: boolean;
+}) {
+  const minQty = product.min_quantity ?? 1;
+  const step = product.qty_step ?? 1;
+  const showMinStepLabel = minQty > 1 || step > 1;
+  const minStepLabel = minQty > 1 && step > 1
+    ? `Mín. ${minQty}, de a ${step}`
+    : minQty > 1
+    ? `Mín. ${minQty}`
+    : `De a ${step}`;
+
+  // Shared selection state — used by both the image overlay and VariantSelector
+  const selectionState = useVariantSelection(optionTypes, variants, priceCents, product.image);
+  const { isSelectionComplete, effectiveStock, isOutOfStock } = selectionState;
+
+  const isLowStock =
+    isSelectionComplete &&
+    effectiveStock !== null &&
+    effectiveStock >= 1 &&
+    effectiveStock <= 5;
+
+  const displayImage = product.image || PLACEHOLDER_IMAGE;
 
   return (
     <article
@@ -335,7 +541,7 @@ function VariantProductCard<T extends SimpleProduct>({
         boxShadow: isHighlighted ? `0 0 0 3px ${accentColor}` : undefined,
         transition: "box-shadow 0.3s ease",
       }}
-      aria-label={`${product.name}${variantLabel ? ` — ${variantLabel}` : ""}, ${formatARS(effectivePrice)}`}
+      aria-label={product.name}
     >
       {/* Image — clickable to open modal for description */}
       <div
@@ -384,106 +590,15 @@ function VariantProductCard<T extends SimpleProduct>({
           </p>
         )}
 
-        {/* Option selectors — one per type */}
-        {optionTypes
-          .slice()
-          .sort((a, b) => a.position - b.position)
-          .map((ot) => (
-            <div key={ot.id} className="flex flex-col gap-1">
-              <span
-                className="text-xs font-medium"
-                style={{ color: "var(--store-ink-secondary)" }}
-              >
-                {ot.name}
-              </span>
-              {/* Mobile: native select for compact layout (5.6) */}
-              <div className="sm:hidden">
-                <select
-                  value={selectedValues[ot.id] ?? ""}
-                  onChange={(e) => {
-                    if (e.target.value) handleSelect(ot.id, e.target.value);
-                  }}
-                  className="w-full rounded-lg px-2 py-1.5 text-xs border"
-                  style={{
-                    background: "var(--store-surface)",
-                    color: "var(--store-ink)",
-                    border: "1px solid var(--store-border-strong)",
-                  }}
-                  aria-label={`Elegir ${ot.name}`}
-                >
-                  <option value="">Elegir...</option>
-                  {ot.values
-                    .slice()
-                    .sort((a, b) => a.position - b.position)
-                    .map((ov) => {
-                      const reachable = isValueReachable(ot.id, ov.id);
-                      return (
-                        <option key={ov.id} value={ov.id} disabled={!reachable}>
-                          {ov.value}{!reachable ? " (no disponible)" : ""}
-                        </option>
-                      );
-                    })}
-                </select>
-              </div>
-              {/* Desktop: button group (5.3, 5.4) */}
-              <div className="hidden sm:flex flex-wrap gap-1">
-                {ot.values
-                  .slice()
-                  .sort((a, b) => a.position - b.position)
-                  .map((ov) => {
-                    const reachable = isValueReachable(ot.id, ov.id);
-                    const isSelected = selectedValues[ot.id] === ov.id;
-                    return (
-                      <button
-                        key={ov.id}
-                        type="button"
-                        disabled={!reachable}
-                        onClick={() => handleSelect(ot.id, ov.id)}
-                        className={`px-2 py-1 rounded-md text-xs font-medium border transition-colors${
-                          isSelected
-                            ? " cursor-pointer"
-                            : reachable
-                            ? " cursor-pointer hover:opacity-80"
-                            : " opacity-40 cursor-not-allowed line-through"
-                        }`}
-                        style={
-                          isSelected
-                            ? { background: accentColor, color: "#ffffff", border: `1px solid ${accentColor}` }
-                            : { background: "var(--store-surface)", color: "var(--store-ink)", border: "1px solid var(--store-border-strong)" }
-                        }
-                        aria-pressed={isSelected}
-                        aria-label={`${ot.name}: ${ov.value}${!reachable ? " (no disponible)" : ""}`}
-                      >
-                        {ov.value}
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-          ))}
-
-        {/* Price + Add button */}
-        <div className="flex items-center justify-between gap-2 mt-auto">
-          <span className="text-sm sm:text-base font-bold" style={{ color: "var(--store-ink)" }}>
-            {formatARS(effectivePrice)}
-          </span>
-          <button
-            onClick={handleAdd}
-            disabled={!canAdd}
-            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-opacity${canAdd ? " cursor-pointer hover:opacity-80" : " opacity-40 cursor-not-allowed"}`}
-            style={{ background: accentColor, color: "#ffffff" }}
-            aria-label={
-              !isSelectionComplete
-                ? `Elegí las opciones de ${product.name} para agregar`
-                : isOutOfStock
-                ? `${product.name} sin stock`
-                : `Agregar ${product.name}${variantLabel ? ` (${variantLabel})` : ""} al carrito`
-            }
-          >
-            <Plus className="h-3 w-3" aria-hidden="true" />
-            {btnLabel}
-          </button>
-        </div>
+        <VariantSelector
+          product={product}
+          accentColor={accentColor}
+          optionTypes={optionTypes}
+          variants={variants}
+          priceCents={priceCents}
+          layout="card"
+          externalState={selectionState}
+        />
       </div>
     </article>
   );
