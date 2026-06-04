@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Plus, X, Loader2, CheckCircle } from 'lucide-react';
+import { Plus, X, Loader2, CheckCircle, Pencil } from 'lucide-react';
 import { SortableList } from '@/app/components/store/SortableList';
 import { saveStoreSections, deleteStoreSection } from '@/lib/store/actions';
 import type { Store, Section } from '@/lib/onboarding/state';
@@ -47,7 +47,9 @@ export function SectionsPanel({ store, initialSections, sectionsCount, sectionsL
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const newInputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   const handleAddSection = () => {
     const trimmed = newName.trim();
@@ -132,26 +134,48 @@ export function SectionsPanel({ store, initialSections, sectionsCount, sectionsL
               <div className="flex items-center gap-2 bg-white/6 border border-white/10 rounded-xl px-3 py-2.5">
                 {handle}
                 <div className="flex-1 min-w-0">
-                  <input
-                    type="text"
-                    value={section.name}
-                    maxLength={40}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                      const name = e.target.value;
-                      setSections((prev) =>
-                        prev.map((s) =>
-                          s.id === section.id
-                            ? { ...s, name, slug: slugifySection(name) }
-                            : s
-                        )
-                      );
-                    }}
-                    className="w-full bg-transparent text-sm font-semibold text-[#FBF7EC] placeholder-white/30 focus:outline-none focus:border-b focus:border-[#F5C84B] truncate"
-                    aria-label={`Nombre de sección ${section.name}`}
-                  />
+                  {editingId === section.id ? (
+                    <input
+                      ref={editInputRef}
+                      type="text"
+                      autoFocus
+                      value={section.name}
+                      maxLength={40}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        const name = e.target.value;
+                        setSections((prev) =>
+                          prev.map((s) =>
+                            s.id === section.id
+                              ? { ...s, name, slug: slugifySection(name) }
+                              : s
+                          )
+                        );
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === 'Escape') {
+                          e.preventDefault();
+                          setEditingId(null);
+                        }
+                      }}
+                      onBlur={() => setEditingId(null)}
+                      className="w-full bg-white/8 border border-[#F5C84B]/50 rounded-lg px-2 py-0.5 text-sm font-semibold text-[#FBF7EC] placeholder-white/30 focus:outline-none focus:border-[#F5C84B] truncate"
+                      aria-label={`Editar nombre de sección ${section.name}`}
+                    />
+                  ) : (
+                    <p className="text-sm font-semibold text-[#FBF7EC] truncate">{section.name}</p>
+                  )}
                   <p className="text-xs text-white/30 truncate">/{section.slug}</p>
                 </div>
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setEditingId(section.id)}
+                  className="flex-shrink-0 w-7 h-7 rounded-lg text-white/40 hover:text-[#F5C84B] flex items-center justify-center transition-colors cursor-pointer"
+                  aria-label={`Editar nombre de sección ${section.name}`}
+                >
+                  <Pencil size={13} />
+                </button>
                 <button
                   type="button"
                   onClick={() => handleDelete(section.id)}
