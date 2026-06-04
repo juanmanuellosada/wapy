@@ -132,7 +132,24 @@ export function SectionsPanel({ store, initialSections, sectionsCount, sectionsL
               <div className="flex items-center gap-2 bg-white/6 border border-white/10 rounded-xl px-3 py-2.5">
                 {handle}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-[#FBF7EC] truncate">{section.name}</p>
+                  <input
+                    type="text"
+                    value={section.name}
+                    maxLength={40}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      setSections((prev) =>
+                        prev.map((s) =>
+                          s.id === section.id
+                            ? { ...s, name, slug: slugifySection(name) }
+                            : s
+                        )
+                      );
+                    }}
+                    className="w-full bg-transparent text-sm font-semibold text-[#FBF7EC] placeholder-white/30 focus:outline-none focus:border-b focus:border-[#F5C84B] truncate"
+                    aria-label={`Nombre de sección ${section.name}`}
+                  />
                   <p className="text-xs text-white/30 truncate">/{section.slug}</p>
                 </div>
                 <button
