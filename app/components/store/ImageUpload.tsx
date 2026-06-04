@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { useDropzone, type FileRejection } from 'react-dropzone';
 import { Upload, X, Loader2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { compressImage, MAX_ORIGINAL_BYTES, MAX_FINAL_BYTES } from '@/lib/images/compress';
 
 type UploadedImage = {
   url: string;
@@ -42,9 +43,7 @@ export function ImageUpload({
 
       if (rejectedFiles.length > 0) {
         const err = rejectedFiles[0].errors[0];
-        if (err.code === 'file-too-large') {
-          setFileError(`Imagen muy pesada. Máximo ${maxSizeMB}MB.`);
-        } else if (err.code === 'file-invalid-type') {
+        if (err.code === 'file-invalid-type') {
           setFileError('Formato no permitido.');
         } else {
           setFileError(err.message);
@@ -58,23 +57,43 @@ export function ImageUpload({
       }
 
       for (const file of acceptedFiles) {
+        // Validar tamaño original antes de comprimir
+        if (file.size > MAX_ORIGINAL_BYTES) {
+          setFileError('La imagen supera los 25 MB. Probá con una más liviana.');
+          continue;
+        }
+
         setUploading((prev) => [...prev, file.name]);
         try {
-          await onUpload(file);
+          const compressed = await compressImage(file);
+
+          // Validar tamaño final después de comprimir
+          if (compressed.size > MAX_FINAL_BYTES) {
+            setFileError('La imagen sigue siendo demasiado pesada (máx 5 MB). Probá con otra.');
+            continue;
+          }
+
+          await onUpload(compressed);
         } catch (e) {
-          setFileError(e instanceof Error ? e.message : 'Error al subir la imagen.');
+          const msg = e instanceof Error ? e.message : '';
+          if (!msg || /body|size|413|failed to fetch/i.test(msg)) {
+            setFileError('La imagen es demasiado pesada para subir. Probá con una más liviana.');
+          } else {
+            setFileError(msg);
+          }
         } finally {
           setUploading((prev) => prev.filter((n) => n !== file.name));
         }
       }
     },
-    [images.length, maxCount, maxSizeMB, onUpload]
+    [images.length, maxCount, onUpload]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept,
-    maxSize: maxSizeMB * 1024 * 1024,
+    // maxSize se gestiona manualmente después de comprimir; no limitamos aquí para aceptar
+    // archivos de hasta 25 MB que se reducirán en el cliente antes de subir.
     disabled: disabled || !canAddMore,
     multiple: maxCount > 1,
   });
@@ -141,7 +160,7 @@ export function ImageUpload({
           <Upload size={24} className="text-white/30 mx-auto mb-2" />
           <p className="text-sm text-white/50">{label}</p>
           <p className="text-xs text-white/30 mt-1">
-            Máx. {maxSizeMB}MB · {images.length}/{maxCount}
+            Máx. 25MB (se comprime automáticamente) · {images.length}/{maxCount}
           </p>
         </div>
       )}

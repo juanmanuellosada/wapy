@@ -13,6 +13,7 @@ import {
   getProductVariantsData,
 } from '@/lib/variants/actions';
 import type { OptionTypeData, VariantData } from '@/lib/variants/actions';
+import { compressImage, MAX_ORIGINAL_BYTES, MAX_FINAL_BYTES } from '@/lib/images/compress';
 
 // ---------------------------------------------------------------------------
 // Validation constants (mirrors server D10)
@@ -434,11 +435,36 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
 
   // ---- Image upload for a variant ----
   const handleImageUpload = async (variantId: string, file: File) => {
+    // Validar tipo MIME
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(file.type)) {
+      setServerError('Formato no permitido. Usá JPG, PNG, WEBP, o GIF.');
+      toast.error('Formato no permitido. Usá JPG, PNG, WEBP, o GIF.');
+      return;
+    }
+
+    // Validar tamaño original
+    if (file.size > MAX_ORIGINAL_BYTES) {
+      setServerError('La imagen supera los 25 MB. Probá con una más liviana.');
+      toast.error('La imagen supera los 25 MB. Probá con una más liviana.');
+      return;
+    }
+
     setUploadingVariantId(variantId);
     setServerError(null);
+
     try {
+      const compressed = await compressImage(file);
+
+      // Validar tamaño final
+      if (compressed.size > MAX_FINAL_BYTES) {
+        setServerError('La imagen sigue siendo demasiado pesada (máx 5 MB). Probá con otra.');
+        toast.error('La imagen sigue siendo demasiado pesada (máx 5 MB). Probá con otra.');
+        return;
+      }
+
       const fd = new FormData();
-      fd.append('file', file);
+      fd.append('file', compressed);
       fd.append('variantId', variantId);
       const result = await uploadVariantImage(fd);
       if (!result.ok) {
@@ -450,9 +476,13 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
         );
         toast.success('Imagen subida');
       }
-    } catch {
-      setServerError('Error al subir la imagen.');
-      toast.error('Error al subir la imagen.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      const friendly = !msg || /body|size|413|failed to fetch/i.test(msg)
+        ? 'La imagen es demasiado pesada para subir. Probá con una más liviana.'
+        : msg;
+      setServerError(friendly);
+      toast.error(friendly);
     } finally {
       setUploadingVariantId(null);
     }

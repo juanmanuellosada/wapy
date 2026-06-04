@@ -4,9 +4,9 @@ import { useRef, useState } from 'react';
 import { Upload, X, Loader2 } from 'lucide-react';
 import { uploadStoreBannerAction } from '@/lib/onboarding/upload-actions';
 import { saveBannerConfig } from '@/lib/store/actions';
+import { compressImage, MAX_ORIGINAL_BYTES, MAX_FINAL_BYTES } from '@/lib/images/compress';
 
 const ACCEPT_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
-const MAX_SIZE_BYTES = 5 * 1024 * 1024;
 
 type Props = {
   storeId: string;
@@ -30,16 +30,40 @@ export function BannerUploader({ storeId, initialUrl, onUrlChange }: Props) {
       setError('Formato no permitido. Usá PNG, JPG, WEBP, o SVG.');
       return;
     }
-    if (file.size > MAX_SIZE_BYTES) {
-      setError('Imagen muy pesada. Máximo 5MB.');
+    if (file.size > MAX_ORIGINAL_BYTES) {
+      setError('La imagen supera los 25 MB. Probá con una más liviana.');
       return;
     }
 
     setUploading(true);
+
+    let fileToUpload = file;
+    try {
+      fileToUpload = await compressImage(file);
+    } catch {
+      // Si la compresión falla, continuamos con el original
+    }
+
+    if (fileToUpload.size > MAX_FINAL_BYTES) {
+      setError('La imagen sigue siendo demasiado pesada (máx 5 MB). Probá con otra.');
+      setUploading(false);
+      return;
+    }
+
     const fd = new FormData();
-    fd.append('file', file);
+    fd.append('file', fileToUpload);
     fd.append('storeId', storeId);
-    const result = await uploadStoreBannerAction(fd);
+    let result: Awaited<ReturnType<typeof uploadStoreBannerAction>>;
+    try {
+      result = await uploadStoreBannerAction(fd);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      setError(!msg || /body|size|413|failed to fetch/i.test(msg)
+        ? 'La imagen es demasiado pesada para subir. Probá con una más liviana.'
+        : msg);
+      setUploading(false);
+      return;
+    }
 
     if (!result.ok) {
       setError(result.message ?? 'Error al subir el banner. Intentá de nuevo.');
@@ -98,7 +122,7 @@ export function BannerUploader({ storeId, initialUrl, onUrlChange }: Props) {
             <>
               <Upload size={22} className="text-white/30 mb-2" />
               <p className="text-sm text-white/50">Subí el banner de tu tienda (PNG, JPG, WEBP, SVG)</p>
-              <p className="text-xs text-white/30 mt-1">Proporción recomendada 4:1 · Máx. 5MB</p>
+              <p className="text-xs text-white/30 mt-1">Proporción recomendada 4:1 · Máx. 25MB (se comprime automáticamente)</p>
             </>
           )}
         </label>
