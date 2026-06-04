@@ -220,44 +220,29 @@ function StoreHeader({
   return (
     <header className="sticky top-0 z-40 store-header-bg">
       {/* Main header row */}
-      <div className="mx-auto flex max-w-6xl items-center px-4 sm:px-6 md:px-8 h-14 gap-2 sm:gap-3">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 sm:px-6 md:px-8 h-14">
         {/* Logo thumbnail + Store name */}
-        {logoUrl && (
-          <Image
-            src={logoUrl}
-            alt={storeName}
-            width={32}
-            height={32}
-            className="rounded-full shrink-0 object-cover"
-            priority
-          />
-        )}
-        <span
-          className="text-base font-semibold tracking-tight shrink-0"
-          style={{ color: accentColor, fontFamily: "var(--font-rubik, Rubik)" }}
-        >
-          {storeName}
-        </span>
-
-        {/* Section nav — desktop (md+) */}
-        <nav
-          className="hidden lg:flex items-center gap-0.5 flex-1 justify-center"
-          aria-label="Secciones de la tienda"
-        >
-          {sections.map((s) => (
-            <a
-              key={s.id}
-              href={`#${s.id}`}
-              className="store-nav-link shrink-0 px-3 py-1.5 text-sm font-medium rounded-full transition-colors cursor-pointer"
-              style={{ color: "var(--store-ink-secondary)" }}
-            >
-              {s.name}
-            </a>
-          ))}
-        </nav>
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {logoUrl && (
+            <Image
+              src={logoUrl}
+              alt={storeName}
+              width={32}
+              height={32}
+              className="rounded-full shrink-0 object-cover"
+              priority
+            />
+          )}
+          <span
+            className="text-base font-semibold tracking-tight shrink-0"
+            style={{ color: accentColor, fontFamily: "var(--font-rubik, Rubik)" }}
+          >
+            {storeName}
+          </span>
+        </div>
 
         {/* Right controls: search + theme toggle + cart */}
-        <div className="flex items-center gap-1.5 sm:gap-2 ml-auto shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Desktop search input (sm+) */}
           <div className="relative hidden sm:flex items-center">
             <Search
@@ -340,6 +325,27 @@ function StoreHeader({
           </button>
         </div>
       </div>
+
+      {/* Desktop section nav — second row (lg+), wraps if many sections */}
+      {sections.length > 0 && (
+        <div className="hidden lg:flex mx-auto max-w-6xl px-4 sm:px-6 md:px-8 pb-2">
+          <nav
+            className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1.5 w-full"
+            aria-label="Secciones de la tienda"
+          >
+            {sections.map((s) => (
+              <a
+                key={s.id}
+                href={`#${s.id}`}
+                className="store-nav-link px-3 py-1.5 text-sm font-medium rounded-full transition-colors cursor-pointer"
+                style={{ color: "var(--store-ink-secondary)" }}
+              >
+                {s.name}
+              </a>
+            ))}
+          </nav>
+        </div>
+      )}
 
       {/* Mobile secondary row: section nav + optional search bar */}
       <div className="lg:hidden">
