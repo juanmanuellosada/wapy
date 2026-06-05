@@ -136,9 +136,21 @@ function isInStock(
 export function applyFilters<T extends UIProduct>(
   products: T[],
   variantsByProduct: Record<string, ProductVariantData>,
-  f: CatalogFilters
+  f: CatalogFilters,
+  /** Optional map from parent section id → child section ids, used to expand
+   *  a level-1 filter to also include products in its subsections. */
+  subsectionMap?: Map<string, string[]>
 ): T[] {
   const q = normalize(f.q.trim());
+
+  // Expand selected section ids to include their children (if map provided)
+  const effectiveSectionIds: Set<string> | null =
+    f.sectionIds.length > 0 && subsectionMap
+      ? new Set([
+          ...f.sectionIds,
+          ...f.sectionIds.flatMap((id) => subsectionMap.get(id) ?? []),
+        ])
+      : null;
 
   return products.filter((p) => {
     // Text filter
@@ -148,9 +160,10 @@ export function applyFilters<T extends UIProduct>(
       if (!inName && !inDesc) return false;
     }
 
-    // Section filter
-    if (f.sectionIds.length > 0 && !f.sectionIds.includes(p.sectionId)) {
-      return false;
+    // Section filter — use expanded set when available, fall back to exact match
+    if (f.sectionIds.length > 0) {
+      const ids = effectiveSectionIds ?? new Set(f.sectionIds);
+      if (!ids.has(p.sectionId)) return false;
     }
 
     // Price filter

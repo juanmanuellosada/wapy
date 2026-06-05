@@ -328,7 +328,19 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
                     onChange={(v) => field.onChange(v)}
                     options={[
                       { value: '', label: 'Sin sección' },
-                      ...sections.map((s) => ({ value: s.id, label: s.name })),
+                      ...(() => {
+                        const level1 = sections.filter((s) => s.parent_id == null);
+                        const result: { value: string; label: string }[] = [];
+                        for (const parent of level1) {
+                          result.push({ value: parent.id, label: parent.name });
+                          const children = sections.filter((s) => s.parent_id === parent.id);
+                          for (const child of children) {
+                            result.push({ value: child.id, label: `— ${child.name}` });
+                          }
+                        }
+                        // Sections with no parent match (edge case: orphaned children already covered above)
+                        return result;
+                      })(),
                     ]}
                     placeholder="Sin sección"
                     ariaLabel="Sección del producto"

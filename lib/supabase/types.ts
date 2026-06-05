@@ -407,6 +407,7 @@ export type Database = {
           id: string
           is_active: boolean
           name: string
+          parent_id: string | null
           position: number
           slug: string
           store_id: string
@@ -417,6 +418,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           name: string
+          parent_id?: string | null
           position?: number
           slug: string
           store_id: string
@@ -427,12 +429,20 @@ export type Database = {
           id?: string
           is_active?: boolean
           name?: string
+          parent_id?: string | null
           position?: number
           slug?: string
           store_id?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "sections_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "sections"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "sections_store_id_fkey"
             columns: ["store_id"]

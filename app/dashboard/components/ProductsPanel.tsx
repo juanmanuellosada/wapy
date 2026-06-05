@@ -50,15 +50,36 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
     });
   };
 
-  const groups: { key: string; label: string; items: Product[] }[] = [
-    ...sections
-      .map((s) => ({
-        key: s.id,
-        label: s.name,
-        items: products.filter((p) => p.section_id === s.id),
-      }))
-      .filter((g) => g.items.length > 0),
-  ];
+  // Build hierarchical groups: for each level-1 section, show its direct products
+  // first, then a sub-group per child section. Flat sections without parent follow
+  // the same logic (treated as level-1). Unsectioned products go last.
+  type Group = { key: string; label: string; items: Product[]; indent?: boolean };
+  const groups: Group[] = [];
+
+  const level1Sections = sections.filter((s) => s.parent_id == null);
+  const childrenOf = (parentId: string) => sections.filter((s) => s.parent_id === parentId);
+
+  for (const s of level1Sections) {
+    const directProducts = products.filter((p) => p.section_id === s.id);
+    const children = childrenOf(s.id);
+    const hasChildren = children.some((c) => products.some((p) => p.section_id === c.id));
+
+    if (directProducts.length > 0 || hasChildren) {
+      if (directProducts.length > 0) {
+        groups.push({ key: s.id, label: s.name, items: directProducts });
+      } else if (hasChildren) {
+        // Show the parent label as a header-only group (0 items, just to mark start)
+        groups.push({ key: s.id, label: s.name, items: [] });
+      }
+    }
+
+    for (const child of children) {
+      const childProducts = products.filter((p) => p.section_id === child.id);
+      if (childProducts.length > 0) {
+        groups.push({ key: child.id, label: child.name, items: childProducts, indent: true });
+      }
+    }
+  }
 
   const unsectioned = products.filter((p) => p.section_id === null);
   if (unsectioned.length > 0) {
@@ -234,19 +255,30 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
           <div className="space-y-3">
             {groups.map((group) => {
               const isCollapsed = collapsed.has(group.key);
+              const isEmpty = group.items.length === 0;
               return (
-                <div key={group.key}>
+                <div key={group.key} className={group.indent ? 'ml-4' : undefined}>
                   <button
                     type="button"
-                    onClick={() => toggleCollapsed(group.key)}
-                    className="flex items-center gap-2 w-full text-left py-1.5 text-sm font-semibold text-white/70 hover:text-white/90 transition-colors cursor-pointer"
+                    onClick={() => !isEmpty && toggleCollapsed(group.key)}
+                    className={`flex items-center gap-2 w-full text-left py-1.5 text-sm font-semibold transition-colors ${
+                      group.indent
+                        ? 'text-white/50 hover:text-white/70 text-xs'
+                        : 'text-white/70 hover:text-white/90'
+                    }${isEmpty ? ' cursor-default' : ' cursor-pointer'}`}
                   >
-                    {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                    {isEmpty ? (
+                      <span className="w-[15px]" />
+                    ) : isCollapsed ? (
+                      <ChevronRight size={15} />
+                    ) : (
+                      <ChevronDown size={15} />
+                    )}
                     <span>{group.label}</span>
-                    <span className="text-white/30 font-normal">({group.items.length})</span>
+                    {!isEmpty && <span className="text-white/30 font-normal">({group.items.length})</span>}
                   </button>
 
-                  {!isCollapsed && (
+                  {!isCollapsed && !isEmpty && (
                     <div className="mt-1">
                       <SortableList
                         items={group.items}

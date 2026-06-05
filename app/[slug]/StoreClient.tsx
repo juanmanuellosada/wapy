@@ -175,6 +175,7 @@ function useDarkMode(slug: string) {
 interface UISection {
   id: string;
   name: string;
+  parentId: string | null;
 }
 
 // ─── Store Header ─────────────────────────────────────────────────────────────
@@ -1306,6 +1307,8 @@ function CartDrawer({
 function SectionBlock({
   section,
   products,
+  subsections,
+  productsBySection,
   accentColor,
   onOpenModal,
   variantsByProduct,
@@ -1313,11 +1316,16 @@ function SectionBlock({
 }: {
   section: UISection;
   products: UIProduct[];
+  subsections: UISection[];
+  productsBySection: Map<string, UIProduct[]>;
   accentColor: string;
   onOpenModal: (p: UIProduct) => void;
   variantsByProduct: Record<string, ProductVariantData>;
   highlightedProductId?: string | null;
 }) {
+  const hasDirectProducts = products.length > 0;
+  const hasSubsections = subsections.length > 0;
+
   return (
     <section id={section.id} className="scroll-mt-24" aria-labelledby={`section-${section.id}`}>
       {/* Section header */}
@@ -1341,19 +1349,53 @@ function SectionBlock({
         />
       </div>
 
-      {/* Product grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
-        {products.map((p) => (
-          <ProductCard
-            key={p.id}
-            product={p}
-            accentColor={accentColor}
-            onOpenModal={onOpenModal}
-            variantData={variantsByProduct[p.id]}
-            isHighlighted={highlightedProductId === p.id}
-          />
-        ))}
-      </div>
+      {/* Direct products (if any) */}
+      {hasDirectProducts && (
+        <div className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6${hasSubsections ? " mb-10 sm:mb-12" : ""}`}>
+          {products.map((p) => (
+            <ProductCard
+              key={p.id}
+              product={p}
+              accentColor={accentColor}
+              onOpenModal={onOpenModal}
+              variantData={variantsByProduct[p.id]}
+              isHighlighted={highlightedProductId === p.id}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Subsections with sub-headers */}
+      {hasSubsections && (
+        <div className="flex flex-col gap-10 sm:gap-12">
+          {subsections.map((sub) => {
+            const subProducts = productsBySection.get(sub.id) ?? [];
+            if (subProducts.length === 0) return null;
+            return (
+              <div key={sub.id} id={sub.id} className="scroll-mt-24">
+                <h3
+                  className="text-base sm:text-lg font-semibold mb-4 sm:mb-5"
+                  style={{ color: "var(--store-ink-secondary)", fontFamily: "var(--font-rubik, Rubik)" }}
+                >
+                  {sub.name}
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
+                  {subProducts.map((p) => (
+                    <ProductCard
+                      key={p.id}
+                      product={p}
+                      accentColor={accentColor}
+                      onOpenModal={onOpenModal}
+                      variantData={variantsByProduct[p.id]}
+                      isHighlighted={highlightedProductId === p.id}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -1412,14 +1454,28 @@ export default function StoreClient({
 
   // Map Supabase rows to local UI types
   const sections: UISection[] = useMemo(
-    () => sectionRows.map((s) => ({ id: s.id, name: s.name })),
+    () => sectionRows.map((s) => ({ id: s.id, name: s.name, parentId: s.parent_id ?? null })),
     [sectionRows]
   );
 
+  // Only level-1 sections for the nav and filter UI
   const sectionLites: SectionLite[] = useMemo(
-    () => sectionRows.map((s) => ({ id: s.id, name: s.name })),
+    () => sectionRows.filter((s) => s.parent_id == null).map((s) => ({ id: s.id, name: s.name })),
     [sectionRows]
   );
+
+  // Map parent section id → child section ids (for filter expansion)
+  const subsectionMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const s of sections) {
+      if (s.parentId) {
+        const existing = map.get(s.parentId) ?? [];
+        existing.push(s.id);
+        map.set(s.parentId, existing);
+      }
+    }
+    return map;
+  }, [sections]);
 
   const products: UIProduct[] = useMemo(
     () =>
@@ -1574,8 +1630,8 @@ export default function StoreClient({
   // ─── Filtered products for the grid ─────────────────────────────────────────
 
   const visibleProducts = useMemo(
-    () => applyFilters(products, variantsByProduct, filters),
-    [products, variantsByProduct, filters]
+    () => applyFilters(products, variantsByProduct, filters, subsectionMap),
+    [products, variantsByProduct, filters, subsectionMap]
   );
 
   const visibleProductsBySection = useMemo(() => {
@@ -1698,19 +1754,27 @@ export default function StoreClient({
             </section>
           )
         ) : (
-          /* Default: show by section, keep gap for visual separation */
+          /* Default: show by section (level-1 only), keep gap for visual separation */
           <div className="flex flex-col gap-14 sm:gap-20">
-            {sections.map((s) => (
-              <SectionBlock
-                key={s.id}
-                section={s}
-                products={visibleProductsBySection.get(s.id) ?? []}
-                accentColor={accentColor}
-                onOpenModal={openModal}
-                variantsByProduct={variantsByProduct}
-                highlightedProductId={highlightedProductId}
-              />
-            ))}
+            {sections
+              .filter((s) => s.parentId === null)
+              .map((s) => {
+                const children = subsectionMap.get(s.id) ?? [];
+                const subsections = sections.filter((sub) => children.includes(sub.id));
+                return (
+                  <SectionBlock
+                    key={s.id}
+                    section={s}
+                    products={visibleProductsBySection.get(s.id) ?? []}
+                    subsections={subsections}
+                    productsBySection={visibleProductsBySection}
+                    accentColor={accentColor}
+                    onOpenModal={openModal}
+                    variantsByProduct={variantsByProduct}
+                    highlightedProductId={highlightedProductId}
+                  />
+                );
+              })}
           </div>
         )}
       </main>

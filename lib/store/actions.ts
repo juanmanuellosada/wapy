@@ -20,6 +20,7 @@ const sectionItemSchema = z.object({
   name: z.string().min(1, 'El nombre de la sección es requerido').max(40, 'Máximo 40 caracteres'),
   slug: z.string().min(1),
   position: z.number().int().min(0),
+  parent_id: z.string().nullable().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -218,6 +219,7 @@ type SectionInput = {
   name: string;
   slug: string;
   position: number;
+  parent_id?: string | null;
 };
 
 export async function saveStoreSections(formData: {
@@ -233,10 +235,12 @@ export async function saveStoreSections(formData: {
 
   const sections = parsed.data;
 
-  // Plan limit: the incoming array IS the desired final state.
+  // Plan limit: only top-level sections (parent_id == null) count against the limit.
+  // Subsections are free — they don't consume slots.
   const storePlan = (store as unknown as { plan: PlanId | null }).plan;
   const sectionLimit = getPlanLimits(storePlan).maxSections;
-  if (!isUnlimited(sectionLimit) && sections.length > sectionLimit) {
+  const topLevelCount = sections.filter((s) => !s.parent_id).length;
+  if (!isUnlimited(sectionLimit) && topLevelCount > sectionLimit) {
     return { error: `Llegaste al límite de tu plan (${sectionLimit} secciones). Pasate a Pro para sumar secciones ilimitadas.` };
   }
 
@@ -263,6 +267,7 @@ export async function saveStoreSections(formData: {
           name: section.name,
           slug: section.slug,
           position: section.position,
+          parent_id: section.parent_id ?? null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', section.id)
@@ -273,6 +278,7 @@ export async function saveStoreSections(formData: {
         name: section.name,
         slug: section.slug,
         position: section.position,
+        parent_id: section.parent_id ?? null,
         is_active: true,
       });
     }
