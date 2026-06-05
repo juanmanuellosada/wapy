@@ -193,7 +193,7 @@ function StoreHeader({
   storeSlug: string;
   accentColor: string;
   logoUrl?: string | null;
-  sections: UISection[];
+  sections: SectionLite[];
   searchQuery: string;
   onSearchChange: (q: string) => void;
 }) {
@@ -1665,7 +1665,7 @@ export default function StoreClient({
         storeSlug={store.slug}
         accentColor={accentColor}
         logoUrl={store.logo_url}
-        sections={sections}
+        sections={sectionLites}
         searchQuery={filters.q}
         onSearchChange={(q) => setFilters((prev) => ({ ...prev, q }))}
       />
