@@ -1325,6 +1325,9 @@ function SectionBlock({
 }) {
   const hasDirectProducts = products.length > 0;
   const hasSubsections = subsections.length > 0;
+  const hasAnyContent =
+    hasDirectProducts ||
+    subsections.some((sub) => (productsBySection.get(sub.id) ?? []).length > 0);
 
   return (
     <section id={section.id} className="scroll-mt-24" aria-labelledby={`section-${section.id}`}>
@@ -1348,6 +1351,21 @@ function SectionBlock({
           style={{ color: "var(--store-border-strong)" }}
         />
       </div>
+
+      {/* Empty-section placeholder — only for top-level sections */}
+      {!hasAnyContent && (
+        <div
+          className="flex items-center justify-center rounded-xl border py-10 sm:py-12"
+          style={{ borderColor: "var(--store-border)" }}
+        >
+          <p
+            className="text-sm sm:text-base font-medium"
+            style={{ color: "var(--store-ink-secondary)" }}
+          >
+            Próximamente
+          </p>
+        </div>
+      )}
 
       {/* Direct products (if any) */}
       {hasDirectProducts && (
