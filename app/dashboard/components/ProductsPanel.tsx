@@ -212,19 +212,30 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={handleExportCsv}
-          disabled={exporting}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-white/50 hover:text-white hover:bg-white/8 border border-white/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {exporting ? (
-            <span className="w-3 h-3 rounded-full border border-white/40 border-t-white/80 animate-spin" />
-          ) : (
-            <Download size={12} />
-          )}
-          Exportar catálogo CSV
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-white/50 hover:text-white hover:bg-white/8 border border-white/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {exporting ? (
+              <span className="w-3 h-3 rounded-full border border-white/40 border-t-white/80 animate-spin" />
+            ) : (
+              <Download size={12} />
+            )}
+            Exportar catálogo CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => setModalProduct(null)}
+            disabled={atProductsLimit}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-[#F5C84B] hover:text-[#FAE08A] hover:bg-white/8 border border-white/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Plus size={12} />
+            Agregar producto
+          </button>
+        </div>
       </div>
 
       {modalProduct !== undefined && (
@@ -373,25 +384,14 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
           </div>
         )}
 
-        <div className="flex items-center gap-4 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setModalProduct(null)}
-            disabled={atProductsLimit}
-            className="flex items-center gap-2 text-sm text-[#F5C84B] hover:text-[#FAE08A] font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        {!limitIsUnlimited && atProductsLimit && (
+          <a
+            href="/#precios"
+            className="text-xs text-white/50 hover:text-white/80 transition-colors"
           >
-            <Plus size={16} />
-            Agregar producto
-          </button>
-          {!limitIsUnlimited && atProductsLimit && (
-            <a
-              href="/#precios"
-              className="text-xs text-white/50 hover:text-white/80 transition-colors"
-            >
-              Pasate a Pro para sumar productos ilimitados →
-            </a>
-          )}
-        </div>
+            Pasate a Pro para sumar productos ilimitados →
+          </a>
+        )}
       </div>
 
       <ConfirmModal
