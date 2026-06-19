@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { getPlanLimits } from '@/lib/plans/limits';
 import type { PlanId } from '@/lib/plans/limits';
+import { optimizeImage } from '@/lib/images/optimize';
 
 // ---------------------------------------------------------------------------
 // Auth guard (mirrors pattern in lib/store/actions.ts)
@@ -917,11 +918,6 @@ export async function removeOptionType(
 // Uses the same bucket as product images ("product-images").
 // ---------------------------------------------------------------------------
 
-function getExtension(filename: string): string {
-  const parts = filename.split('.');
-  return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : 'jpg';
-}
-
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export type UploadVariantImageResult =
@@ -983,12 +979,12 @@ export async function uploadVariantImage(
 
   if (!store) return { ok: false, error: 'Sin permisos para esta variedad.' };
 
-  const ext = getExtension(file.name);
+  const { buffer: optimized, ext, contentType } = await optimizeImage(file, { maxWidth: 1600, quality: 80 });
   const path = `${store.id}/${v.product_id}/${variantId}/${crypto.randomUUID()}.${ext}`;
 
   const { error: uploadError } = await admin.storage
     .from('product-images')
-    .upload(path, file, { contentType: file.type });
+    .upload(path, optimized, { contentType });
 
   if (uploadError) {
     Sentry.captureException(uploadError, { tags: { action: 'uploadVariantImage' }, extra: { variantId } });
