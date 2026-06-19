@@ -2,6 +2,7 @@
 
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { MAX_SIZE_BYTES, validateLogoFile, validateProductImageFile } from './storage';
+import { optimizeImage } from '@/lib/images/optimize';
 
 type LogoUploadResult =
   | { ok: true; url: string }
@@ -10,11 +11,6 @@ type LogoUploadResult =
 type ProductImageUploadResult =
   | { ok: true; url: string }
   | { ok: false; error: 'unauthorized' | 'not_owner' | 'invalid_file' | 'too_large' | 'upload_failed'; message?: string };
-
-function getExtension(filename: string): string {
-  const parts = filename.split('.');
-  return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : 'jpg';
-}
 
 /**
  * Server Action: upload a store logo via the admin (service-role) client,
@@ -59,13 +55,13 @@ export async function uploadStoreLogoAction(formData: FormData): Promise<LogoUpl
   }
 
   // Upload via admin client — bypasses RLS on storage
-  const ext = getExtension(file.name);
+  const { buffer: optimized, ext, contentType } = await optimizeImage(file, { maxWidth: 512, quality: 90 });
   const path = `${storeId}/logo.${ext}`;
   const admin = createAdminClient();
 
   const { error: uploadError } = await admin.storage
     .from('store-logos')
-    .upload(path, file, { upsert: true, contentType: file.type });
+    .upload(path, optimized, { upsert: true, contentType });
 
   if (uploadError) {
     return { ok: false, error: 'upload_failed', message: 'Error al subir el logo. Intentá de nuevo.' };
@@ -114,13 +110,13 @@ export async function uploadStoreBannerAction(formData: FormData): Promise<LogoU
     return { ok: false, error: 'not_owner' };
   }
 
-  const ext = getExtension(file.name);
+  const { buffer: optimized, ext, contentType } = await optimizeImage(file, { maxWidth: 2000, quality: 80 });
   const path = `${storeId}/banner.${ext}`;
   const admin = createAdminClient();
 
   const { error: uploadError } = await admin.storage
     .from('store-banners')
-    .upload(path, file, { upsert: true, contentType: file.type });
+    .upload(path, optimized, { upsert: true, contentType });
 
   if (uploadError) {
     return { ok: false, error: 'upload_failed', message: 'Error al subir el banner. Intentá de nuevo.' };
@@ -173,13 +169,13 @@ export async function uploadProductImageAction(formData: FormData): Promise<Prod
   }
 
   // Upload via admin client — bypasses RLS on storage
-  const ext = getExtension(file.name);
+  const { buffer: optimized, ext, contentType } = await optimizeImage(file, { maxWidth: 1600, quality: 80 });
   const path = `${storeId}/${crypto.randomUUID()}.${ext}`;
   const admin = createAdminClient();
 
   const { error: uploadError } = await admin.storage
     .from('product-images')
-    .upload(path, file, { contentType: file.type });
+    .upload(path, optimized, { contentType });
 
   if (uploadError) {
     return { ok: false, error: 'upload_failed', message: 'Error al subir la imagen. Intentá de nuevo.' };
