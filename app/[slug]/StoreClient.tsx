@@ -23,6 +23,7 @@ import { useCart, cartItemKey } from "./CartContext";
 import ProductCardClient, { VariantSelector } from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
+import { validateCoupon } from "@/lib/store/coupons/actions";
 import { toast } from "@/lib/toast";
 import ProductGallery from "./ProductGallery";
 import CatalogFiltersUI from "./CatalogFilters";
@@ -931,7 +932,10 @@ function CartDrawer({
   productStockMap: Map<string, number | null>;
   productMinStepMap: Map<string, { min_quantity: number; qty_step: number }>;
 }) {
-  const { items, open, totalPrice, removeItem, setQty, closeCart } = useCart();
+  const { items, open, totalPrice, appliedCoupon, discountAmount, finalTotal, removeItem, setQty, closeCart, applyCoupon, removeCoupon } = useCart();
+  const [couponInput, setCouponInput] = useState('');
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponError, setCouponError] = useState<string | null>(null);
   const accentForeground = "#ffffff";
 
   // Items where quantity exceeds current stock (stock !== null only).
@@ -979,19 +983,30 @@ function CartDrawer({
       const label = i.variantLabel ? ` (${i.variantLabel})` : "";
       return `• ${i.quantity}x ${i.name}${label} — ${formatARS(displayPrice * i.quantity)}`;
     });
-    const currentMessage = [
+
+    const messageLines: string[] = [
       `*Pedido en ${storeName}*`,
       "",
       ...lines,
       "",
-      `*Total: ${formatARS(totalPrice)}*`,
-    ].join("\n");
+    ];
+
+    if (appliedCoupon && discountAmount > 0) {
+      messageLines.push(`Cupón *${appliedCoupon.code}*: -${formatARS(discountAmount)}`);
+      messageLines.push(`*Total: ${formatARS(finalTotal)}*`);
+    } else {
+      messageLines.push(`*Total: ${formatARS(totalPrice)}*`);
+    }
+
+    const currentMessage = messageLines.join("\n");
 
     let orderRef = '';
     try {
       const result = await createPendingOrder({
         store_id: storeId,
         items: items.map((i) => ({ product_id: i.productId, quantity: i.quantity, variant_id: i.variantId ?? null })),
+        coupon_code: appliedCoupon?.code ?? null,
+        discount_amount: appliedCoupon ? discountAmount : null,
       });
       if ('order_id' in result) {
         orderRef = `\n\nReferencia: #${result.order_id.slice(0, 8)}`;
@@ -1010,6 +1025,26 @@ function CartDrawer({
     const normalized = whatsappNumber.replace(/\D/g, "");
     const text = encodeURIComponent(`${currentMessage}${orderRef}`);
     window.open(`https://wa.me/${normalized}?text=${text}`, "_blank");
+  }
+
+  async function handleApplyCoupon() {
+    const trimmed = couponInput.trim();
+    if (!trimmed) return;
+    setCouponLoading(true);
+    setCouponError(null);
+    try {
+      const result = await validateCoupon({ storeId, code: trimmed, cartTotal: totalPrice });
+      if ('error' in result) {
+        setCouponError(result.error);
+      } else {
+        applyCoupon(result.coupon);
+        setCouponInput('');
+        setCouponError(null);
+      }
+    } catch {
+      setCouponError('No se pudo validar el cupón. Intentá de nuevo.');
+    }
+    setCouponLoading(false);
   }
 
   // Prevent body scroll when open
@@ -1233,7 +1268,77 @@ function CartDrawer({
             className="px-5 py-4 flex flex-col gap-3"
             style={{ borderTop: "1px solid var(--store-border)" }}
           >
-            {/* Subtotal */}
+            {/* Coupon input */}
+            {!appliedCoupon ? (
+              <div className="flex flex-col gap-1">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={couponInput}
+                    onChange={(e) => { setCouponInput(e.target.value.toUpperCase()); setCouponError(null); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleApplyCoupon(); } }}
+                    placeholder="Código de cupón"
+                    maxLength={50}
+                    className="flex-1 rounded-xl px-3 py-2 text-sm focus:outline-none"
+                    style={{
+                      background: "var(--store-border)",
+                      color: "var(--store-ink)",
+                      border: "1px solid var(--store-border-strong)",
+                    }}
+                    aria-label="Código de cupón de descuento"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleApplyCoupon}
+                    disabled={couponLoading || !couponInput.trim()}
+                    className="px-3 py-2 rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
+                    style={{ background: "var(--store-border-strong)", color: "var(--store-ink)" }}
+                  >
+                    {couponLoading ? '...' : 'Aplicar'}
+                  </button>
+                </div>
+                {couponError && (
+                  <p className="text-xs text-red-400">{couponError}</p>
+                )}
+              </div>
+            ) : (
+              <div
+                className="flex items-center justify-between rounded-xl px-3 py-2"
+                style={{ background: "var(--store-border)" }}
+              >
+                <span className="text-sm font-mono font-semibold" style={{ color: "var(--store-ink)" }}>
+                  {appliedCoupon.code}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>
+                    -{formatARS(discountAmount)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { removeCoupon(); setCouponError(null); }}
+                    className="w-5 h-5 flex items-center justify-center rounded-full cursor-pointer"
+                    style={{ color: "var(--store-ink-muted)" }}
+                    aria-label="Quitar cupón"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Subtotal / Total */}
+            {appliedCoupon && discountAmount > 0 ? (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>Subtotal</span>
+                  <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>{formatARS(totalPrice)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold" style={{ color: "var(--store-ink)" }}>Total</span>
+                  <span className="text-xl font-bold" style={{ color: "var(--store-ink)" }}>{formatARS(finalTotal)}</span>
+                </div>
+              </div>
+            ) : (
             <div className="flex items-center justify-between">
               <span
                 className="text-sm font-medium"
@@ -1248,6 +1353,7 @@ function CartDrawer({
                 {formatARS(totalPrice)}
               </span>
             </div>
+            )}
 
             {/* Share viral CTA — above WhatsApp order button */}
             <ShareCartButton

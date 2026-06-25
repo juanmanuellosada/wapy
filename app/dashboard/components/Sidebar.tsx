@@ -15,6 +15,7 @@ import {
   LogOut,
   Menu,
   X,
+  BadgePercent,
 } from 'lucide-react';
 import type { Store } from '@/lib/onboarding/state';
 import { logoutAction } from '@/lib/auth/logout-action';
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { id: 'sections', label: 'Secciones', icon: Layout },
   { id: 'products', label: 'Productos', icon: Package },
   { id: 'orders', label: 'Pedidos', icon: ClipboardList },
+  { id: 'coupons', label: 'Cupones', icon: BadgePercent },
   { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
   { id: 'settings', label: 'Configuración', icon: Settings },
   { id: 'subscription', label: 'Suscripción', icon: CreditCard },
