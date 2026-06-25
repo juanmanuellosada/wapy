@@ -26,9 +26,16 @@ export function cartItemKey(productId: string, variantId?: string | null): strin
   return variantId ? `${productId}::${variantId}` : productId;
 }
 
+export interface AppliedCoupon {
+  code: string;
+  discountType: 'percent' | 'fixed';
+  discountValue: number;
+}
+
 interface CartState {
   items: CartItem[];
   open: boolean;
+  appliedCoupon: AppliedCoupon | null;
 }
 
 type CartAction =
@@ -36,7 +43,9 @@ type CartAction =
   | { type: "REMOVE"; key: string }
   | { type: "SET_QTY"; key: string; qty: number }
   | { type: "SET_OPEN"; open: boolean }
-  | { type: "HYDRATE"; items: CartItem[] };
+  | { type: "HYDRATE"; items: CartItem[]; appliedCoupon?: AppliedCoupon | null }
+  | { type: "APPLY_COUPON"; coupon: AppliedCoupon }
+  | { type: "REMOVE_COUPON" };
 
 function cartReducer(state: CartState, action: CartAction): CartState {
   switch (action.type) {
@@ -88,7 +97,11 @@ function cartReducer(state: CartState, action: CartAction): CartState {
     case "SET_OPEN":
       return { ...state, open: action.open };
     case "HYDRATE":
-      return { ...state, items: action.items };
+      return { ...state, items: action.items, appliedCoupon: action.appliedCoupon ?? null };
+    case "APPLY_COUPON":
+      return { ...state, appliedCoupon: action.coupon };
+    case "REMOVE_COUPON":
+      return { ...state, appliedCoupon: null };
     default:
       return state;
   }
@@ -99,11 +112,16 @@ interface CartContextValue {
   open: boolean;
   totalItems: number;
   totalPrice: number;
+  appliedCoupon: AppliedCoupon | null;
+  discountAmount: number;
+  finalTotal: number;
   addItem: (item: Omit<CartItem, "quantity">) => void;
   removeItem: (key: string) => void;
   setQty: (key: string, qty: number) => void;
   openCart: () => void;
   closeCart: () => void;
+  applyCoupon: (coupon: AppliedCoupon) => void;
+  removeCoupon: () => void;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
@@ -116,16 +134,19 @@ export function CartProvider({
   children: React.ReactNode;
 }) {
   const storageKey = `wapy-cart-${slug}`;
-  const [state, dispatch] = useReducer(cartReducer, { items: [], open: false });
+  const [state, dispatch] = useReducer(cartReducer, { items: [], open: false, appliedCoupon: null });
 
   // Hydrate from localStorage once on mount (client only)
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey);
       if (raw) {
-        const parsed = JSON.parse(raw) as CartItem[];
+        const parsed = JSON.parse(raw) as { items: CartItem[]; appliedCoupon?: AppliedCoupon | null } | CartItem[];
+        // Support both old format (plain array) and new format (object with items + appliedCoupon)
         if (Array.isArray(parsed)) {
-          dispatch({ type: "HYDRATE", items: parsed });
+          dispatch({ type: "HYDRATE", items: parsed, appliedCoupon: null });
+        } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
+          dispatch({ type: "HYDRATE", items: parsed.items, appliedCoupon: parsed.appliedCoupon ?? null });
         }
       }
     } catch {
@@ -133,14 +154,14 @@ export function CartProvider({
     }
   }, [storageKey]);
 
-  // Persist cart to localStorage whenever items change
+  // Persist cart to localStorage whenever items or coupon change
   useEffect(() => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(state.items));
+      localStorage.setItem(storageKey, JSON.stringify({ items: state.items, appliedCoupon: state.appliedCoupon }));
     } catch {
       // Ignore write errors (private browsing, quota, etc.)
     }
-  }, [storageKey, state.items]);
+  }, [storageKey, state.items, state.appliedCoupon]);
 
   const addItem = useCallback(
     (item: Omit<CartItem, "quantity">) => dispatch({ type: "ADD", item }),
@@ -163,12 +184,32 @@ export function CartProvider({
     () => dispatch({ type: "SET_OPEN", open: false }),
     []
   );
+  const applyCoupon = useCallback(
+    (coupon: AppliedCoupon) => dispatch({ type: "APPLY_COUPON", coupon }),
+    []
+  );
+  const removeCoupon = useCallback(
+    () => dispatch({ type: "REMOVE_COUPON" }),
+    []
+  );
 
   const totalItems = state.items.reduce((s, i) => s + i.quantity, 0);
+  // Fix: use variantPrice when set, falling back to price (aligns with handleWhatsApp)
   const totalPrice = state.items.reduce(
-    (s, i) => s + i.price * i.quantity,
+    (s, i) => s + (i.variantPrice ?? i.price) * i.quantity,
     0
   );
+
+  // Derive discount and finalTotal from appliedCoupon + totalPrice
+  let discountAmount = 0;
+  if (state.appliedCoupon && totalPrice > 0) {
+    if (state.appliedCoupon.discountType === 'percent') {
+      discountAmount = Math.round(totalPrice * state.appliedCoupon.discountValue / 100 * 100) / 100;
+    } else {
+      discountAmount = Math.min(state.appliedCoupon.discountValue, totalPrice);
+    }
+  }
+  const finalTotal = Math.max(0, totalPrice - discountAmount);
 
   return (
     <CartContext.Provider
@@ -177,11 +218,16 @@ export function CartProvider({
         open: state.open,
         totalItems,
         totalPrice,
+        appliedCoupon: state.appliedCoupon,
+        discountAmount,
+        finalTotal,
         addItem,
         removeItem,
         setQty,
         openCart,
         closeCart,
+        applyCoupon,
+        removeCoupon,
       }}
     >
       {children}

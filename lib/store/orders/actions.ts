@@ -8,6 +8,9 @@ import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 type CreateOrderInput = {
   store_id: string;
   items: Array<{ product_id: string; quantity: number; variant_id?: string | null }>;
+  // Coupon applied at checkout (optional)
+  coupon_code?: string | null;
+  discount_amount?: number | null;
 };
 
 type StockInsufficientDetail = {
@@ -242,13 +245,28 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   const totalCents = enrichedItems.reduce((sum, i) => sum + i.effectivePrice * i.quantity, 0);
 
   // 5. Insert order
-  const { data: order, error: orderError } = await admin
+  // Compute discount_cents from discount_amount (which is in ARS, same as totalCents units... but
+  // discount_amount is passed as a raw number matching totalPrice units in the cart — cents).
+  // The cart totalPrice is already in cents (price_cents / 100 * qty), but looking at handleWhatsApp,
+  // formatARS(totalPrice) is called directly, meaning totalPrice is in ARS (not cents).
+  // Actually: StoreClient cart uses price from CartItem.price which is set from product.price_cents/100
+  // in ProductCardClient — so totalPrice is in ARS units, and discount_amount is also in ARS.
+  // totalCents above is computed server-side from price_cents, so it is in cents.
+  // We convert discount_amount (ARS) → discount_cents by multiplying by 100.
+  const discountCents = input.discount_amount != null
+    ? Math.round(input.discount_amount * 100)
+    : null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: order, error: orderError } = await (admin as any)
     .from('orders')
     .insert({
       store_id: input.store_id,
       total_cents: totalCents,
       currency: 'ARS',
       status: 'pending',
+      coupon_code: input.coupon_code ?? null,
+      discount_cents: discountCents,
     })
     .select('id')
     .single();
@@ -341,7 +359,31 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     }
   }
 
-  // 7. Return order reference
+  // 7. Increment coupon uses_count (best-effort — does not block order creation if it fails).
+  // Note: Supabase JS does not support atomic increment via .update(), so we fetch then update.
+  // This is an approximation: uses_count may drift under concurrent load, which is acceptable per design.
+  if (input.coupon_code) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: couponRow } = await (admin as any)
+        .from('coupons')
+        .select('id, uses_count')
+        .eq('store_id', input.store_id)
+        .eq('code', input.coupon_code)
+        .maybeSingle();
+      if (couponRow) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any)
+          .from('coupons')
+          .update({ uses_count: (couponRow.uses_count ?? 0) + 1 })
+          .eq('id', couponRow.id);
+      }
+    } catch (e) {
+      console.warn('[createPendingOrder] coupon uses_count increment failed (best-effort):', e);
+    }
+  }
+
+  // 8. Return order reference
   return { order_id: order.id };
 }
 

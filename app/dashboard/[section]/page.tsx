@@ -11,15 +11,17 @@ import { SettingsPanel } from '../components/SettingsPanel';
 import { OrdersPanel } from '../components/OrdersPanel';
 import { OrdersStats } from '../components/OrdersStats';
 import { SubscriptionPanel } from '../components/SubscriptionPanel';
+import { CouponsPanel } from '../components/CouponsPanel';
 import { listOrders, getOrderStats } from '@/lib/store/orders/actions';
 import { getPlanLimits, isUnlimited, type PlanId } from '@/lib/plans/limits';
 import { getSubscriptionState, daysLeftInTrial } from '@/lib/subscription/state';
+import type { Coupon } from '@/lib/store/coupons/actions';
 import type { Metadata } from 'next';
 import type { Section, Product } from '@/lib/onboarding/state';
 
 export const dynamic = 'force-dynamic';
 
-const VALID_SECTIONS = ['info', 'image', 'sections', 'products', 'orders', 'whatsapp', 'settings', 'subscription'] as const;
+const VALID_SECTIONS = ['info', 'image', 'sections', 'products', 'orders', 'coupons', 'whatsapp', 'settings', 'subscription'] as const;
 type SectionSlug = (typeof VALID_SECTIONS)[number];
 
 function isValidSection(s: string): s is SectionSlug {
@@ -32,6 +34,7 @@ const SECTION_TITLES: Record<SectionSlug, string> = {
   sections: 'Secciones',
   products: 'Productos',
   orders: 'Pedidos',
+  coupons: 'Cupones',
   whatsapp: 'WhatsApp',
   settings: 'Configuración',
   subscription: 'Suscripción',
@@ -98,6 +101,12 @@ export default async function DashboardSectionPage({
     orders_by_section: [],
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const couponsResult = section === 'coupons'
+    ? await (admin as any).from('coupons').select('*').eq('store_id', store.id).order('created_at', { ascending: false })
+    : null;
+  const initialCoupons: Coupon[] = couponsResult?.data ?? [];
+
   const limits = getPlanLimits(store.plan as PlanId | null);
 
   const accentColor =
@@ -138,6 +147,9 @@ export default async function DashboardSectionPage({
           <OrdersStats accentColor={accentColor} initialStats={initialStats} initialRange="30d" />
           <OrdersPanel store={store} initialOrders={initialOrders} sections={sections} />
         </>
+      )}
+      {section === 'coupons' && (
+        <CouponsPanel store={store} initialCoupons={initialCoupons} />
       )}
       {section === 'whatsapp' && <WhatsappPanel store={store} />}
       {section === 'settings' && <SettingsPanel store={store} />}
