@@ -6,6 +6,7 @@ import { saveCoupon, deleteCoupon, toggleCoupon } from '@/lib/store/coupons/acti
 import { isCouponValid } from '@/lib/store/coupons/validity';
 import type { Coupon, SaveCouponInput } from '@/lib/store/coupons/actions';
 import type { Store } from '@/lib/onboarding/state';
+import { DatePicker } from '@/app/components/DatePicker';
 
 type Props = {
   store: Store;
@@ -228,12 +229,14 @@ function CouponModal({ coupon, onSaved, onClose }: ModalProps) {
             <label className="block text-xs font-medium text-white/60 mb-1" htmlFor="coupon-expires">
               Vencimiento (opcional — vacío = no vence)
             </label>
-            <input
-              id="coupon-expires"
-              type="date"
+            <DatePicker
               value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
-              className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] px-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]"
+              onChange={setExpiresAt}
+              placeholder="Sin vencimiento"
+              min={new Date().toISOString().slice(0, 10)}
+              className="w-full"
+              fullWidth
+              ariaLabel="Fecha de vencimiento"
             />
           </div>
 

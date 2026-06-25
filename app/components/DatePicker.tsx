@@ -11,6 +11,7 @@ export type DatePickerProps = {
   max?: string;
   className?: string;
   ariaLabel?: string;
+  fullWidth?: boolean;
 };
 
 const MONTHS_ES = [
@@ -63,6 +64,7 @@ export function DatePicker({
   max,
   className = '',
   ariaLabel,
+  fullWidth = false,
 }: DatePickerProps) {
   const today = todayISO();
   const parsed = parseDate(value);
@@ -183,6 +185,7 @@ export function DatePicker({
           'bg-white/5 px-3 py-2 text-sm text-[#FBF7EC]',
           'hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#F5C84B]/30 cursor-pointer',
           'transition-colors whitespace-nowrap',
+          fullWidth ? 'w-full' : '',
           open ? 'ring-2 ring-[#F5C84B]/30 bg-white/10' : '',
           !value ? 'text-white/40' : '',
         ].filter(Boolean).join(' ')}
