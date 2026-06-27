@@ -6,6 +6,7 @@ import MaintenancePage from "./MaintenancePage";
 import { parseFiltersFromSearchParams } from "./filters";
 import { getTopSellers, getRelatedProductIds } from "@/lib/storefront/insights";
 import type { UIProduct } from "./types";
+import { getStoreMpConnectionStatus } from "@/lib/store/checkout/oauth";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -87,20 +88,32 @@ export default async function SlugPage({ params, searchParams }: Props) {
                   ),
             imageUrls: p.image_urls ?? [],
             stock: p.stock ?? null,
-            min_quantity: (p as unknown as { min_quantity?: number }).min_quantity ?? 1,
-            qty_step: (p as unknown as { qty_step?: number }).qty_step ?? 1,
+            min_quantity: p.min_quantity ?? 1,
+            qty_step: p.qty_step ?? 1,
           },
         ])
       );
 
-      // Fetch top sellers and (if deep-link) related products in parallel.
-      // Both are best-effort — silently degrade to [] on any error.
-      const [topSellerIds, initialRelatedIds] = await Promise.all([
+      // task 5.6: Extract checkout_mode
+      const checkoutMode: 'whatsapp' | 'mercadopago' =
+        resolution.store.checkout_mode === 'mercadopago' ? 'mercadopago' : 'whatsapp';
+
+      // task 5.6: Fetch MP connection status + top sellers + related in parallel
+      // MP status is best-effort — defaults to disconnected on error
+      const [topSellerIds, initialRelatedIds, mpStatus] = await Promise.all([
         getTopSellers(resolution.store.id),
         initialProductId
           ? getRelatedProductIds(initialProductId, resolution.store.id)
           : Promise.resolve([]),
+        checkoutMode === 'mercadopago'
+          ? getStoreMpConnectionStatus(resolution.store.id).catch(() => ({
+              connected: false,
+              revoked: false,
+            }))
+          : Promise.resolve({ connected: false, revoked: false }),
       ]);
+
+      const mpConnected = mpStatus.connected;
 
       // Map RPC ids → UIProduct, filtering products not in the active catalog.
       const topSellerProducts: UIProduct[] = topSellerIds
@@ -117,6 +130,8 @@ export default async function SlugPage({ params, searchParams }: Props) {
           initialProductId={initialProductId}
           topSellerProducts={topSellerProducts}
           initialRelatedIds={initialRelatedIds}
+          checkoutMode={checkoutMode}
+          mpConnected={mpConnected}
         />
       );
     }

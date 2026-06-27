@@ -13,6 +13,7 @@ import {
 import type { SocialLinks } from '@/lib/store/social-links';
 import { getPlanLimits, isUnlimited } from '@/lib/plans/limits';
 import type { PlanId } from '@/lib/plans/limits';
+import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 
 // Section item schema (without the min-1 array constraint — dashboard can have 0)
 const sectionItemSchema = z.object({
@@ -350,8 +351,7 @@ export async function saveStoreProduct(
   }
 
   if (product.id) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (admin as any)
+    const { error } = await admin
       .from('products')
       .update({
         name: product.name,
@@ -387,8 +387,7 @@ export async function saveStoreProduct(
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: newProduct, error: insertError } = await (admin as any)
+  const { data: newProduct, error: insertError } = await admin
     .from('products')
     .insert({
       store_id: store.id,
@@ -549,8 +548,7 @@ export async function duplicateProduct(
     newPosition = (maxRow?.position ?? -1) + 1;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: newProduct, error: insertError } = await (admin as any)
+  const { data: newProduct, error: insertError } = await admin
     .from('products')
     .insert({
       store_id: store.id,
@@ -563,8 +561,8 @@ export async function duplicateProduct(
       position: newPosition,
       is_active: false,
       currency: original.currency ?? 'ARS',
-      min_quantity: (original as unknown as { min_quantity?: number }).min_quantity ?? 1,
-      qty_step: (original as unknown as { qty_step?: number }).qty_step ?? 1,
+      min_quantity: original.min_quantity ?? 1,
+      qty_step: original.qty_step ?? 1,
     })
     .select('*')
     .single();
@@ -701,4 +699,44 @@ export async function saveStoreWhatsapp(formData: {
 
   revalidatePath('/dashboard', 'layout');
   return { ok: true, storeId: store.id };
+}
+
+// ---------------------------------------------------------------------------
+// setCheckoutMode — UPDATE stores.checkout_mode (gated by MP connection).
+// ---------------------------------------------------------------------------
+
+export async function setCheckoutMode(
+  mode: 'whatsapp' | 'mercadopago'
+): Promise<{ ok: true } | { error: string }> {
+  if (mode !== 'whatsapp' && mode !== 'mercadopago') {
+    return { error: 'Modo de checkout inválido.' };
+  }
+
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  // Gate: the mercadopago mode requires a valid (non-revoked) connection.
+  if (mode === 'mercadopago') {
+    let status: { connected: boolean; revoked: boolean };
+    try {
+      status = await getStoreMpConnectionStatus(store.id);
+    } catch {
+      return { error: 'No se pudo verificar la conexión con Mercado Pago.' };
+    }
+    if (!status.connected || status.revoked) {
+      return { error: 'Conectá tu cuenta de Mercado Pago antes de activar este modo.' };
+    }
+  }
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from('stores')
+    .update({ checkout_mode: mode, updated_at: new Date().toISOString() })
+    .eq('id', store.id);
+
+  if (error) return { error: 'No se pudo cambiar el modo de checkout.' };
+
+  revalidatePath('/dashboard', 'layout');
+  revalidatePath('/[slug]', 'page');
+  return { ok: true };
 }

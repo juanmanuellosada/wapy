@@ -7,17 +7,28 @@ import { renameSlug, toggleStoreStatus, deleteStore } from '@/lib/dashboard/acti
 import { checkSlugAvailable } from '@/lib/onboarding/actions';
 import { RenameSlugModal } from './RenameSlugModal';
 import { DeleteStoreModal } from './DeleteStoreModal';
+import { MercadoPagoPanel } from './MercadoPagoPanel';
 import type { Store } from '@/lib/onboarding/state';
+
+type MpConnectionStatus = {
+  connected: boolean;
+  revoked: boolean;
+  mpUserId?: string;
+};
 
 type Props = {
   store: Store;
+  mpStatus: MpConnectionStatus;
+  checkoutMode: 'whatsapp' | 'mercadopago';
+  mpConnectResult?: 'success' | 'error' | null;
+  mpError?: string | null;
 };
 
 type SlugStatus = 'idle' | 'checking' | 'available' | 'taken' | 'reserved' | 'invalid' | 'same';
 
 const SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/;
 
-export function SettingsPanel({ store }: Props) {
+export function SettingsPanel({ store, mpStatus, checkoutMode, mpConnectResult, mpError }: Props) {
   const router = useRouter();
 
   // --------------------------------------------------------------------------
@@ -129,6 +140,18 @@ export function SettingsPanel({ store }: Props) {
   return (
     <div className="space-y-8">
       <h1 className="text-xl font-bold text-[#FBF7EC]">Configuración</h1>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Mercado Pago */}
+      {/* ------------------------------------------------------------------ */}
+      <MercadoPagoPanel
+        mpStatus={mpStatus}
+        checkoutMode={checkoutMode}
+        mpConnectResult={mpConnectResult}
+        mpError={mpError}
+      />
+
+      <hr className="border-white/10" />
 
       {/* ------------------------------------------------------------------ */}
       {/* Slug rename */}

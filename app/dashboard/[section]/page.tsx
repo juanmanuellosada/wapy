@@ -15,6 +15,7 @@ import { CouponsPanel } from '../components/CouponsPanel';
 import { listOrders, getOrderStats } from '@/lib/store/orders/actions';
 import { getPlanLimits, isUnlimited, type PlanId } from '@/lib/plans/limits';
 import { getSubscriptionState, daysLeftInTrial } from '@/lib/subscription/state';
+import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 import type { Coupon } from '@/lib/store/coupons/actions';
 import type { Metadata } from 'next';
 import type { Section, Product } from '@/lib/onboarding/state';
@@ -48,8 +49,10 @@ export async function generateMetadata({ params }: { params: Promise<{ section: 
 
 export default async function DashboardSectionPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ section: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { section } = await params;
 
@@ -101,13 +104,41 @@ export default async function DashboardSectionPage({
     orders_by_section: [],
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const couponsResult = section === 'coupons'
-    ? await (admin as any).from('coupons').select('*').eq('store_id', store.id).order('created_at', { ascending: false })
+    ? await admin.from('coupons').select('*').eq('store_id', store.id).order('created_at', { ascending: false })
     : null;
-  const initialCoupons: Coupon[] = couponsResult?.data ?? [];
+  const initialCoupons: Coupon[] = (couponsResult?.data ?? []) as Coupon[];
 
   const limits = getPlanLimits(store.plan as PlanId | null);
+
+  // Load Mercado Pago connection state only for the settings section.
+  type MpStatus = { connected: boolean; revoked: boolean; mpUserId?: string };
+  let mpStatus: MpStatus = { connected: false, revoked: false };
+  let checkoutMode: 'whatsapp' | 'mercadopago' = 'whatsapp';
+  let mpConnectResult: 'success' | 'error' | null = null;
+  let mpError: string | null = null;
+
+  if (section === 'settings') {
+    try {
+      mpStatus = await getStoreMpConnectionStatus(store.id);
+    } catch {
+      // Migration not applied or env vars missing — default to no connection.
+      mpStatus = { connected: false, revoked: false };
+    }
+    checkoutMode = (store.checkout_mode ?? 'whatsapp') as 'whatsapp' | 'mercadopago';
+
+    if (searchParams) {
+      const sp = await searchParams;
+      const connectParam = sp['mp_connect'];
+      if (connectParam === 'success' || connectParam === 'error') {
+        mpConnectResult = connectParam;
+      }
+      const errorParam = sp['mp_error'];
+      if (typeof errorParam === 'string') {
+        mpError = errorParam;
+      }
+    }
+  }
 
   const accentColor =
     store.theme &&
@@ -152,7 +183,15 @@ export default async function DashboardSectionPage({
         <CouponsPanel store={store} initialCoupons={initialCoupons} />
       )}
       {section === 'whatsapp' && <WhatsappPanel store={store} />}
-      {section === 'settings' && <SettingsPanel store={store} />}
+      {section === 'settings' && (
+        <SettingsPanel
+          store={store}
+          mpStatus={mpStatus}
+          checkoutMode={checkoutMode}
+          mpConnectResult={mpConnectResult}
+          mpError={mpError}
+        />
+      )}
       {section === 'subscription' && (
         <SubscriptionPanel store={store} subState={subState} daysLeft={daysLeft} />
       )}

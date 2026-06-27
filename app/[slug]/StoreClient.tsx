@@ -23,6 +23,7 @@ import { useCart, cartItemKey } from "./CartContext";
 import ProductCardClient, { VariantSelector } from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
+import { startCheckout } from "@/lib/store/checkout/actions";
 import { validateCoupon } from "@/lib/store/coupons/actions";
 import { toast } from "@/lib/toast";
 import ProductGallery from "./ProductGallery";
@@ -915,6 +916,15 @@ function ProductModal({
 
 // ─── Cart Drawer ──────────────────────────────────────────────────────────────
 
+interface BuyerForm {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+}
+
+const EMPTY_BUYER: BuyerForm = { name: "", email: "", phone: "", address: "" };
+
 function CartDrawer({
   storeId,
   storeName,
@@ -923,6 +933,8 @@ function CartDrawer({
   whatsappNumber,
   productStockMap,
   productMinStepMap,
+  checkoutMode,
+  mpConnected,
 }: {
   storeId: string;
   storeName: string;
@@ -931,11 +943,20 @@ function CartDrawer({
   whatsappNumber: string | null;
   productStockMap: Map<string, number | null>;
   productMinStepMap: Map<string, { min_quantity: number; qty_step: number }>;
+  checkoutMode: "whatsapp" | "mercadopago";
+  mpConnected: boolean;
 }) {
   const { items, open, totalPrice, appliedCoupon, discountAmount, finalTotal, removeItem, setQty, closeCart, applyCoupon, removeCoupon } = useCart();
-  const [couponInput, setCouponInput] = useState('');
+  const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
+  // task 5.4, 5.5: MP checkout step state
+  const isMpMode = checkoutMode === "mercadopago" && mpConnected;
+  const [checkoutStep, setCheckoutStep] = useState<"cart" | "form">("cart");
+  const [buyerForm, setBuyerForm] = useState<BuyerForm>(EMPTY_BUYER);
+  const [buyerErrors, setBuyerErrors] = useState<Partial<Record<keyof BuyerForm, string>>>({});
+  const [mpLoading, setMpLoading] = useState(false);
+  const [mpError, setMpError] = useState<string | null>(null);
   const accentForeground = "#ffffff";
 
   // Items where quantity exceeds current stock (stock !== null only).
@@ -1047,6 +1068,60 @@ function CartDrawer({
     setCouponLoading(false);
   }
 
+  // task 5.4: validate buyer form fields client-side before submitting
+  function validateBuyerForm(): boolean {
+    const errs: Partial<Record<keyof BuyerForm, string>> = {};
+    if (buyerForm.name.trim().length < 2) errs.name = "El nombre debe tener al menos 2 caracteres";
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(buyerForm.email.trim())) errs.email = "Email inválido";
+    const phoneRe = /^[0-9+\-\s()]+$/;
+    if (buyerForm.phone.trim().length < 7 || !phoneRe.test(buyerForm.phone.trim())) errs.phone = "Teléfono inválido";
+    if (buyerForm.address.trim().length < 5) errs.address = "La dirección debe tener al menos 5 caracteres";
+    setBuyerErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
+  // task 5.7: submit buyer form → call startCheckout → redirect to initPoint
+  async function handleMpCheckout() {
+    if (!validateBuyerForm()) return;
+    setMpLoading(true);
+    setMpError(null);
+    try {
+      const result = await startCheckout({
+        slug: storeSlug,
+        cart: items.map((i) => ({
+          productId: i.productId,
+          variantId: i.variantId ?? null,
+          quantity: i.quantity,
+        })),
+        buyer: {
+          name: buyerForm.name.trim(),
+          email: buyerForm.email.trim(),
+          phone: buyerForm.phone.trim(),
+          address: buyerForm.address.trim(),
+        },
+      });
+      if ("error" in result) {
+        setMpError(result.error);
+        setMpLoading(false);
+        return;
+      }
+      // task 5.7: redirect browser to Mercado Pago checkout
+      window.location.href = result.initPoint;
+    } catch {
+      setMpError("Error inesperado. Intentá de nuevo.");
+      setMpLoading(false);
+    }
+  }
+
+  // Reset MP step when drawer closes
+  function handleCloseCart() {
+    closeCart();
+    setCheckoutStep("cart");
+    setBuyerErrors({});
+    setMpError(null);
+  }
+
   // Prevent body scroll when open
   useEffect(() => {
     if (open) document.body.style.overflow = "hidden";
@@ -1063,7 +1138,7 @@ function CartDrawer({
         <div
           className="fixed inset-0 z-40"
           style={{ background: "rgba(0,0,0,0.4)" }}
-          onClick={closeCart}
+          onClick={handleCloseCart}
           aria-hidden="true"
         />
       )}
@@ -1100,7 +1175,7 @@ function CartDrawer({
             </h2>
           </div>
           <button
-            onClick={closeCart}
+            onClick={handleCloseCart}
             className="store-icon-btn flex h-9 w-9 items-center justify-center rounded-full cursor-pointer transition-colors"
             style={{ color: "var(--store-ink-secondary)" }}
             aria-label="Cerrar carrito"
@@ -1268,139 +1343,274 @@ function CartDrawer({
             className="px-5 py-4 flex flex-col gap-3"
             style={{ borderTop: "1px solid var(--store-border)" }}
           >
-            {/* Coupon input */}
-            {!appliedCoupon ? (
-              <div className="flex flex-col gap-1">
-                <div className="flex gap-2">
+            {/* task 5.4: MP buyer form step — shown only in MP mode after pressing "Pagar" */}
+            {isMpMode && checkoutStep === "form" ? (
+              <>
+                {/* Back link */}
+                <button
+                  type="button"
+                  onClick={() => { setCheckoutStep("cart"); setBuyerErrors({}); setMpError(null); }}
+                  className="flex items-center gap-1 text-xs cursor-pointer"
+                  style={{ color: "var(--store-ink-secondary)" }}
+                >
+                  <ChevronRight className="h-3 w-3 rotate-180" aria-hidden="true" />
+                  Volver al carrito
+                </button>
+
+                <p className="text-sm font-semibold" style={{ color: "var(--store-ink)" }}>
+                  Tus datos de contacto
+                </p>
+
+                {/* Name */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium" style={{ color: "var(--store-ink-secondary)" }}>
+                    Nombre y apellido <span aria-hidden>*</span>
+                  </label>
                   <input
                     type="text"
-                    value={couponInput}
-                    onChange={(e) => { setCouponInput(e.target.value.toUpperCase()); setCouponError(null); }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleApplyCoupon(); } }}
-                    placeholder="Código de cupón"
-                    maxLength={50}
-                    className="flex-1 rounded-xl px-3 py-2 text-sm focus:outline-none"
+                    value={buyerForm.name}
+                    onChange={(e) => { setBuyerForm((p) => ({ ...p, name: e.target.value })); setBuyerErrors((p) => ({ ...p, name: undefined })); }}
+                    placeholder="Juan Pérez"
+                    maxLength={120}
+                    className="rounded-xl px-3 py-2 text-sm focus:outline-none"
                     style={{
                       background: "var(--store-border)",
                       color: "var(--store-ink)",
-                      border: "1px solid var(--store-border-strong)",
+                      border: `1px solid ${buyerErrors.name ? "rgba(248,113,113,0.8)" : "var(--store-border-strong)"}`,
                     }}
-                    aria-label="Código de cupón de descuento"
                   />
-                  <button
-                    type="button"
-                    onClick={handleApplyCoupon}
-                    disabled={couponLoading || !couponInput.trim()}
-                    className="px-3 py-2 rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
-                    style={{ background: "var(--store-border-strong)", color: "var(--store-ink)" }}
-                  >
-                    {couponLoading ? '...' : 'Aplicar'}
-                  </button>
+                  {buyerErrors.name && <p className="text-xs text-red-400">{buyerErrors.name}</p>}
                 </div>
-                {couponError && (
-                  <p className="text-xs text-red-400">{couponError}</p>
-                )}
-              </div>
-            ) : (
-              <div
-                className="flex items-center justify-between rounded-xl px-3 py-2"
-                style={{ background: "var(--store-border)" }}
-              >
-                <span className="text-sm font-mono font-semibold" style={{ color: "var(--store-ink)" }}>
-                  {appliedCoupon.code}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>
-                    -{formatARS(discountAmount)}
+
+                {/* Email */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium" style={{ color: "var(--store-ink-secondary)" }}>
+                    Email <span aria-hidden>*</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={buyerForm.email}
+                    onChange={(e) => { setBuyerForm((p) => ({ ...p, email: e.target.value })); setBuyerErrors((p) => ({ ...p, email: undefined })); }}
+                    placeholder="juan@ejemplo.com"
+                    maxLength={200}
+                    className="rounded-xl px-3 py-2 text-sm focus:outline-none"
+                    style={{
+                      background: "var(--store-border)",
+                      color: "var(--store-ink)",
+                      border: `1px solid ${buyerErrors.email ? "rgba(248,113,113,0.8)" : "var(--store-border-strong)"}`,
+                    }}
+                  />
+                  {buyerErrors.email && <p className="text-xs text-red-400">{buyerErrors.email}</p>}
+                </div>
+
+                {/* Phone */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium" style={{ color: "var(--store-ink-secondary)" }}>
+                    Teléfono <span aria-hidden>*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={buyerForm.phone}
+                    onChange={(e) => { setBuyerForm((p) => ({ ...p, phone: e.target.value })); setBuyerErrors((p) => ({ ...p, phone: undefined })); }}
+                    placeholder="+54 9 11 1234-5678"
+                    maxLength={30}
+                    className="rounded-xl px-3 py-2 text-sm focus:outline-none"
+                    style={{
+                      background: "var(--store-border)",
+                      color: "var(--store-ink)",
+                      border: `1px solid ${buyerErrors.phone ? "rgba(248,113,113,0.8)" : "var(--store-border-strong)"}`,
+                    }}
+                  />
+                  {buyerErrors.phone && <p className="text-xs text-red-400">{buyerErrors.phone}</p>}
+                </div>
+
+                {/* Address */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium" style={{ color: "var(--store-ink-secondary)" }}>
+                    Dirección de entrega <span aria-hidden>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={buyerForm.address}
+                    onChange={(e) => { setBuyerForm((p) => ({ ...p, address: e.target.value })); setBuyerErrors((p) => ({ ...p, address: undefined })); }}
+                    placeholder="Av. Corrientes 1234, CABA"
+                    maxLength={300}
+                    className="rounded-xl px-3 py-2 text-sm focus:outline-none"
+                    style={{
+                      background: "var(--store-border)",
+                      color: "var(--store-ink)",
+                      border: `1px solid ${buyerErrors.address ? "rgba(248,113,113,0.8)" : "var(--store-border-strong)"}`,
+                    }}
+                  />
+                  {buyerErrors.address && <p className="text-xs text-red-400">{buyerErrors.address}</p>}
+                </div>
+
+                {/* Total summary */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium" style={{ color: "var(--store-ink-secondary)" }}>Total</span>
+                  <span className="text-xl font-bold" style={{ color: "var(--store-ink)" }}>
+                    {formatARS(appliedCoupon && discountAmount > 0 ? finalTotal : totalPrice)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => { removeCoupon(); setCouponError(null); }}
-                    className="w-5 h-5 flex items-center justify-center rounded-full cursor-pointer"
-                    style={{ color: "var(--store-ink-muted)" }}
-                    aria-label="Quitar cupón"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
                 </div>
-              </div>
-            )}
 
-            {/* Subtotal / Total */}
-            {appliedCoupon && discountAmount > 0 ? (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>Subtotal</span>
-                  <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>{formatARS(totalPrice)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold" style={{ color: "var(--store-ink)" }}>Total</span>
-                  <span className="text-xl font-bold" style={{ color: "var(--store-ink)" }}>{formatARS(finalTotal)}</span>
-                </div>
-              </div>
-            ) : (
-            <div className="flex items-center justify-between">
-              <span
-                className="text-sm font-medium"
-                style={{ color: "var(--store-ink-secondary)" }}
-              >
-                Total
-              </span>
-              <span
-                className="text-xl font-bold"
-                style={{ color: "var(--store-ink)" }}
-              >
-                {formatARS(totalPrice)}
-              </span>
-            </div>
-            )}
+                {/* Error message */}
+                {mpError && (
+                  <p className="text-xs text-red-400 text-center">{mpError}</p>
+                )}
 
-            {/* Share viral CTA — above WhatsApp order button */}
-            <ShareCartButton
-              storeName={storeName}
-              slug={storeSlug}
-              items={items}
-              total={totalPrice}
-              accentColor={accentColor}
-              productMinStepMap={productMinStepMap}
-            />
-
-            {/* WhatsApp CTA */}
-            {whatsappNumber ? (
-              <button
-                onClick={handleWhatsApp}
-                disabled={hasStockIssues}
-                className={`w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 transition-opacity${hasStockIssues ? " opacity-50 cursor-not-allowed" : " cursor-pointer hover:opacity-90"}`}
-                style={{ background: "#25D366", color: "#ffffff" }}
-                aria-label={hasStockIssues ? "Corregí el stock para continuar" : "Enviar pedido por WhatsApp"}
-                title={hasStockIssues ? "Reducí la cantidad de los productos marcados para continuar" : undefined}
-              >
-                <WhatsAppIcon className="h-5 w-5" />
-                {hasStockIssues ? "Corregí el stock" : "Pedir por WhatsApp"}
-              </button>
-            ) : (
-              <div className="flex flex-col gap-1">
+                {/* Confirm payment button */}
                 <button
-                  disabled
-                  className="w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 opacity-50 cursor-not-allowed"
-                  style={{ background: "#25D366", color: "#ffffff" }}
-                  title="El comercio no configuró WhatsApp aún"
+                  type="button"
+                  onClick={handleMpCheckout}
+                  disabled={mpLoading}
+                  className={`w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 transition-opacity${mpLoading ? " opacity-60 cursor-not-allowed" : " cursor-pointer hover:opacity-90"}`}
+                  style={{ background: accentColor, color: accentForeground }}
                 >
-                  <WhatsAppIcon className="h-5 w-5" />
-                  Pedir por WhatsApp
+                  {mpLoading ? "Procesando…" : "Confirmar y pagar"}
                 </button>
-                <p className="text-center text-xs" style={{ color: "var(--store-ink-muted)" }}>
-                  El comercio no configuró WhatsApp aún
-                </p>
-              </div>
-            )}
+              </>
+            ) : (
+              <>
+                {/* Cart step: coupon + totals + CTA */}
 
-            <p
-              className="text-center text-xs"
-              style={{ color: "var(--store-ink-muted)" }}
-            >
-              Te contactaremos para confirmar el pedido
-            </p>
+                {/* Coupon input */}
+                {!appliedCoupon ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={couponInput}
+                        onChange={(e) => { setCouponInput(e.target.value.toUpperCase()); setCouponError(null); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleApplyCoupon(); } }}
+                        placeholder="Código de cupón"
+                        maxLength={50}
+                        className="flex-1 rounded-xl px-3 py-2 text-sm focus:outline-none"
+                        style={{
+                          background: "var(--store-border)",
+                          color: "var(--store-ink)",
+                          border: "1px solid var(--store-border-strong)",
+                        }}
+                        aria-label="Código de cupón de descuento"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleApplyCoupon}
+                        disabled={couponLoading || !couponInput.trim()}
+                        className="px-3 py-2 rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
+                        style={{ background: "var(--store-border-strong)", color: "var(--store-ink)" }}
+                      >
+                        {couponLoading ? "..." : "Aplicar"}
+                      </button>
+                    </div>
+                    {couponError && (
+                      <p className="text-xs text-red-400">{couponError}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    className="flex items-center justify-between rounded-xl px-3 py-2"
+                    style={{ background: "var(--store-border)" }}
+                  >
+                    <span className="text-sm font-mono font-semibold" style={{ color: "var(--store-ink)" }}>
+                      {appliedCoupon.code}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>
+                        -{formatARS(discountAmount)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { removeCoupon(); setCouponError(null); }}
+                        className="w-5 h-5 flex items-center justify-center rounded-full cursor-pointer"
+                        style={{ color: "var(--store-ink-muted)" }}
+                        aria-label="Quitar cupón"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Subtotal / Total */}
+                {appliedCoupon && discountAmount > 0 ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>Subtotal</span>
+                      <span className="text-sm" style={{ color: "var(--store-ink-secondary)" }}>{formatARS(totalPrice)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold" style={{ color: "var(--store-ink)" }}>Total</span>
+                      <span className="text-xl font-bold" style={{ color: "var(--store-ink)" }}>{formatARS(finalTotal)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium" style={{ color: "var(--store-ink-secondary)" }}>
+                      Total
+                    </span>
+                    <span className="text-xl font-bold" style={{ color: "var(--store-ink)" }}>
+                      {formatARS(totalPrice)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Share viral CTA — above checkout button */}
+                <ShareCartButton
+                  storeName={storeName}
+                  slug={storeSlug}
+                  items={items}
+                  total={totalPrice}
+                  accentColor={accentColor}
+                  productMinStepMap={productMinStepMap}
+                />
+
+                {/* task 5.5: CTA branch — MP mode shows payment button; WhatsApp mode shows WA */}
+                {isMpMode ? (
+                  <button
+                    onClick={() => setCheckoutStep("form")}
+                    disabled={hasStockIssues}
+                    className={`w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 transition-opacity${hasStockIssues ? " opacity-50 cursor-not-allowed" : " cursor-pointer hover:opacity-90"}`}
+                    style={{ background: accentColor, color: accentForeground }}
+                    aria-label={hasStockIssues ? "Corregí el stock para continuar" : "Pagar con Mercado Pago"}
+                    title={hasStockIssues ? "Reducí la cantidad de los productos marcados para continuar" : undefined}
+                  >
+                    <ShoppingBag className="h-5 w-5" aria-hidden="true" />
+                    {hasStockIssues ? "Corregí el stock" : "Pagar con Mercado Pago"}
+                  </button>
+                ) : whatsappNumber ? (
+                  <button
+                    onClick={handleWhatsApp}
+                    disabled={hasStockIssues}
+                    className={`w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 transition-opacity${hasStockIssues ? " opacity-50 cursor-not-allowed" : " cursor-pointer hover:opacity-90"}`}
+                    style={{ background: "#25D366", color: "#ffffff" }}
+                    aria-label={hasStockIssues ? "Corregí el stock para continuar" : "Enviar pedido por WhatsApp"}
+                    title={hasStockIssues ? "Reducí la cantidad de los productos marcados para continuar" : undefined}
+                  >
+                    <WhatsAppIcon className="h-5 w-5" />
+                    {hasStockIssues ? "Corregí el stock" : "Pedir por WhatsApp"}
+                  </button>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    <button
+                      disabled
+                      className="w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 opacity-50 cursor-not-allowed"
+                      style={{ background: "#25D366", color: "#ffffff" }}
+                      title="El comercio no configuró WhatsApp aún"
+                    >
+                      <WhatsAppIcon className="h-5 w-5" />
+                      Pedir por WhatsApp
+                    </button>
+                    <p className="text-center text-xs" style={{ color: "var(--store-ink-muted)" }}>
+                      El comercio no configuró WhatsApp aún
+                    </p>
+                  </div>
+                )}
+
+                <p className="text-center text-xs" style={{ color: "var(--store-ink-muted)" }}>
+                  {isMpMode ? "Serás redirigido a Mercado Pago para completar el pago" : "Te contactaremos para confirmar el pedido"}
+                </p>
+              </>
+            )}
           </div>
         )}
       </aside>
@@ -1560,6 +1770,8 @@ export default function StoreClient({
   initialProductId = null,
   topSellerProducts = [],
   initialRelatedIds = [],
+  checkoutMode = "whatsapp",
+  mpConnected = false,
 }: {
   store: StoreRow;
   sections: SectionRow[];
@@ -1571,6 +1783,10 @@ export default function StoreClient({
   topSellerProducts?: UIProduct[];
   /** Pre-fetched related product IDs for the initial deep-link product (SSR). */
   initialRelatedIds?: string[];
+  /** task 5.6: checkout mode passed from server (migration 031 column) */
+  checkoutMode?: "whatsapp" | "mercadopago";
+  /** task 5.6: whether the store has a valid (non-revoked) MP connection */
+  mpConnected?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -1913,6 +2129,8 @@ export default function StoreClient({
         whatsappNumber={store.whatsapp_number}
         productStockMap={productStockMap}
         productMinStepMap={productMinStepMap}
+        checkoutMode={checkoutMode}
+        mpConnected={mpConnected}
       />
 
       <FloatingCartButton accentColor={accentColor} />

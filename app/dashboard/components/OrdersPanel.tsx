@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react';
 import { Search, X, ClipboardList, Download } from 'lucide-react';
 import { updateOrderStatus, exportOrdersCsv } from '@/lib/store/orders/actions';
-import type { OrderWithItems, OrderStatus } from '@/lib/store/orders/actions';
+import type { OrderWithItems, OrderStatus, OrderChannel, OrderPaymentStatus } from '@/lib/store/orders/actions';
 import { toast } from '@/lib/toast';
 import type { Store, Section } from '@/lib/onboarding/state';
 import { Select } from '@/app/components/Select';
@@ -62,6 +62,46 @@ function StatusBadge({ status }: { status: OrderStatus }) {
       className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${STATUS_BADGE[status]}`}
     >
       {STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+const PAYMENT_STATUS_LABELS: Record<OrderPaymentStatus, string> = {
+  pending: 'Pago pendiente',
+  approved: 'Pagado',
+  rejected: 'Rechazado',
+  cancelled: 'Pago cancelado',
+};
+
+const PAYMENT_STATUS_BADGE: Record<OrderPaymentStatus, string> = {
+  pending: 'bg-amber-500/10 text-amber-300/80 border-amber-500/15',
+  approved: 'bg-green-500/15 text-green-300 border-green-500/20',
+  rejected: 'bg-red-500/15 text-red-300 border-red-500/20',
+  cancelled: 'bg-red-500/10 text-red-300/60 border-red-500/15',
+};
+
+const CHANNEL_LABELS: Record<OrderChannel, string> = {
+  whatsapp: 'WhatsApp',
+  mercadopago: 'Mercado Pago',
+};
+
+function PaymentStatusBadge({ paymentStatus, channel }: { paymentStatus: OrderPaymentStatus; channel: OrderChannel }) {
+  // Only show payment badge for MP orders or when payment status is non-trivially pending
+  if (channel === 'whatsapp' && paymentStatus === 'pending') return null;
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${PAYMENT_STATUS_BADGE[paymentStatus]}`}
+    >
+      {PAYMENT_STATUS_LABELS[paymentStatus]}
+    </span>
+  );
+}
+
+function ChannelBadge({ channel }: { channel: OrderChannel }) {
+  if (channel === 'whatsapp') return null;
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-[#009EE3]/10 text-[#009EE3]/80 border-[#009EE3]/15">
+      {CHANNEL_LABELS[channel]}
     </span>
   );
 }
@@ -164,8 +204,10 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
             <p className="text-xs text-white/40 font-mono">#{order.id.slice(0, 8)}</p>
             <p className="text-sm text-white/60 mt-0.5">{formatDateLong(order.created_at)}</p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+            <ChannelBadge channel={order.channel} />
             <StatusBadge status={order.status} />
+            <PaymentStatusBadge paymentStatus={order.payment_status} channel={order.channel} />
             <button
               type="button"
               onClick={onClose}
@@ -464,9 +506,11 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
                 </p>
               </div>
 
-              {/* Status */}
-              <div className="flex-shrink-0 hidden sm:block">
+              {/* Status + payment */}
+              <div className="flex-shrink-0 hidden sm:flex items-center gap-1.5 flex-wrap">
                 <StatusBadge status={order.status} />
+                <PaymentStatusBadge paymentStatus={order.payment_status} channel={order.channel} />
+                <ChannelBadge channel={order.channel} />
               </div>
 
               {/* Ver button */}

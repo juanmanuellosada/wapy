@@ -14,6 +14,59 @@ export type Database = {
   }
   public: {
     Tables: {
+      coupons: {
+        Row: {
+          code: string
+          created_at: string
+          discount_type: string
+          discount_value: number
+          expires_at: string | null
+          id: string
+          is_active: boolean
+          max_uses: number | null
+          min_purchase: number | null
+          store_id: string
+          updated_at: string
+          uses_count: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          discount_type: string
+          discount_value: number
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          max_uses?: number | null
+          min_purchase?: number | null
+          store_id: string
+          updated_at?: string
+          uses_count?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          discount_type?: string
+          discount_value?: number
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          max_uses?: number | null
+          min_purchase?: number | null
+          store_id?: string
+          updated_at?: string
+          uses_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coupons_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leads: {
         Row: {
           approved_at: string | null
@@ -135,39 +188,66 @@ export type Database = {
       orders: {
         Row: {
           cancelled_at: string | null
+          channel: string
           confirmed_at: string | null
+          coupon_code: string | null
           created_at: string
           currency: string
+          customer_email: string | null
           customer_name: string | null
+          customer_phone: string | null
           delivered_at: string | null
+          delivery_address: string | null
+          discount_cents: number | null
           id: string
+          mp_payment_id: string | null
+          mp_preference_id: string | null
           notes: string | null
+          payment_status: string
           status: string
           store_id: string
           total_cents: number
         }
         Insert: {
           cancelled_at?: string | null
+          channel?: string
           confirmed_at?: string | null
+          coupon_code?: string | null
           created_at?: string
           currency?: string
+          customer_email?: string | null
           customer_name?: string | null
+          customer_phone?: string | null
           delivered_at?: string | null
+          delivery_address?: string | null
+          discount_cents?: number | null
           id?: string
+          mp_payment_id?: string | null
+          mp_preference_id?: string | null
           notes?: string | null
+          payment_status?: string
           status?: string
           store_id: string
           total_cents: number
         }
         Update: {
           cancelled_at?: string | null
+          channel?: string
           confirmed_at?: string | null
+          coupon_code?: string | null
           created_at?: string
           currency?: string
+          customer_email?: string | null
           customer_name?: string | null
+          customer_phone?: string | null
           delivered_at?: string | null
+          delivery_address?: string | null
+          discount_cents?: number | null
           id?: string
+          mp_payment_id?: string | null
+          mp_preference_id?: string | null
           notes?: string | null
+          payment_status?: string
           status?: string
           store_id?: string
           total_cents?: number
@@ -481,9 +561,57 @@ export type Database = {
           },
         ]
       }
+      store_mp_connections: {
+        Row: {
+          access_token_enc: string | null
+          connected_at: string | null
+          created_at: string
+          mp_user_id: string | null
+          public_key: string | null
+          refresh_token_enc: string | null
+          revoked_at: string | null
+          store_id: string
+          token_expires_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          access_token_enc?: string | null
+          connected_at?: string | null
+          created_at?: string
+          mp_user_id?: string | null
+          public_key?: string | null
+          refresh_token_enc?: string | null
+          revoked_at?: string | null
+          store_id: string
+          token_expires_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          access_token_enc?: string | null
+          connected_at?: string | null
+          created_at?: string
+          mp_user_id?: string | null
+          public_key?: string | null
+          refresh_token_enc?: string | null
+          revoked_at?: string | null
+          store_id?: string
+          token_expires_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "store_mp_connections_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: true
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stores: {
         Row: {
           blocked_at: string | null
+          checkout_mode: string
           created_at: string
           description: string | null
           id: string
@@ -508,6 +636,7 @@ export type Database = {
         }
         Insert: {
           blocked_at?: string | null
+          checkout_mode?: string
           created_at?: string
           description?: string | null
           id?: string
@@ -532,6 +661,7 @@ export type Database = {
         }
         Update: {
           blocked_at?: string | null
+          checkout_mode?: string
           created_at?: string
           description?: string | null
           id?: string

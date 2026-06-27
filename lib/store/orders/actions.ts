@@ -11,6 +11,20 @@ type CreateOrderInput = {
   // Coupon applied at checkout (optional)
   coupon_code?: string | null;
   discount_amount?: number | null;
+  // MP checkout fields (task 5.2): set when channel='mercadopago'
+  channel?: 'whatsapp' | 'mercadopago';
+  customer_name?: string | null;
+  customer_email?: string | null;
+  customer_phone?: string | null;
+  delivery_address?: string | null;
+};
+
+/** Line item ready to pass to Mercado Pago Checkout Pro (unit_price in ARS). */
+export type MpOrderItem = {
+  title: string;
+  quantity: number;
+  unit_price: number; // in ARS (price_cents / 100)
+  currency_id: 'ARS';
 };
 
 type StockInsufficientDetail = {
@@ -21,7 +35,7 @@ type StockInsufficientDetail = {
 };
 
 type CreateOrderResult =
-  | { order_id: string }
+  | { order_id: string; mp_items: MpOrderItem[] }
   | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' }
   | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
   | { error: 'qty_violation'; productId: string; productName: string; min: number; step: number };
@@ -55,8 +69,6 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   }
 
   // 3. Fetch valid products with section info, filter to active + belonging to this store.
-  // min_quantity and qty_step are new columns not yet reflected in the generated Supabase types;
-  // cast the result to include them.
   type ProductRow = {
     id: string;
     name: string;
@@ -67,8 +79,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     qty_step: number;
     sections: { name: string } | null;
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: products } = (await (admin as any)
+  const { data: products } = (await admin
     .from('products')
     .select('id, name, price_cents, stock, section_id, min_quantity, qty_step, sections(name)')
     .eq('store_id', input.store_id)
@@ -257,8 +268,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     ? Math.round(input.discount_amount * 100)
     : null;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: order, error: orderError } = await (admin as any)
+  const { data: order, error: orderError } = await admin
     .from('orders')
     .insert({
       store_id: input.store_id,
@@ -267,6 +277,12 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       status: 'pending',
       coupon_code: input.coupon_code ?? null,
       discount_cents: discountCents,
+      // task 5.2: MP checkout fields (null for whatsapp orders)
+      channel: input.channel ?? 'whatsapp',
+      customer_name: input.customer_name ?? null,
+      customer_email: input.customer_email ?? null,
+      customer_phone: input.customer_phone ?? null,
+      delivery_address: input.delivery_address ?? null,
     })
     .select('id')
     .single();
@@ -364,16 +380,14 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   // This is an approximation: uses_count may drift under concurrent load, which is acceptable per design.
   if (input.coupon_code) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: couponRow } = await (admin as any)
+      const { data: couponRow } = await admin
         .from('coupons')
         .select('id, uses_count')
         .eq('store_id', input.store_id)
         .eq('code', input.coupon_code)
         .maybeSingle();
       if (couponRow) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any)
+        await admin
           .from('coupons')
           .update({ uses_count: (couponRow.uses_count ?? 0) + 1 })
           .eq('id', couponRow.id);
@@ -383,8 +397,15 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     }
   }
 
-  // 8. Return order reference
-  return { order_id: order.id };
+  // 8. Return order reference + MP-ready items (unit_price in ARS, for createCheckoutPreference)
+  const mp_items: MpOrderItem[] = enrichedItems.map((i) => ({
+    title: productMap.get(i.product_id)!.name,
+    quantity: i.quantity,
+    unit_price: i.effectivePrice / 100,
+    currency_id: 'ARS',
+  }));
+
+  return { order_id: order.id, mp_items };
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +432,8 @@ async function requireOwnerStore() {
 // ---------------------------------------------------------------------------
 
 export type OrderStatus = 'pending' | 'confirmed' | 'cancelled' | 'delivered';
+export type OrderChannel = 'whatsapp' | 'mercadopago';
+export type OrderPaymentStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
 export type OrderWithItems = {
   id: string;
@@ -423,6 +446,8 @@ export type OrderWithItems = {
   confirmed_at: string | null;
   cancelled_at: string | null;
   delivered_at: string | null;
+  channel: OrderChannel;
+  payment_status: OrderPaymentStatus;
   items: Array<{
     id: string;
     product_id: string | null;
@@ -485,19 +510,23 @@ export async function listOrders(
     return { orders: [] };
   }
 
-  let orders = (data ?? []).map((row) => ({
-    id: row.id,
-    status: row.status as OrderStatus,
-    customer_name: row.customer_name,
-    total_cents: row.total_cents,
-    currency: row.currency,
-    notes: row.notes,
-    created_at: row.created_at,
-    confirmed_at: row.confirmed_at,
-    cancelled_at: row.cancelled_at,
-    delivered_at: row.delivered_at,
-    items: (row.order_items ?? []) as OrderWithItems['items'],
-  }));
+  let orders = (data ?? []).map((row) => {
+    return {
+      id: row.id,
+      status: row.status as OrderStatus,
+      customer_name: row.customer_name,
+      total_cents: row.total_cents,
+      currency: row.currency,
+      notes: row.notes,
+      created_at: row.created_at,
+      confirmed_at: row.confirmed_at,
+      cancelled_at: row.cancelled_at,
+      delivered_at: row.delivered_at,
+      channel: (row.channel ?? 'whatsapp') as OrderChannel,
+      payment_status: (row.payment_status ?? 'pending') as OrderPaymentStatus,
+      items: (row.order_items ?? []) as OrderWithItems['items'],
+    };
+  });
 
   // Client-side filters that PostgREST embeds make complex server-side
   if (filters.section_id) {
@@ -808,6 +837,8 @@ export async function updateOrderStatus(
       confirmed_at: updated.confirmed_at,
       cancelled_at: updated.cancelled_at,
       delivered_at: updated.delivered_at,
+      channel: (updated.channel ?? 'whatsapp') as OrderChannel,
+      payment_status: (updated.payment_status ?? 'pending') as OrderPaymentStatus,
       items: (updated.order_items ?? []) as OrderWithItems['items'],
     },
   };

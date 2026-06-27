@@ -38,6 +38,31 @@ export function verifyWebhookSignature(
   });
 }
 
+/**
+ * Validates a MercadoPago webhook signature using a caller-supplied secret.
+ * Use this variant when the webhook secret differs from the global MP_WEBHOOK_SECRET
+ * (e.g. the orders webhook uses MP_ORDERS_WEBHOOK_SECRET).
+ * Throws `InvalidWebhookSignatureError` if the signature is invalid.
+ *
+ * @param xSignature   Value of the `x-signature` header
+ * @param xRequestId   Value of the `x-request-id` header
+ * @param dataId       Value of the `data.id` query param from the webhook URL
+ * @param secret       Webhook secret to validate against
+ */
+export function verifyWebhookSignatureWithSecret(
+  xSignature: string | null,
+  xRequestId: string | null,
+  dataId: string | null,
+  secret: string
+): void {
+  WebhookSignatureValidator.validate({
+    xSignature: xSignature ?? undefined,
+    xRequestId: xRequestId ?? undefined,
+    dataId: dataId ?? undefined,
+    secret,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Subscription creation (API without plan, free_trial dinámico)
 // ---------------------------------------------------------------------------
