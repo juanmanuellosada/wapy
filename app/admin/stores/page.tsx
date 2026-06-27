@@ -4,6 +4,7 @@ import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { AdminShell } from '../_components/AdminShell';
 import { getSubscriptionState } from '@/lib/subscription/state';
 import { StoreExemptActions } from './StoreExemptActions';
+import { AdminDeleteStoreButton } from './AdminDeleteStoreButton';
 import type { SubscriptionState } from '@/lib/subscription/state';
 
 export const dynamic = 'force-dynamic';
@@ -148,12 +149,15 @@ export default async function AdminStoresPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <StoreExemptActions
-                          storeId={row.id}
-                          storeName={row.name}
-                          isExempt={row.payment_exempt}
-                          currentReason={row.payment_exempt_reason}
-                        />
+                        <div className="flex flex-col items-end gap-2">
+                          <StoreExemptActions
+                            storeId={row.id}
+                            storeName={row.name}
+                            isExempt={row.payment_exempt}
+                            currentReason={row.payment_exempt_reason}
+                          />
+                          <AdminDeleteStoreButton storeId={row.id} storeSlug={row.slug} />
+                        </div>
                       </td>
                     </tr>
                   ))}

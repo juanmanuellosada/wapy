@@ -6,3 +6,10 @@ export const addEmailSchema = z.object({
 });
 
 export type AddEmailInput = z.infer<typeof addEmailSchema>;
+
+export const adminDeleteStoreSchema = z.object({
+  storeId: z.string().uuid('ID de tienda inválido'),
+  confirmSlug: z.string().min(1, 'El slug es requerido'),
+});
+
+export type AdminDeleteStoreInput = z.infer<typeof adminDeleteStoreSchema>;
