@@ -2,15 +2,9 @@
 
 import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
-import { Resend } from 'resend';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
-import { sendInviteEmail } from '@/lib/resend';
+import { sendInviteEmail, sendNewLeadEmail } from '@/lib/email';
 import { leadFormSchema, normalizeWhatsapp } from './schemas';
-import type { Database } from '@/lib/supabase/types';
-import { PLAN_PRICES, formatPlanPrice } from '@/lib/subscription/plans';
-import type { PlanId } from '@/lib/plans/limits';
-
-type LeadRow = Database['public']['Tables']['leads']['Row'];
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
@@ -34,80 +28,6 @@ async function requireSuperadmin() {
     .single();
   if (row?.role !== 'superadmin') throw new Error('FORBIDDEN');
   return { user };
-}
-
-// ---------------------------------------------------------------------------
-// sendNewLeadEmail — internal helper, NOT exported (MVP: hardcoded recipient)
-// ---------------------------------------------------------------------------
-
-async function sendNewLeadEmail({ lead }: { lead: LeadRow }) {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error('Missing env var: RESEND_API_KEY');
-
-  const resend = new Resend(apiKey);
-
-  const planId = (lead.plan && lead.plan in PLAN_PRICES ? lead.plan : 'inicial') as PlanId;
-  const PLAN_NAMES: Record<PlanId, string> = { inicial: 'Inicial', medio: 'Medio', pro: 'Pro' };
-  const planLabel = `${PLAN_NAMES[planId]} (${formatPlanPrice(planId)})`;
-
-  const html = `<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f4f4f4;font-family:sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;max-width:600px;width:100%;">
-        <tr>
-          <td style="background:#16222E;padding:24px 40px;">
-            <span style="font-size:24px;font-weight:bold;color:#ffffff;">wapy</span>
-            <span style="margin-left:12px;font-size:12px;color:#F5C84B;font-weight:bold;text-transform:uppercase;letter-spacing:2px;">Admin</span>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:32px 40px;">
-            <h1 style="margin:0 0 8px;font-size:20px;color:#16222E;">🆕 Nuevo lead en Wapy</h1>
-            <p style="margin:0 0 24px;font-size:14px;color:#666;">Alguien se interesó por ${planLabel}.</p>
-            <table cellpadding="0" cellspacing="0" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-              <tr style="background:#f9fafb;">
-                <td style="padding:10px 16px;font-size:12px;font-weight:bold;color:#6b7280;text-transform:uppercase;width:120px;">Nombre</td>
-                <td style="padding:10px 16px;font-size:14px;color:#16222E;">${lead.name}</td>
-              </tr>
-              <tr>
-                <td style="padding:10px 16px;font-size:12px;font-weight:bold;color:#6b7280;text-transform:uppercase;border-top:1px solid #e5e7eb;">Email</td>
-                <td style="padding:10px 16px;font-size:14px;color:#16222E;border-top:1px solid #e5e7eb;">${lead.email}</td>
-              </tr>
-              <tr style="background:#f9fafb;">
-                <td style="padding:10px 16px;font-size:12px;font-weight:bold;color:#6b7280;text-transform:uppercase;border-top:1px solid #e5e7eb;">WhatsApp</td>
-                <td style="padding:10px 16px;font-size:14px;color:#16222E;border-top:1px solid #e5e7eb;">${lead.whatsapp}</td>
-              </tr>
-              <tr>
-                <td style="padding:10px 16px;font-size:12px;font-weight:bold;color:#6b7280;text-transform:uppercase;border-top:1px solid #e5e7eb;">Plan</td>
-                <td style="padding:10px 16px;font-size:14px;color:#16222E;border-top:1px solid #e5e7eb;">${planLabel}</td>
-              </tr>
-            </table>
-            <table cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
-              <tr>
-                <td align="center" style="border-radius:50px;background:#F5C84B;">
-                  <a href="${APP_URL}/admin/leads" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:800;color:#16222E;text-decoration:none;border-radius:50px;">
-                    Ver en /admin/leads
-                  </a>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-
-  await resend.emails.send({
-    from: 'Wapy <hola@wapy.com.ar>',
-    to: 'juanmalosada01@gmail.com',
-    subject: `🆕 Nuevo lead en Wapy: ${lead.name}`,
-    html,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -244,11 +164,7 @@ export async function approveLead({ id }: { id: string }): Promise<ApproveLeadRe
   const inviteUrl = `${APP_URL}/signup?token=${whitelistRow.invite_token}`;
 
   try {
-    await sendInviteEmail({
-      to: whitelistRow.email,
-      token: whitelistRow.invite_token,
-      inviteUrl,
-    });
+    await sendInviteEmail({ to: whitelistRow.email, inviteUrl });
     return { ok: true, mail_sent: true };
   } catch (e) {
     const mailError = e instanceof Error ? e.message : 'Error desconocido';

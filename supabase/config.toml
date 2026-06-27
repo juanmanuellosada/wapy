@@ -2,3 +2,8 @@ project_id = "gtiujuarwoatjekmljhn"
 
 [api]
 # sa-east-1 (São Paulo)
+
+[auth.hook.send_email]
+enabled = true
+uri = "http://host.docker.internal:3000/api/auth/send-email"
+secret = "env(SEND_EMAIL_HOOK_SECRET)"

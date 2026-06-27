@@ -2,3 +2,4 @@
 - [Decisiones de infra de Wapy](wapy-infra-decisions.md) — Stack confirmado: Supabase Auth + Storage, routing en raíz `/[slug]`, 1 dueño:1 tienda, whitelist con invite via Resend.
 - [Supabase Storage + ES256 JWT gotcha](wapy-storage-jwt-gotcha.md) — Storage worker no verifica ES256, `auth.uid()` queda NULL, toda RLS con subquery falla. Subir SIEMPRE vía Server Action + admin client.
 - [Cobro con Mercado Pago en Wapy](wapy-mercadopago-billing.md) — Suscripciones MP: 4 preapproval plans (con/sin trial), webhook registra + cron bloquea, exención, bloqueo dual. Migración 027 creada, PENDIENTE de aplicar a prod.
+- [Sistema de email Resend](wapy-resend-email-system.md) — Auth emails por Resend vía Send Email Hook de Supabase + plantillas react-email. Código listo; activación del hook en dashboard es PENDIENTE manual.
