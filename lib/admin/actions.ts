@@ -4,6 +4,7 @@ import { randomBytes } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { sendInviteEmail } from '@/lib/resend';
+import { preApproval } from '@/lib/mercadopago';
 import { addEmailSchema } from './schemas';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
@@ -165,5 +166,89 @@ export async function removeWhitelistEntry({ id }: { id: string }): Promise<Remo
   }
 
   revalidatePath('/admin');
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// adminDeleteStore
+// ---------------------------------------------------------------------------
+
+type AdminDeleteStoreResult = { ok: true } | { error: string };
+
+export async function adminDeleteStore({
+  storeId,
+  confirmSlug,
+}: {
+  storeId: string;
+  confirmSlug: string;
+}): Promise<AdminDeleteStoreResult> {
+  try {
+    await requireSuperadmin();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'FORBIDDEN';
+    return { error: msg };
+  }
+
+  const admin = createAdminClient();
+
+  const { data: store } = await admin
+    .from('stores')
+    .select('id, slug, mp_preapproval_id')
+    .eq('id', storeId)
+    .single();
+
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  if (confirmSlug !== store.slug) {
+    return { error: 'El slug no coincide. Verificá que lo escribiste exactamente.' };
+  }
+
+  // Cancel MP preapproval — best effort, don't abort if MP is down
+  if (store.mp_preapproval_id) {
+    try {
+      await preApproval.update({
+        id: store.mp_preapproval_id,
+        body: { status: 'cancelled' },
+      });
+    } catch (err) {
+      console.error('[admin/adminDeleteStore] MP cancel failed (continuing):', err);
+    }
+  }
+
+  // Storage cleanup — best effort, don't block on failure
+  try {
+    const [productFilesResult, logoFilesResult, bannerFilesResult] = await Promise.all([
+      admin.storage.from('product-images').list(store.id),
+      admin.storage.from('store-logos').list(store.id),
+      admin.storage.from('store-banners').list(store.id),
+    ]);
+
+    const productPaths = (productFilesResult.data ?? []).map((f) => `${store.id}/${f.name}`);
+    const logoPaths = (logoFilesResult.data ?? []).map((f) => `${store.id}/${f.name}`);
+    const bannerPaths = (bannerFilesResult.data ?? []).map((f) => `${store.id}/${f.name}`);
+
+    await Promise.all([
+      productPaths.length > 0
+        ? admin.storage.from('product-images').remove(productPaths)
+        : Promise.resolve(),
+      logoPaths.length > 0
+        ? admin.storage.from('store-logos').remove(logoPaths)
+        : Promise.resolve(),
+      bannerPaths.length > 0
+        ? admin.storage.from('store-banners').remove(bannerPaths)
+        : Promise.resolve(),
+    ]);
+  } catch (e) {
+    console.warn('[admin/adminDeleteStore] storage cleanup failed (continuing):', e);
+  }
+
+  // Delete the store row — FK cascades to sections, products, slug_history
+  const { error: deleteError } = await admin.from('stores').delete().eq('id', storeId);
+
+  if (deleteError) {
+    return { error: 'No se pudo eliminar la tienda. Intentá de nuevo.' };
+  }
+
+  revalidatePath('/admin/stores');
   return { ok: true };
 }
