@@ -131,9 +131,8 @@ export async function saveBasics(formData: {
     return { ok: true, storeId: existing.id };
   }
 
-  const { data: whitelistRow } = await admin
-    .from('whitelist')
-    .select('plan, trial_ends_at')
+  const { data: whitelistRow } = await admin.from('whitelist')
+    .select('plan, trial_ends_at, checkout_mode')
     .ilike('email', user.email!)
     .maybeSingle();
 
@@ -154,6 +153,7 @@ export async function saveBasics(formData: {
       onboarding_step: 1,
       plan: whitelistRow?.plan ?? 'inicial',
       trial_ends_at: trialEndsAt,
+      checkout_mode: whitelistRow?.checkout_mode ?? 'whatsapp',
     })
     .select('id')
     .single();

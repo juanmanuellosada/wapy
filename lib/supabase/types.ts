@@ -720,6 +720,7 @@ export type Database = {
       }
       whitelist: {
         Row: {
+          checkout_mode: string | null
           email: string
           grant_role: string
           id: string
@@ -730,6 +731,7 @@ export type Database = {
           trial_ends_at: string | null
         }
         Insert: {
+          checkout_mode?: string | null
           email: string
           grant_role?: string
           id?: string
@@ -740,6 +742,7 @@ export type Database = {
           trial_ends_at?: string | null
         }
         Update: {
+          checkout_mode?: string | null
           email?: string
           grant_role?: string
           id?: string
