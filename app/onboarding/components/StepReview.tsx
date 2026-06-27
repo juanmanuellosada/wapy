@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { publishStore } from '@/lib/onboarding/actions';
+import { prevStepName } from '@/lib/onboarding/steps';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
 import { PublishButton } from './PublishButton';
 
@@ -32,6 +33,7 @@ function getAccentColor(store: Store): string {
 
 export function StepReview({ store, sections, products }: Props) {
   const accentColor = getAccentColor(store);
+  const backStep = prevStepName('review', (store.checkout_mode as string | null) ?? 'whatsapp') ?? 'whatsapp';
   const activeProducts = products.filter((p) => p.is_active);
 
   const missingPrereqs: string[] = [];
@@ -159,6 +161,14 @@ export function StepReview({ store, sections, products }: Props) {
 
       {/* Publish */}
       <div className="pt-2 space-y-3">
+        <div>
+          <Link
+            href={`/onboarding/${backStep}`}
+            className="flex items-center gap-1 text-sm text-white/50 hover:text-white/80 transition-colors"
+          >
+            ← Atrás
+          </Link>
+        </div>
         <PublishButton disabled={!canPublish} publishAction={publishStore} />
         <p className="text-center text-xs text-white/30">
           Tu tienda quedará en{' '}

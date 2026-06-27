@@ -42,12 +42,12 @@ async function requireOwnerStore() {
 // at /api/mp/oauth/callback — tokens are NEVER seen by the client.
 // ---------------------------------------------------------------------------
 
-export async function connectMercadoPago(): Promise<
-  { ok: true; authUrl: string } | { error: string }
-> {
+export async function connectMercadoPago(
+  origin: 'dashboard' | 'onboarding' = 'dashboard'
+): Promise<{ ok: true; authUrl: string } | { error: string }> {
   try {
     const { store } = await requireOwnerStore();
-    const authUrl = buildAuthorizationUrl(store.id);
+    const authUrl = buildAuthorizationUrl(store.id, origin);
     return { ok: true, authUrl };
   } catch (err) {
     const message =

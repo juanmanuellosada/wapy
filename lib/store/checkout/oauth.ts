@@ -51,18 +51,23 @@ interface OAuthStatePayload {
   storeId: string;
   exp: number;   // Unix timestamp in ms
   nonce: string; // Random hex — prevents replay within the expiry window
+  origin?: 'dashboard' | 'onboarding';
 }
 
 /**
- * Builds a signed OAuth state token encoding `storeId`.
+ * Builds a signed OAuth state token encoding `storeId` and optional `origin`.
  * Format: `<base64(JSON)>.<hex-HMAC-SHA256>`.
  * The callback must call `verifyOAuthState(state)` to authenticate and unpack it.
  */
-export function buildOAuthState(storeId: string): string {
+export function buildOAuthState(
+  storeId: string,
+  origin: 'dashboard' | 'onboarding' = 'dashboard'
+): string {
   const payload: OAuthStatePayload = {
     storeId,
     exp: Date.now() + STATE_EXPIRY_MS,
     nonce: randomBytes(16).toString('hex'),
+    origin,
   };
   const b64 = Buffer.from(JSON.stringify(payload)).toString('base64');
   const sig = createHmac('sha256', getStateKey()).update(b64).digest('hex');
@@ -115,13 +120,16 @@ export function verifyOAuthState(state: string): OAuthStatePayload {
  * Builds the Mercado Pago OAuth authorization URL for a given store.
  * Redirects the owner's browser to this URL to begin the connect flow.
  */
-export function buildAuthorizationUrl(storeId: string): string {
+export function buildAuthorizationUrl(
+  storeId: string,
+  origin: 'dashboard' | 'onboarding' = 'dashboard'
+): string {
   const params = new URLSearchParams({
     client_id: getMpClientId(),
     response_type: 'code',
     platform_id: 'mp',
     redirect_uri: MP_OAUTH_REDIRECT_URI,
-    state: buildOAuthState(storeId),
+    state: buildOAuthState(storeId, origin),
   });
   return `https://auth.mercadopago.com/authorization?${params.toString()}`;
 }

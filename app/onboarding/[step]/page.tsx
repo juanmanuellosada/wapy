@@ -1,7 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { createServerClient } from '@/lib/supabase/server';
 import { getStoreState } from '@/lib/onboarding/state';
-import { STEP_NAMES, stepIndexFor, stepNameFor } from '@/lib/onboarding/steps';
+import { STEP_NAMES, stepIndexFor, stepNameFor, visibleSteps } from '@/lib/onboarding/steps';
 import type { StepName } from '@/lib/onboarding/steps';
 import type { Metadata } from 'next';
 import { Stepper } from '@/app/onboarding/components/Stepper';
@@ -10,7 +10,9 @@ import { StepLook } from '@/app/onboarding/components/StepLook';
 import { StepSections } from '@/app/onboarding/components/StepSections';
 import { StepProducts } from '@/app/onboarding/components/StepProducts';
 import { StepWhatsapp } from '@/app/onboarding/components/StepWhatsapp';
+import { StepPayment } from '@/app/onboarding/components/StepPayment';
 import { StepReview } from '@/app/onboarding/components/StepReview';
+import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,11 +22,13 @@ const STEP_TITLES: Record<StepName, string> = {
   sections: 'Secciones',
   products: 'Productos',
   whatsapp: 'WhatsApp',
+  payment: 'Cobros con Mercado Pago',
   review: 'Revisión y publicación',
 };
 
 type Props = {
   params: Promise<{ step: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -33,7 +37,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: `${title} — Wapy` };
 }
 
-export default async function OnboardingStepPage({ params }: Props) {
+export default async function OnboardingStepPage({ params, searchParams }: Props) {
   const { step } = await params;
 
   // Validate step param
@@ -59,6 +63,13 @@ export default async function OnboardingStepPage({ params }: Props) {
     redirect('/dashboard');
   }
 
+  const checkoutMode = (store?.checkout_mode as string | null) ?? 'whatsapp';
+
+  // Gate the payment step: only reachable for mercadopago stores
+  if (requestedStep === 'payment' && checkoutMode !== 'mercadopago') {
+    redirect('/onboarding/review');
+  }
+
   // Determine the current allowed step
   const currentStepName = storeState.currentStep;
   const currentStepIndex = stepIndexFor(currentStepName);
@@ -74,7 +85,21 @@ export default async function OnboardingStepPage({ params }: Props) {
     (_, i) => i < currentStepIndex
   );
 
-  const stepContent = (() => {
+  // Visible steps determine the step counter shown to the user
+  const visible = visibleSteps(checkoutMode);
+  const visibleStepNumber = visible.indexOf(requestedStep) + 1;
+  const totalVisibleSteps = visible.length;
+
+  // Resolve searchParams for the payment step callback result
+  const sp = searchParams ? await searchParams : {};
+  const rawConnect = sp['mp_connect'];
+  const connectVal = Array.isArray(rawConnect) ? rawConnect[0] : rawConnect;
+  const mpConnectResult: 'success' | 'error' | null =
+    connectVal === 'success' || connectVal === 'error' ? connectVal : null;
+  const rawMpError = sp['mp_error'];
+  const mpErrorVal = (Array.isArray(rawMpError) ? rawMpError[0] : rawMpError) ?? null;
+
+  const stepContent = await (async () => {
     switch (requestedStep) {
       case 'basics':
         return <StepBasics store={store} />;
@@ -85,7 +110,11 @@ export default async function OnboardingStepPage({ params }: Props) {
       case 'products':
         return <StepProducts store={store!} initialProducts={products} sections={sections} />;
       case 'whatsapp':
-        return <StepWhatsapp store={store!} />;
+        return <StepWhatsapp store={store!} checkoutMode={checkoutMode} />;
+      case 'payment': {
+        const mpStatus = await getStoreMpConnectionStatus(store!.id);
+        return <StepPayment mpStatus={mpStatus} mpConnect={mpConnectResult} mpError={mpErrorVal} />;
+      }
       case 'review':
         return <StepReview store={store!} sections={sections} products={products} />;
       default:
@@ -116,6 +145,7 @@ export default async function OnboardingStepPage({ params }: Props) {
             currentStep={requestedStep}
             completedSteps={completedSteps}
             layout="sidebar"
+            checkoutMode={checkoutMode}
           />
         </div>
       </aside>
@@ -127,13 +157,14 @@ export default async function OnboardingStepPage({ params }: Props) {
           <div className="flex items-center justify-between mb-2">
             <p className="font-display text-xl text-[#F5C84B]">Wapy</p>
             <span className="text-xs text-white/50">
-              Paso {requestedStepIndex + 1} de {STEP_NAMES.length}
+              Paso {visibleStepNumber} de {totalVisibleSteps}
             </span>
           </div>
           <Stepper
             currentStep={requestedStep}
             completedSteps={completedSteps}
             layout="top"
+            checkoutMode={checkoutMode}
           />
         </div>
 
@@ -143,7 +174,7 @@ export default async function OnboardingStepPage({ params }: Props) {
               {STEP_TITLES[requestedStep]}
             </h1>
             <p className="text-sm text-white/50 mb-8">
-              Paso {requestedStepIndex + 1} de {STEP_NAMES.length}
+              Paso {visibleStepNumber} de {totalVisibleSteps}
             </p>
             {stepContent}
           </div>

@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { basicsSchema } from './schemas';
+import { stepIndexFor, nextStepName } from './steps';
+import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 import {
   saveStoreSections,
   deleteStoreSection,
@@ -241,12 +243,14 @@ export async function saveWhatsapp(formData: {
   const result = await saveStoreWhatsapp(formData);
   if ('error' in result) return result;
 
-  // Wizard-specific: advance onboarding_step
+  // Wizard-specific: advance onboarding_step to the next visible step.
+  // For mercadopago stores the next step is 'payment'; for whatsapp it's 'review'.
+  const nextStep = nextStepName('whatsapp', store.checkout_mode ?? 'whatsapp') ?? 'review';
   const admin = createAdminClient();
   await admin
     .from('stores')
     .update({
-      onboarding_step: Math.max(store.onboarding_step, 5),
+      onboarding_step: Math.max(store.onboarding_step, stepIndexFor(nextStep)),
       updated_at: new Date().toISOString(),
     })
     .eq('id', store.id);
@@ -297,6 +301,42 @@ export async function advanceProductsStep(): Promise<SaveResult> {
 }
 
 // ---------------------------------------------------------------------------
+// advancePaymentStep — wizard-specific (mercadopago stores only)
+// ---------------------------------------------------------------------------
+
+export async function advancePaymentStep(): Promise<SaveResult> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  if (store.checkout_mode !== 'mercadopago') {
+    return { error: 'Este paso solo aplica a tiendas con Mercado Pago.' };
+  }
+
+  let mpStatus;
+  try {
+    mpStatus = await getStoreMpConnectionStatus(store.id);
+  } catch {
+    return { error: 'No se pudo verificar la conexión con Mercado Pago.' };
+  }
+
+  if (!mpStatus.connected || mpStatus.revoked) {
+    return { error: 'Conectá tu cuenta de Mercado Pago para continuar.' };
+  }
+
+  const admin = createAdminClient();
+  await admin
+    .from('stores')
+    .update({
+      onboarding_step: Math.max(store.onboarding_step, stepIndexFor('review')),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', store.id);
+
+  revalidatePath('/onboarding', 'layout');
+  return { ok: true, storeId: store.id };
+}
+
+// ---------------------------------------------------------------------------
 // Publish store
 // ---------------------------------------------------------------------------
 
@@ -335,6 +375,19 @@ export async function publishStore(): Promise<PublishResult> {
 
   if (details.length > 0) {
     return { error: 'Faltan requisitos para publicar.', details };
+  }
+
+  // Mercado Pago stores require a valid MP connection before going live.
+  if (store.checkout_mode === 'mercadopago') {
+    let mpStatus;
+    try {
+      mpStatus = await getStoreMpConnectionStatus(store.id);
+    } catch {
+      return { error: 'No se pudo verificar la conexión con Mercado Pago.' };
+    }
+    if (!mpStatus.connected || mpStatus.revoked) {
+      return { error: 'Conectá Mercado Pago antes de publicar.' };
+    }
   }
 
   const { error } = await admin

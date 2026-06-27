@@ -7,10 +7,12 @@ import { useRouter } from 'next/navigation';
 import { Loader2, ChevronLeft } from 'lucide-react';
 import { whatsappSchema, type WhatsappData } from '@/lib/onboarding/schemas';
 import { saveWhatsapp } from '@/lib/onboarding/actions';
+import { nextStepName } from '@/lib/onboarding/steps';
 import type { Store } from '@/lib/onboarding/state';
 
 type Props = {
   store: Store;
+  checkoutMode: string;
 };
 
 function normalizePhone(value: string): string {
@@ -22,7 +24,7 @@ function formatWaLink(phone: string): string {
   return `wa.me/${normalized}`;
 }
 
-export function StepWhatsapp({ store }: Props) {
+export function StepWhatsapp({ store, checkoutMode }: Props) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -55,7 +57,8 @@ export function StepWhatsapp({ store }: Props) {
       return;
     }
 
-    router.push('/onboarding/review');
+    const next = nextStepName('whatsapp', checkoutMode) ?? 'review';
+    router.push(`/onboarding/${next}`);
   };
 
   return (

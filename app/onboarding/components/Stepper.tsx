@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Check } from 'lucide-react';
 import type { StepName } from '@/lib/onboarding/steps';
-import { STEP_NAMES } from '@/lib/onboarding/steps';
+import { visibleSteps } from '@/lib/onboarding/steps';
 
 const STEP_LABELS: Record<StepName, string> = {
   basics: 'Datos básicos',
@@ -11,6 +11,7 @@ const STEP_LABELS: Record<StepName, string> = {
   sections: 'Secciones',
   products: 'Productos',
   whatsapp: 'WhatsApp',
+  payment: 'Mercado Pago',
   review: 'Publicar',
 };
 
@@ -18,13 +19,16 @@ type Props = {
   currentStep: StepName;
   completedSteps: StepName[];
   layout: 'sidebar' | 'top';
+  checkoutMode: string;
 };
 
-export function Stepper({ currentStep, completedSteps, layout }: Props) {
+export function Stepper({ currentStep, completedSteps, layout, checkoutMode }: Props) {
+  const steps = visibleSteps(checkoutMode);
+
   if (layout === 'top') {
     return (
       <div className="flex items-center gap-1 overflow-x-auto pb-1">
-        {STEP_NAMES.map((step, index) => {
+        {steps.map((step, index) => {
           const isCompleted = completedSteps.includes(step);
           const isCurrent = step === currentStep;
 
@@ -50,7 +54,7 @@ export function Stepper({ currentStep, completedSteps, layout }: Props) {
                   {index + 1}
                 </span>
               )}
-              {index < STEP_NAMES.length - 1 && (
+              {index < steps.length - 1 && (
                 <div
                   className={`w-4 h-px ${isCompleted ? 'bg-[#F5C84B]/50' : 'bg-white/10'}`}
                 />
@@ -66,7 +70,7 @@ export function Stepper({ currentStep, completedSteps, layout }: Props) {
   return (
     <nav aria-label="Progreso del wizard">
       <ol className="flex flex-col gap-1">
-        {STEP_NAMES.map((step, index) => {
+        {steps.map((step, index) => {
           const isCompleted = completedSteps.includes(step);
           const isCurrent = step === currentStep;
           const isLocked = !isCompleted && !isCurrent;

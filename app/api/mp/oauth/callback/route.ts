@@ -24,9 +24,26 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 // Destination after connecting — Group 7 settings section.
 const DASHBOARD_PAYMENTS_URL = `${APP_URL}/dashboard/settings`;
 
+/** Pre-verification errors: always redirect to dashboard (origin unknown). */
 function errorRedirect(reason: string): NextResponse {
   return NextResponse.redirect(
     `${DASHBOARD_PAYMENTS_URL}?mp_connect=error&mp_error=${encodeURIComponent(reason)}`
+  );
+}
+
+/** Post-verification redirect: routes to onboarding or dashboard based on origin. */
+function redirectResult(
+  result: 'success' | 'error',
+  origin: 'dashboard' | 'onboarding',
+  reason?: string
+): NextResponse {
+  const base =
+    origin === 'onboarding' ? `${APP_URL}/onboarding/payment` : DASHBOARD_PAYMENTS_URL;
+  if (result === 'success') {
+    return NextResponse.redirect(`${base}?mp_connect=success`);
+  }
+  return NextResponse.redirect(
+    `${base}?mp_connect=error&mp_error=${encodeURIComponent(reason ?? 'unknown')}`
   );
 }
 
@@ -47,11 +64,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return errorRedirect('missing_params');
   }
 
-  // --- 1. Verify state (signature + expiry → extracts storeId) ---
+  // --- 1. Verify state (signature + expiry → extracts storeId and origin) ---
   let storeId: string;
+  let origin: 'dashboard' | 'onboarding' = 'dashboard';
   try {
     const payload = verifyOAuthState(state);
     storeId = payload.storeId;
+    if (payload.origin === 'onboarding') origin = 'onboarding';
   } catch (err) {
     console.warn('[mp/oauth/callback] Invalid state', { err });
     return errorRedirect('invalid_state');
@@ -69,7 +88,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     tokens = await exchangeCodeForTokens(code);
   } catch (err) {
     console.error('[mp/oauth/callback] Token exchange failed', { storeId, err });
-    return errorRedirect('token_exchange');
+    return redirectResult('error', origin, 'token_exchange');
   }
 
   // --- 3. Encrypt tokens and persist the connection ---
@@ -97,7 +116,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   if (upsertError) {
     console.error('[mp/oauth/callback] DB upsert failed', { storeId, error: upsertError });
-    return errorRedirect('db_error');
+    return redirectResult('error', origin, 'db_error');
   }
 
   console.info('[mp/oauth/callback] MP connection established', {
@@ -105,5 +124,5 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     mpUserId: tokens.user_id,
   });
 
-  return NextResponse.redirect(`${DASHBOARD_PAYMENTS_URL}?mp_connect=success`);
+  return redirectResult('success', origin);
 }
