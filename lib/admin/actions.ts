@@ -3,7 +3,7 @@
 import { randomBytes } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
-import { sendInviteEmail } from '@/lib/resend';
+import { sendInviteEmail } from '@/lib/email';
 import { preApproval } from '@/lib/mercadopago';
 import { addEmailSchema } from './schemas';
 
@@ -74,7 +74,7 @@ export async function addWhitelistEntry(formData: FormData): Promise<AddResult> 
   const inviteUrl = `${APP_URL}/signup?token=${inserted.invite_token}`;
 
   try {
-    await sendInviteEmail({ to: inserted.email, token: inserted.invite_token, inviteUrl });
+    await sendInviteEmail({ to: inserted.email, inviteUrl });
     revalidatePath('/admin');
     return { ok: true, mail_sent: true };
   } catch (e) {
@@ -128,7 +128,7 @@ export async function reinviteEntry({ id }: { id: string }): Promise<ReinviteRes
   const inviteUrl = `${APP_URL}/signup?token=${updated.invite_token}`;
 
   try {
-    await sendInviteEmail({ to: updated.email, token: updated.invite_token!, inviteUrl });
+    await sendInviteEmail({ to: updated.email, inviteUrl });
     revalidatePath('/admin');
     return { ok: true, mail_sent: true };
   } catch (e) {
