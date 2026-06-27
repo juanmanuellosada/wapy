@@ -71,6 +71,17 @@ export async function signupAction(
   const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
 
   if (signUpError || !data.user) {
+    if (signUpError) {
+      const msg = (signUpError.message ?? '').toLowerCase();
+      const isAlreadyExists =
+        (signUpError as { code?: string }).code === 'user_already_exists' ||
+        signUpError.status === 422 ||
+        msg.includes('already registered') ||
+        msg.includes('already been registered');
+      if (isAlreadyExists) {
+        return { error: 'Ya existe una cuenta con este email. Iniciá sesión.' };
+      }
+    }
     return { error: 'Hubo un error al crear tu cuenta. Intentá de nuevo.' };
   }
 

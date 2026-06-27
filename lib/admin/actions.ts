@@ -193,7 +193,7 @@ export async function adminDeleteStore({
 
   const { data: store } = await admin
     .from('stores')
-    .select('id, slug, mp_preapproval_id')
+    .select('id, slug, mp_preapproval_id, owner_id')
     .eq('id', storeId)
     .single();
 
@@ -247,6 +247,21 @@ export async function adminDeleteStore({
 
   if (deleteError) {
     return { error: 'No se pudo eliminar la tienda. Intentá de nuevo.' };
+  }
+
+  // Delete the owner (auth + public) — best effort, don't abort if this fails
+  const ownerId = store.owner_id as string | null;
+  if (ownerId) {
+    try {
+      // Nullify leads.approved_by to avoid FK constraint before user removal
+      await admin.from('leads').update({ approved_by: null }).eq('approved_by', ownerId);
+      // Delete public.users explicitly before removing auth.users
+      await admin.from('users').delete().eq('id', ownerId);
+      // Delete auth.users (service-role admin client required)
+      await admin.auth.admin.deleteUser(ownerId);
+    } catch (err) {
+      console.error('[admin/adminDeleteStore] owner delete failed:', err);
+    }
   }
 
   revalidatePath('/admin/stores');
