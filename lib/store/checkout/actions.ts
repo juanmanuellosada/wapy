@@ -193,10 +193,10 @@ export async function startCheckout({
       .eq('id', order_id);
 
     // 9. Return init_point for client-side redirect (task 5.7)
-    //    sandboxInitPoint is available when the owner's token is a test credential;
-    //    for production tokens, initPoint is the correct URL.
-    const initPoint = preference.sandboxInitPoint ?? preference.initPoint;
-    return { initPoint };
+    //    Always use the production init_point. MP includes sandbox_init_point in
+    //    every preference response (even with production tokens), so preferring it
+    //    would wrongly send buyers to the Sandbox checkout.
+    return { initPoint: preference.initPoint };
   } catch (err) {
     console.error('[startCheckout] unexpected error', { err });
     return { error: 'Error inesperado. Intentá de nuevo.' };
