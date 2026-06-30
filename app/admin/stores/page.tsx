@@ -59,13 +59,26 @@ export default async function AdminStoresPage() {
 
   const { data: stores } = await admin
     .from('stores')
-    .select('id, name, slug, plan, payment_exempt, payment_exempt_reason, trial_ends_at, mp_subscription_status, subscription_status_changed_at, blocked_at, mp_preapproval_id, status')
+    .select('id, name, slug, plan, payment_exempt, payment_exempt_reason, trial_ends_at, mp_subscription_status, subscription_status_changed_at, blocked_at, mp_preapproval_id, status, owner_id')
     .order('created_at', { ascending: false });
+
+  // Resolve owner emails in bulk (concurrent, not sequential) from auth.users.
+  const ownerIds = [...new Set((stores ?? []).map((s) => s.owner_id).filter(Boolean))] as string[];
+  const userResults = await Promise.all(
+    ownerIds.map((id) => admin.auth.admin.getUserById(id)),
+  );
+  const emailByOwnerId = new Map<string, string>();
+  userResults.forEach(({ data }) => {
+    if (data?.user?.id && data.user.email) {
+      emailByOwnerId.set(data.user.id, data.user.email);
+    }
+  });
 
   const now = new Date();
   const rows = (stores ?? []).map((s) => ({
     ...s,
     subState: getSubscriptionState(s, now),
+    ownerEmail: emailByOwnerId.get(s.owner_id ?? '') ?? null,
   }));
 
   return (
@@ -90,6 +103,7 @@ export default async function AdminStoresPage() {
                 <thead>
                   <tr className="bg-[#16222E]/5 text-[#16222E]/60 text-xs uppercase tracking-wide">
                     <th className="px-4 py-3 text-left font-semibold">Tienda</th>
+                    <th className="px-4 py-3 text-left font-semibold hidden md:table-cell">Email dueño</th>
                     <th className="px-4 py-3 text-left font-semibold">Plan</th>
                     <th className="px-4 py-3 text-left font-semibold">Estado</th>
                     <th className="px-4 py-3 text-left font-semibold hidden md:table-cell">Trial vence</th>
@@ -107,6 +121,15 @@ export default async function AdminStoresPage() {
                       <td className="px-4 py-3">
                         <p className="font-medium text-[#16222E] truncate max-w-[150px]">{row.name}</p>
                         <p className="text-xs text-[#16222E]/40 truncate">/{row.slug}</p>
+                      </td>
+                      <td className="px-4 py-3 hidden md:table-cell">
+                        {row.ownerEmail ? (
+                          <span className="text-xs text-[#16222E]/70 truncate block max-w-[180px]" title={row.ownerEmail}>
+                            {row.ownerEmail}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-[#16222E]/30">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
