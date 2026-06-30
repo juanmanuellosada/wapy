@@ -14,6 +14,7 @@ import type { SocialLinks } from '@/lib/store/social-links';
 import { getPlanLimits, isUnlimited } from '@/lib/plans/limits';
 import type { PlanId } from '@/lib/plans/limits';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
+import { getSubscriptionState } from '@/lib/subscription/state';
 
 // Section item schema (without the min-1 array constraint — dashboard can have 0)
 const sectionItemSchema = z.object({
@@ -714,6 +715,11 @@ export async function setCheckoutMode(
 
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'No se encontró la tienda.' };
+
+  // Guard: blocked stores cannot change checkout mode
+  if (getSubscriptionState(store, new Date()) === 'blocked') {
+    return { error: 'Tu suscripción está pausada. Reactivala para cambiar el modo de cobro.' };
+  }
 
   // Gate: the mercadopago mode requires a valid (non-revoked) connection.
   if (mode === 'mercadopago') {

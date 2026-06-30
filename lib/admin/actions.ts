@@ -48,12 +48,12 @@ export async function addWhitelistEntry(formData: FormData): Promise<AddResult> 
     return { error: 'validation', message: parsed.error.issues[0].message };
   }
 
-  const { email, grant_role, checkout_mode } = parsed.data;
+  const { email, grant_role } = parsed.data;
   const admin = createAdminClient();
 
   const { data: inserted, error: insertError } = await admin
     .from('whitelist')
-    .insert({ email: email.toLowerCase(), grant_role, checkout_mode })
+    .insert({ email: email.toLowerCase(), grant_role })
     .select('id, email, invite_token')
     .single();
 

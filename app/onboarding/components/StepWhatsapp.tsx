@@ -4,9 +4,9 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
-import { Loader2, ChevronLeft } from 'lucide-react';
+import { Loader2, ChevronLeft, CheckCircle } from 'lucide-react';
 import { whatsappSchema, type WhatsappData } from '@/lib/onboarding/schemas';
-import { saveWhatsapp } from '@/lib/onboarding/actions';
+import { saveWhatsapp, saveOnboardingCheckoutMode } from '@/lib/onboarding/actions';
 import { nextStepName } from '@/lib/onboarding/steps';
 import type { Store } from '@/lib/onboarding/state';
 
@@ -28,6 +28,9 @@ export function StepWhatsapp({ store, checkoutMode }: Props) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [selectedMode, setSelectedMode] = useState<'whatsapp' | 'mercadopago'>(
+    (store.checkout_mode as 'whatsapp' | 'mercadopago') ?? 'whatsapp'
+  );
 
   const {
     register,
@@ -49,6 +52,14 @@ export function StepWhatsapp({ store, checkoutMode }: Props) {
     setSubmitting(true);
     setServerError(null);
 
+    // Persist the chosen mode before advancing (no MP connection required here)
+    const modeResult = await saveOnboardingCheckoutMode(selectedMode);
+    if ('error' in modeResult) {
+      setServerError(modeResult.error);
+      setSubmitting(false);
+      return;
+    }
+
     const result = await saveWhatsapp({ whatsapp_number: data.whatsapp_number });
 
     if ('error' in result) {
@@ -57,7 +68,7 @@ export function StepWhatsapp({ store, checkoutMode }: Props) {
       return;
     }
 
-    const next = nextStepName('whatsapp', checkoutMode) ?? 'review';
+    const next = nextStepName('whatsapp', selectedMode) ?? 'review';
     router.push(`/onboarding/${next}`);
   };
 
@@ -114,6 +125,47 @@ export function StepWhatsapp({ store, checkoutMode }: Props) {
           Cuando un cliente haga un pedido en tu tienda, se abrirá WhatsApp con el detalle del pedido
           listo para enviar a este número.
         </p>
+      </div>
+
+      {/* Modo de cobro */}
+      <div>
+        <p className="text-sm font-semibold text-[#FBF7EC] mb-1">¿Cómo querés cobrar?</p>
+        <p className="text-xs text-white/50 mb-3">
+          Podés cambiar esto más adelante desde el panel.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedMode('whatsapp')}
+            className={`relative flex flex-col gap-1 p-4 rounded-xl border text-left transition-colors cursor-pointer ${
+              selectedMode === 'whatsapp'
+                ? 'bg-white/10 border-[#25D366]/50 ring-1 ring-[#25D366]/30'
+                : 'bg-white/5 border-white/10 hover:border-white/25'
+            }`}
+          >
+            {selectedMode === 'whatsapp' && (
+              <CheckCircle size={14} className="absolute top-3 right-3 text-[#25D366]" />
+            )}
+            <span className="text-sm font-semibold text-[#FBF7EC]">WhatsApp</span>
+            <span className="text-xs text-white/50">Los pedidos llegan a tu WhatsApp</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedMode('mercadopago')}
+            className={`relative flex flex-col gap-1 p-4 rounded-xl border text-left transition-colors cursor-pointer ${
+              selectedMode === 'mercadopago'
+                ? 'bg-white/10 border-[#009EE3]/50 ring-1 ring-[#009EE3]/30'
+                : 'bg-white/5 border-white/10 hover:border-white/25'
+            }`}
+          >
+            {selectedMode === 'mercadopago' && (
+              <CheckCircle size={14} className="absolute top-3 right-3 text-[#009EE3]" />
+            )}
+            <span className="text-sm font-semibold text-[#FBF7EC]">Mercado Pago</span>
+            <span className="text-xs text-white/50">Cobros online a tu cuenta</span>
+          </button>
+        </div>
       </div>
 
       {/* Actions */}

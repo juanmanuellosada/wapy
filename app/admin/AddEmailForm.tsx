@@ -22,7 +22,7 @@ export function AddEmailForm() {
     formState: { errors },
   } = useForm<AddEmailInput>({
     resolver: zodResolver(addEmailSchema),
-    defaultValues: { grant_role: 'owner', checkout_mode: 'whatsapp' },
+    defaultValues: { grant_role: 'owner' },
   });
 
   function onSubmit(data: AddEmailInput) {
@@ -30,7 +30,6 @@ export function AddEmailForm() {
     const formData = new FormData();
     formData.append('email', data.email);
     formData.append('grant_role', data.grant_role);
-    formData.append('checkout_mode', data.checkout_mode);
 
     startTransition(async () => {
       const result = await addWhitelistEntry(formData);
@@ -108,21 +107,6 @@ export function AddEmailForm() {
           >
             <option value="owner">Owner</option>
             <option value="superadmin">Superadmin</option>
-          </select>
-        </div>
-
-        <div>
-          <label htmlFor="new-checkout-mode" className="block text-xs font-semibold text-[#16222E]/70 mb-1">
-            Tipo de tienda
-          </label>
-          <select
-            id="new-checkout-mode"
-            disabled={isPending}
-            {...register('checkout_mode')}
-            className="min-h-[44px] px-3 py-2 rounded-lg border border-[#16222E]/20 bg-[#FBF7EC] text-[#16222E] text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F5C84B] focus-visible:border-[#F5C84B] transition disabled:opacity-50 cursor-pointer"
-          >
-            <option value="whatsapp">WhatsApp (carrito por WhatsApp)</option>
-            <option value="mercadopago">Mercado Pago (checkout con pago)</option>
           </select>
         </div>
 

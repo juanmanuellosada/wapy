@@ -134,7 +134,7 @@ export async function saveBasics(formData: {
   }
 
   const { data: whitelistRow } = await admin.from('whitelist')
-    .select('plan, trial_ends_at, checkout_mode')
+    .select('plan, trial_ends_at')
     .ilike('email', user.email!)
     .maybeSingle();
 
@@ -155,7 +155,7 @@ export async function saveBasics(formData: {
       onboarding_step: 1,
       plan: whitelistRow?.plan ?? 'inicial',
       trial_ends_at: trialEndsAt,
-      checkout_mode: whitelistRow?.checkout_mode ?? 'whatsapp',
+      checkout_mode: 'whatsapp',
     })
     .select('id')
     .single();
@@ -334,6 +334,33 @@ export async function advancePaymentStep(): Promise<SaveResult> {
 
   revalidatePath('/onboarding', 'layout');
   return { ok: true, storeId: store.id };
+}
+
+// ---------------------------------------------------------------------------
+// saveOnboardingCheckoutMode — persists the owner's chosen payment mode.
+// Does NOT require an MP connection (unlike setCheckoutMode in store/actions).
+// ---------------------------------------------------------------------------
+
+export async function saveOnboardingCheckoutMode(
+  mode: 'whatsapp' | 'mercadopago'
+): Promise<{ ok: true } | { error: string }> {
+  if (mode !== 'whatsapp' && mode !== 'mercadopago') {
+    return { error: 'Modo inválido.' };
+  }
+
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from('stores')
+    .update({ checkout_mode: mode, updated_at: new Date().toISOString() })
+    .eq('id', store.id);
+
+  if (error) return { error: 'No se pudo guardar el modo de cobro.' };
+
+  revalidatePath('/onboarding', 'layout');
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
