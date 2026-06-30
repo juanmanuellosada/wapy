@@ -5,9 +5,19 @@ import { ChevronDown } from 'lucide-react';
 
 const faqs = [
   {
-    question: '¿Cómo cobran?',
+    question: '¿Cómo cobran la suscripción?',
     answer:
-      'Te facturamos por transferencia bancaria o MercadoPago al terminar el trial de 14 días. Sin cargo automático a tarjeta, sin sorpresas. Si no querés continuar, no hacés nada.',
+      'Te facturamos la suscripción a Wapy por transferencia bancaria o MercadoPago al terminar el trial de 14 días. Sin cargo automático a tarjeta, sin sorpresas. Si no querés continuar, no hacés nada. (Esto es aparte del checkout que usan tus clientes para pagar sus compras en tu tienda.)',
+  },
+  {
+    question: '¿Mis clientes pueden pagar online con Mercado Pago?',
+    answer:
+      'Sí. Wapy integra el checkout de Mercado Pago para que tus clientes paguen con tarjeta de crédito, débito o efectivo directo en tu tienda — sin salir de ella. Está disponible en todos los planes. Para activarlo, conectás tu cuenta de Mercado Pago desde el panel de configuración de tu tienda.',
+  },
+  {
+    question: '¿Puedo crear cupones de descuento?',
+    answer:
+      'Sí. Desde el panel podés crear códigos de descuento con porcentaje (ej. 15% OFF) o monto fijo (ej. $500 de descuento). A cada cupón le podés poner fecha de expiración, límite de usos y monto mínimo de compra. Están disponibles en todos los planes.',
   },
   {
     question: '¿Puedo cancelar en cualquier momento?',

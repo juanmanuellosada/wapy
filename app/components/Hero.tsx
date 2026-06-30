@@ -67,8 +67,8 @@ export default function Hero() {
             </h1>
 
             <p className="text-white/70 text-lg md:text-xl max-w-md mx-auto md:mx-0 mb-8 leading-relaxed">
-              Sin programar. Sin integraciones complicadas. Tus clientes arman el carrito
-              y el pedido llega directo a tu WhatsApp.
+              Sin programar. Sin integraciones complicadas. Tus clientes pagan online con Mercado Pago
+              o te mandan el pedido directo a tu WhatsApp.
             </p>
 
             {/* CTAs */}

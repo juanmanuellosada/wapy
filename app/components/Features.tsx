@@ -5,9 +5,15 @@ import {
   LayoutGrid,
   Smartphone,
   Zap,
+  CreditCard,
+  Tag,
+  Layers,
+  Paintbrush,
+  BarChart2,
+  Share2,
 } from "lucide-react";
 
-const features = [
+const coreFeatures = [
   {
     Icon: Globe,
     title: "Subdominio propio",
@@ -52,6 +58,51 @@ const features = [
   },
 ];
 
+const extraFeatures = [
+  {
+    Icon: CreditCard,
+    title: "Cobrá con Mercado Pago",
+    description:
+      "Tus clientes pagan online con tarjeta o efectivo directo en la tienda — disponible en todos los planes.",
+    highlight: true,
+  },
+  {
+    Icon: Tag,
+    title: "Cupones de descuento",
+    description:
+      "Creá códigos de descuento con porcentaje o monto fijo, fecha de expiración y límite de usos.",
+    highlight: false,
+  },
+  {
+    Icon: Layers,
+    title: "Variantes de producto",
+    description:
+      "Talles, colores, tamaños — cada opción con su propio precio y stock.",
+    highlight: false,
+  },
+  {
+    Icon: Paintbrush,
+    title: "Personalizá tu marca",
+    description:
+      "Logo, color de marca y banner propios. Tu tienda con identidad visual, no una plantilla genérica.",
+    highlight: false,
+  },
+  {
+    Icon: BarChart2,
+    title: "Reportes y estadísticas",
+    description:
+      "Gráficos de ingresos y órdenes por período, más export CSV para llevar tus números donde quieras.",
+    highlight: false,
+  },
+  {
+    Icon: Share2,
+    title: "Compartí y conectá redes",
+    description:
+      "Compartí el carrito pre-armado por WhatsApp y sumá tus links de Instagram, TikTok y otras redes.",
+    highlight: false,
+  },
+];
+
 export default function Features() {
   return (
     <section id="features" className="py-20 md:py-28 px-4 sm:px-6 bg-[#16222E] relative overflow-hidden">
@@ -92,53 +143,104 @@ export default function Features() {
           </p>
         </div>
 
-        {/* Bento grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {features.map(({ Icon, title, description, highlight }) => (
-            <div
-              key={title}
-              className={[
-                "group relative flex flex-col p-7 rounded-[1.5rem] border transition-all duration-250 cursor-default overflow-hidden",
-                highlight
-                  ? "bg-[#F5C84B]/10 border-[#F5C84B]/30 hover:bg-[#F5C84B]/20 hover:border-[#F5C84B]/60"
-                  : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-[#F5C84B]/30",
-              ].join(" ")}
-            >
-              {/* Icon container */}
+        {/* Bento grid — two groups */}
+        <div className="space-y-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {coreFeatures.map(({ Icon, title, description, highlight }) => (
               <div
+                key={title}
                 className={[
-                  "w-12 h-12 rounded-xl flex items-center justify-center mb-5 transition-colors duration-250",
+                  "group relative flex flex-col p-7 rounded-[1.5rem] border transition-all duration-250 cursor-default overflow-hidden",
                   highlight
-                    ? "bg-[#F5C84B] group-hover:bg-[#D9A92A]"
-                    : "bg-white/10 group-hover:bg-[#F5C84B] group-hover:text-[#16222E]",
+                    ? "bg-[#F5C84B]/10 border-[#F5C84B]/30 hover:bg-[#F5C84B]/20 hover:border-[#F5C84B]/60"
+                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-[#F5C84B]/30",
                 ].join(" ")}
               >
-                <Icon
+                <div
                   className={[
-                    "w-5 h-5 transition-colors duration-250",
+                    "w-12 h-12 rounded-xl flex items-center justify-center mb-5 transition-colors duration-250",
                     highlight
-                      ? "text-[#16222E]"
-                      : "text-white group-hover:text-[#16222E]",
+                      ? "bg-[#F5C84B] group-hover:bg-[#D9A92A]"
+                      : "bg-white/10 group-hover:bg-[#F5C84B] group-hover:text-[#16222E]",
                   ].join(" ")}
-                  strokeWidth={2}
-                />
+                >
+                  <Icon
+                    className={[
+                      "w-5 h-5 transition-colors duration-250",
+                      highlight
+                        ? "text-[#16222E]"
+                        : "text-white group-hover:text-[#16222E]",
+                    ].join(" ")}
+                    strokeWidth={2}
+                  />
+                </div>
+                <h3
+                  className={[
+                    "text-lg font-extrabold mb-2 transition-colors duration-250",
+                    highlight
+                      ? "text-white"
+                      : "text-white group-hover:text-[#F5C84B]",
+                  ].join(" ")}
+                >
+                  {title}
+                </h3>
+                <p className="text-white/55 text-sm leading-relaxed">
+                  {description}
+                </p>
               </div>
+            ))}
+          </div>
 
-              <h3
-                className={[
-                  "text-lg font-extrabold mb-2 transition-colors duration-250",
-                  highlight
-                    ? "text-white"
-                    : "text-white group-hover:text-[#F5C84B]",
-                ].join(" ")}
-              >
-                {title}
-              </h3>
-              <p className="text-white/55 text-sm leading-relaxed">
-                {description}
-              </p>
+          <div>
+            <p className="text-white/25 text-xs font-bold uppercase tracking-widest text-center mb-6">
+              También incluye
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {extraFeatures.map(({ Icon, title, description, highlight }) => (
+                <div
+                  key={title}
+                  className={[
+                    "group relative flex flex-col p-7 rounded-[1.5rem] border transition-all duration-250 cursor-default overflow-hidden",
+                    highlight
+                      ? "bg-[#F5C84B]/10 border-[#F5C84B]/30 hover:bg-[#F5C84B]/20 hover:border-[#F5C84B]/60"
+                      : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-[#F5C84B]/30",
+                  ].join(" ")}
+                >
+                  <div
+                    className={[
+                      "w-12 h-12 rounded-xl flex items-center justify-center mb-5 transition-colors duration-250",
+                      highlight
+                        ? "bg-[#F5C84B] group-hover:bg-[#D9A92A]"
+                        : "bg-white/10 group-hover:bg-[#F5C84B] group-hover:text-[#16222E]",
+                    ].join(" ")}
+                  >
+                    <Icon
+                      className={[
+                        "w-5 h-5 transition-colors duration-250",
+                        highlight
+                          ? "text-[#16222E]"
+                          : "text-white group-hover:text-[#16222E]",
+                      ].join(" ")}
+                      strokeWidth={2}
+                    />
+                  </div>
+                  <h3
+                    className={[
+                      "text-lg font-extrabold mb-2 transition-colors duration-250",
+                      highlight
+                        ? "text-white"
+                        : "text-white group-hover:text-[#F5C84B]",
+                    ].join(" ")}
+                  >
+                    {title}
+                  </h3>
+                  <p className="text-white/55 text-sm leading-relaxed">
+                    {description}
+                  </p>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </section>
