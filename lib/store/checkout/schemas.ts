@@ -10,9 +10,20 @@ export const buyerSchema = z.object({
   email: z.string().email('Email inválido'),
   phone: z
     .string()
-    .min(7, 'El teléfono debe tener al menos 7 dígitos')
-    .regex(/^[0-9+\-\s()]+$/, 'Teléfono inválido'),
-  address: z.string().min(5, 'La dirección debe tener al menos 5 caracteres'),
+    .trim()
+    .refine(
+      (val) => val === '' || (val.length >= 7 && /^[0-9+\-\s()]+$/.test(val)),
+      { message: 'Teléfono inválido' }
+    )
+    .optional(),
+  address: z
+    .string()
+    .trim()
+    .refine(
+      (val) => val === '' || val.length >= 5,
+      { message: 'La dirección debe tener al menos 5 caracteres' }
+    )
+    .optional(),
 });
 
 export type BuyerInput = z.infer<typeof buyerSchema>;

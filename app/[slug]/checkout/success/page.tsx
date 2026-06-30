@@ -5,16 +5,81 @@
 // is performed exclusively by the orders webhook (Group 6).
 // We show "pago en verificación" to avoid confirming a payment that hasn't been
 // validated yet (design decision D5).
+//
+// When payment_status === 'approved' (set by the webhook), we additionally show
+// a WhatsApp notify button so the buyer can alert the store owner.
 
 import Link from "next/link";
+import { createAdminClient } from "@/lib/supabase/server";
+import { buildOrderWhatsappMessage, formatARS } from "@/lib/store/whatsapp/buildMessage";
+import WhatsAppNotifyButton from "./WhatsAppNotifyButton";
 
 interface Props {
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-export default async function CheckoutSuccessPage({ params }: Props) {
+export default async function CheckoutSuccessPage({ params, searchParams }: Props) {
   const { slug } = await params;
+  const sp = await searchParams;
+  const externalReference = typeof sp.external_reference === 'string' ? sp.external_reference : null;
+
+  let whatsappUrl: string | null = null;
+
+  if (externalReference) {
+    const admin = createAdminClient();
+
+    const { data: order } = await admin
+      .from('orders')
+      .select('id, store_id, payment_status, mp_payment_id, customer_name, total_cents, discount_cents, coupon_code')
+      .eq('id', externalReference)
+      .maybeSingle();
+
+    if (order && order.payment_status === 'approved') {
+      const [storeResult, itemsResult] = await Promise.all([
+        admin
+          .from('stores')
+          .select('name, whatsapp_number')
+          .eq('id', order.store_id)
+          .maybeSingle(),
+        admin
+          .from('order_items')
+          .select('product_name, quantity, unit_price_cents, variant_label')
+          .eq('order_id', order.id),
+      ]);
+
+      const store = storeResult.data;
+      const orderItems = itemsResult.data ?? [];
+
+      if (store?.whatsapp_number) {
+        const lines = orderItems.map((item) => {
+          const label = item.variant_label ? ` (${item.variant_label})` : '';
+          const lineTotal = (item.unit_price_cents * item.quantity) / 100;
+          return `• ${item.quantity}x ${item.product_name}${label} — ${formatARS(lineTotal)}`;
+        });
+
+        const total = order.total_cents / 100;
+        const discountAmount = order.discount_cents ? order.discount_cents / 100 : null;
+
+        const message = buildOrderWhatsappMessage({
+          storeName: store.name ?? '',
+          lines,
+          couponCode: order.coupon_code ?? null,
+          discountAmount,
+          total,
+          orderRef: order.id.slice(0, 8),
+          payment: {
+            method: 'mercadopago',
+            paymentId: order.mp_payment_id ?? null,
+            customerName: order.customer_name ?? null,
+          },
+        });
+
+        const normalized = store.whatsapp_number.replace(/\D/g, '');
+        whatsappUrl = `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
+      }
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-16 gap-6 text-center">
@@ -39,6 +104,8 @@ export default async function CheckoutSuccessPage({ params }: Props) {
           Este proceso puede tardar unos minutos.
         </p>
       </div>
+
+      {whatsappUrl && <WhatsAppNotifyButton url={whatsappUrl} />}
 
       <Link
         href={`/${slug}`}

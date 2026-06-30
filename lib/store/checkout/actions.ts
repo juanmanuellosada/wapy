@@ -87,10 +87,12 @@ export async function startCheckout({
   slug,
   cart,
   buyer,
+  couponCode,
 }: {
   slug: string;
   cart: CartItemInput[];
   buyer: BuyerInput;
+  couponCode?: string | null;
 }): Promise<{ initPoint: string } | { error: string }> {
   try {
     // 1. Validate buyer data with Zod schema (task 5.1)
@@ -152,6 +154,9 @@ export async function startCheckout({
       customer_email: email,
       customer_phone: phone,
       delivery_address: address,
+      // Pass only the code — discount_amount is intentionally omitted so createPendingOrder
+      // re-validates server-side against real DB prices (never trusting the client amount).
+      coupon_code: couponCode ?? null,
     });
 
     if ('error' in orderResult) {
@@ -164,6 +169,8 @@ export async function startCheckout({
           return { error: 'Algunos productos no tienen stock suficiente.' };
         case 'qty_violation':
           return { error: 'La cantidad de algún producto es inválida.' };
+        case 'coupon_invalid':
+          return { error: (orderResult as { error: 'coupon_invalid'; message: string }).message };
         default:
           return { error: 'No se pudo crear el pedido.' };
       }

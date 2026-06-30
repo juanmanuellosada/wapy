@@ -3,6 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
+import { validateCoupon } from '@/lib/store/coupons/actions';
 
 // 3.1 Each cart item may carry an optional variantId.
 type CreateOrderInput = {
@@ -38,7 +39,8 @@ type CreateOrderResult =
   | { order_id: string; mp_items: MpOrderItem[] }
   | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' }
   | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
-  | { error: 'qty_violation'; productId: string; productName: string; min: number; step: number };
+  | { error: 'qty_violation'; productId: string; productName: string; min: number; step: number }
+  | { error: 'coupon_invalid'; message: string };
 
 export async function createPendingOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
   const admin = createAdminClient();
@@ -255,18 +257,38 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   // 4. Recalculate total server-side using effective prices
   const totalCents = enrichedItems.reduce((sum, i) => sum + i.effectivePrice * i.quantity, 0);
 
-  // 5. Insert order
-  // Compute discount_cents from discount_amount (which is in ARS, same as totalCents units... but
-  // discount_amount is passed as a raw number matching totalPrice units in the cart — cents).
-  // The cart totalPrice is already in cents (price_cents / 100 * qty), but looking at handleWhatsApp,
-  // formatARS(totalPrice) is called directly, meaning totalPrice is in ARS (not cents).
-  // Actually: StoreClient cart uses price from CartItem.price which is set from product.price_cents/100
-  // in ProductCardClient — so totalPrice is in ARS units, and discount_amount is also in ARS.
-  // totalCents above is computed server-side from price_cents, so it is in cents.
-  // We convert discount_amount (ARS) → discount_cents by multiplying by 100.
-  const discountCents = input.discount_amount != null
-    ? Math.round(input.discount_amount * 100)
-    : null;
+  // 5. Coupon validation + discount computation
+  //
+  // Two paths:
+  //   a) MP flow: coupon_code present, discount_amount absent → validate server-side against
+  //      the DB-computed total so the client cannot manipulate the discount.
+  //   b) WhatsApp flow: discount_amount present (client-provided, ARS) → use as-is (existing
+  //      behavior; WA orders are fulfilled manually by the owner so trust is acceptable).
+  //
+  // mpFinalTotalCents drives the proportional distribution of mp_items unit prices sent to MP.
+  // It equals totalCents when there is no discount.
+  let discountCents: number | null = null;
+  let mpFinalTotalCents = totalCents;
+
+  if (input.coupon_code && input.discount_amount == null) {
+    // MP flow — re-validate the coupon against server-computed prices.
+    const couponResult = await validateCoupon({
+      storeId: input.store_id,
+      code: input.coupon_code,
+      cartTotal: totalCents / 100, // ARS
+    });
+    if ('error' in couponResult) {
+      return { error: 'coupon_invalid', message: couponResult.error };
+    }
+    if (couponResult.finalTotal <= 0) {
+      return { error: 'coupon_invalid', message: 'El cupón no puede cubrir el total del pedido.' };
+    }
+    discountCents = Math.round(couponResult.discount * 100);
+    mpFinalTotalCents = Math.round(couponResult.finalTotal * 100);
+  } else if (input.discount_amount != null) {
+    // WhatsApp flow — use client-provided discount (ARS → cents).
+    discountCents = Math.round(input.discount_amount * 100);
+  }
 
   const { data: order, error: orderError } = await admin
     .from('orders')
@@ -397,13 +419,38 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     }
   }
 
-  // 8. Return order reference + MP-ready items (unit_price in ARS, for createCheckoutPreference)
-  const mp_items: MpOrderItem[] = enrichedItems.map((i) => ({
-    title: productMap.get(i.product_id)!.name,
-    quantity: i.quantity,
-    unit_price: i.effectivePrice / 100,
-    currency_id: 'ARS',
-  }));
+  // 8. Return order reference + MP-ready items (unit_price in ARS, for createCheckoutPreference).
+  //
+  // When a coupon was validated server-side (mpFinalTotalCents < totalCents), distribute the
+  // discount proportionally across items so the MP preference charges exactly finalTotal.
+  // Each item's unit_price is scaled by the ratio finalTotal/total, rounded to 2 decimal places.
+  // The LAST item absorbs the rounding residual so the sum equals mpFinalTotalCents (±1 cent).
+  let mp_items: MpOrderItem[];
+  if (mpFinalTotalCents < totalCents && totalCents > 0) {
+    const finalTotalARS = mpFinalTotalCents / 100;
+    const ratio = mpFinalTotalCents / totalCents;
+    let accumulatedARS = 0;
+    mp_items = enrichedItems.map((item, idx) => {
+      const title = productMap.get(item.product_id)!.name;
+      const isLast = idx === enrichedItems.length - 1;
+      let unit_price: number;
+      if (isLast) {
+        const remaining = finalTotalARS - accumulatedARS;
+        unit_price = Math.max(0.01, Math.round((remaining / item.quantity) * 100) / 100);
+      } else {
+        unit_price = Math.max(0.01, Math.round((item.effectivePrice / 100) * ratio * 100) / 100);
+        accumulatedARS += unit_price * item.quantity;
+      }
+      return { title, quantity: item.quantity, unit_price, currency_id: 'ARS' as const };
+    });
+  } else {
+    mp_items = enrichedItems.map((i) => ({
+      title: productMap.get(i.product_id)!.name,
+      quantity: i.quantity,
+      unit_price: i.effectivePrice / 100,
+      currency_id: 'ARS' as const,
+    }));
+  }
 
   return { order_id: order.id, mp_items };
 }

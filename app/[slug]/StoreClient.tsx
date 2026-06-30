@@ -23,6 +23,7 @@ import { useCart, cartItemKey } from "./CartContext";
 import ProductCardClient, { VariantSelector } from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
+import { buildOrderWhatsappMessage } from "@/lib/store/whatsapp/buildMessage";
 import { startCheckout } from "@/lib/store/checkout/actions";
 import { validateCoupon } from "@/lib/store/coupons/actions";
 import { toast } from "@/lib/toast";
@@ -1005,23 +1006,7 @@ function CartDrawer({
       return `• ${i.quantity}x ${i.name}${label} — ${formatARS(displayPrice * i.quantity)}`;
     });
 
-    const messageLines: string[] = [
-      `*Pedido en ${storeName}*`,
-      "",
-      ...lines,
-      "",
-    ];
-
-    if (appliedCoupon && discountAmount > 0) {
-      messageLines.push(`Cupón *${appliedCoupon.code}*: -${formatARS(discountAmount)}`);
-      messageLines.push(`*Total: ${formatARS(finalTotal)}*`);
-    } else {
-      messageLines.push(`*Total: ${formatARS(totalPrice)}*`);
-    }
-
-    const currentMessage = messageLines.join("\n");
-
-    let orderRef = '';
+    let orderRef: string | null = null;
     try {
       const result = await createPendingOrder({
         store_id: storeId,
@@ -1030,7 +1015,7 @@ function CartDrawer({
         discount_amount: appliedCoupon ? discountAmount : null,
       });
       if ('order_id' in result) {
-        orderRef = `\n\nReferencia: #${result.order_id.slice(0, 8)}`;
+        orderRef = result.order_id.slice(0, 8);
       } else if ('error' in result && result.error === 'stock_insufficient') {
         toast.error("Algunos productos ya no tienen stock suficiente. Revisá tu carrito.");
         return;
@@ -1043,8 +1028,17 @@ function CartDrawer({
       // silencioso, abrir wa.me igual
     }
 
+    const message = buildOrderWhatsappMessage({
+      storeName,
+      lines,
+      couponCode: appliedCoupon?.code ?? null,
+      discountAmount: appliedCoupon && discountAmount > 0 ? discountAmount : null,
+      total: appliedCoupon && discountAmount > 0 ? finalTotal : totalPrice,
+      orderRef,
+    });
+
     const normalized = whatsappNumber.replace(/\D/g, "");
-    const text = encodeURIComponent(`${currentMessage}${orderRef}`);
+    const text = encodeURIComponent(message);
     window.open(`https://wa.me/${normalized}?text=${text}`, "_blank");
   }
 
@@ -1075,8 +1069,10 @@ function CartDrawer({
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRe.test(buyerForm.email.trim())) errs.email = "Email inválido";
     const phoneRe = /^[0-9+\-\s()]+$/;
-    if (buyerForm.phone.trim().length < 7 || !phoneRe.test(buyerForm.phone.trim())) errs.phone = "Teléfono inválido";
-    if (buyerForm.address.trim().length < 5) errs.address = "La dirección debe tener al menos 5 caracteres";
+    const trimmedPhone = buyerForm.phone.trim();
+    if (trimmedPhone !== '' && (trimmedPhone.length < 7 || !phoneRe.test(trimmedPhone))) errs.phone = "Teléfono inválido";
+    const trimmedAddress = buyerForm.address.trim();
+    if (trimmedAddress !== '' && trimmedAddress.length < 5) errs.address = "La dirección debe tener al menos 5 caracteres";
     setBuyerErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -1100,6 +1096,8 @@ function CartDrawer({
           phone: buyerForm.phone.trim(),
           address: buyerForm.address.trim(),
         },
+        // Only the code is sent — the server re-validates against DB prices.
+        couponCode: appliedCoupon?.code ?? null,
       });
       if ("error" in result) {
         setMpError(result.error);
@@ -1406,7 +1404,7 @@ function CartDrawer({
                 {/* Phone */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium" style={{ color: "var(--store-ink-secondary)" }}>
-                    Teléfono <span aria-hidden>*</span>
+                    Teléfono <span style={{ fontWeight: 400, opacity: 0.6 }}>(opcional)</span>
                   </label>
                   <input
                     type="tel"
@@ -1427,7 +1425,7 @@ function CartDrawer({
                 {/* Address */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium" style={{ color: "var(--store-ink-secondary)" }}>
-                    Dirección de entrega <span aria-hidden>*</span>
+                    Dirección de entrega <span style={{ fontWeight: 400, opacity: 0.6 }}>(opcional)</span>
                   </label>
                   <input
                     type="text"
