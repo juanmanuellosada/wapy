@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle, XCircle, Link2, Unlink } from 'lucide-react';
 import { connectMercadoPago, disconnectMercadoPago } from '@/lib/store/checkout/actions';
 import { setCheckoutMode } from '@/lib/store/actions';
+import { MpFeesSimulator } from './MpFeesSimulator';
 
 type MpConnectionStatus = {
   connected: boolean;
@@ -239,6 +240,8 @@ export function MercadoPagoPanel({ mpStatus, checkoutMode, mpConnectResult, mpEr
           </button>
         </div>
       </div>
+
+      <MpFeesSimulator />
     </section>
   );
 }
