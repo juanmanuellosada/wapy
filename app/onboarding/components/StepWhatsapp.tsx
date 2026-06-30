@@ -146,8 +146,8 @@ export function StepWhatsapp({ store, checkoutMode }: Props) {
             {selectedMode === 'whatsapp' && (
               <CheckCircle size={14} className="absolute top-3 right-3 text-[#25D366]" />
             )}
-            <span className="text-sm font-semibold text-[#FBF7EC]">WhatsApp</span>
-            <span className="text-xs text-white/50">Los pedidos llegan a tu WhatsApp</span>
+            <span className="text-sm font-semibold text-[#FBF7EC]">Solo WhatsApp</span>
+            <span className="text-xs text-white/50">Los pedidos llegan únicamente a tu WhatsApp.</span>
           </button>
 
           <button
@@ -162,8 +162,8 @@ export function StepWhatsapp({ store, checkoutMode }: Props) {
             {selectedMode === 'mercadopago' && (
               <CheckCircle size={14} className="absolute top-3 right-3 text-[#009EE3]" />
             )}
-            <span className="text-sm font-semibold text-[#FBF7EC]">Mercado Pago</span>
-            <span className="text-xs text-white/50">Cobros online a tu cuenta</span>
+            <span className="text-sm font-semibold text-[#FBF7EC]">Mercado Pago + WhatsApp</span>
+            <span className="text-xs text-white/50">Tus clientes pagan online y el pedido también te llega por WhatsApp.</span>
           </button>
         </div>
       </div>

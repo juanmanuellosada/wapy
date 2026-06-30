@@ -212,8 +212,8 @@ export function MercadoPagoPanel({ mpStatus, checkoutMode, mpConnectResult, mpEr
             {currentMode === 'whatsapp' && (
               <CheckCircle size={14} className="absolute top-3 right-3 text-[#25D366]" />
             )}
-            <span className="text-sm font-semibold text-[#FBF7EC]">WhatsApp</span>
-            <span className="text-xs text-white/50">Los pedidos llegan a tu WhatsApp</span>
+            <span className="text-sm font-semibold text-[#FBF7EC]">Solo WhatsApp</span>
+            <span className="text-xs text-white/50">Los pedidos llegan únicamente a tu WhatsApp.</span>
           </button>
 
           {/* Mercado Pago */}
@@ -233,9 +233,9 @@ export function MercadoPagoPanel({ mpStatus, checkoutMode, mpConnectResult, mpEr
             {currentMode === 'mercadopago' && canUseMercadoPago && (
               <CheckCircle size={14} className="absolute top-3 right-3 text-[#009EE3]" />
             )}
-            <span className="text-sm font-semibold text-[#FBF7EC]">Mercado Pago</span>
+            <span className="text-sm font-semibold text-[#FBF7EC]">Mercado Pago + WhatsApp</span>
             <span className="text-xs text-white/50">
-              {!canUseMercadoPago ? 'Conectá tu cuenta primero' : 'Cobros online a tu cuenta'}
+              {!canUseMercadoPago ? 'Conectá tu cuenta primero' : 'Tus clientes pagan online y el pedido también te llega por WhatsApp.'}
             </span>
           </button>
         </div>
