@@ -171,6 +171,73 @@ function useDarkMode(slug: string) {
   return { isDark, toggle };
 }
 
+// ─── Checkout idempotency key ────────────────────────────────────────────────
+// Generates one key per distinct cart (so a double submit — reload/back/tab
+// timeout — of the SAME cart reuses the same key and createPendingOrder just
+// returns the existing order instead of duplicating it / re-deducting stock).
+// The key changes whenever the cart contents change or after a successful
+// checkout. Persisted to localStorage so a reload doesn't lose it.
+
+function cartSignature(items: { productId: string; variantId?: string | null; quantity: number }[]): string {
+  return items.map((i) => `${i.productId}:${i.variantId ?? ""}:${i.quantity}`).join("|");
+}
+
+function useCheckoutIdempotencyKey(slug: string, signature: string) {
+  const storageKey = `wapy-checkout-key-${slug}`;
+  const lastSignatureRef = useRef<string | null>(null);
+
+  const [key, setKey] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { signature: string; key: string };
+        if (parsed.signature === signature) return parsed.key;
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return crypto.randomUUID();
+  });
+
+  const persist = useCallback(
+    (sig: string, k: string) => {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify({ signature: sig, key: k }));
+      } catch {
+        // Ignore storage errors
+      }
+    },
+    [storageKey]
+  );
+
+  // Regenerate the key whenever the cart signature changes (new/removed/changed items).
+  useEffect(() => {
+    if (lastSignatureRef.current === null) {
+      lastSignatureRef.current = signature;
+      persist(signature, key);
+      return;
+    }
+    if (lastSignatureRef.current === signature) return;
+    lastSignatureRef.current = signature;
+    const nextKey = crypto.randomUUID();
+    setKey(nextKey);
+    persist(signature, nextKey);
+    // key intentionally omitted: we only want to react to signature changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature, persist]);
+
+  // Call after a successful checkout so a subsequent order for the same cart
+  // (e.g. the buyer intentionally orders the same items again) gets a fresh key.
+  const regenerate = useCallback(() => {
+    const nextKey = crypto.randomUUID();
+    setKey(nextKey);
+    persist(signature, nextKey);
+  }, [signature, persist]);
+
+  return { key, regenerate };
+}
+
 // ─── Local types used in cart/UI ─────────────────────────────────────────────
 
 // UIProduct is imported from ./types (shared with TopSellers, RelatedProducts, etc.)
@@ -951,6 +1018,12 @@ function CartDrawer({
   const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
+  // Idempotency (#6): one key per distinct cart, reused on double submit,
+  // regenerated on cart change or after a successful checkout.
+  const { key: idempotencyKey, regenerate: regenerateIdempotencyKey } = useCheckoutIdempotencyKey(
+    storeSlug,
+    cartSignature(items)
+  );
   // task 5.4, 5.5: MP checkout step state
   const isMpMode = checkoutMode === "mercadopago" && mpConnected;
   const [checkoutStep, setCheckoutStep] = useState<"cart" | "form">("cart");
@@ -1013,9 +1086,12 @@ function CartDrawer({
         items: items.map((i) => ({ product_id: i.productId, quantity: i.quantity, variant_id: i.variantId ?? null })),
         coupon_code: appliedCoupon?.code ?? null,
         discount_amount: appliedCoupon ? discountAmount : null,
+        idempotency_key: idempotencyKey,
       });
       if ('order_id' in result) {
         orderRef = result.order_id.slice(0, 8);
+        // Fresh key for a possible next order with the same cart contents.
+        regenerateIdempotencyKey();
       } else if ('error' in result && result.error === 'stock_insufficient') {
         toast.error("Algunos productos ya no tienen stock suficiente. Revisá tu carrito.");
         return;
@@ -1098,12 +1174,15 @@ function CartDrawer({
         },
         // Only the code is sent — the server re-validates against DB prices.
         couponCode: appliedCoupon?.code ?? null,
+        idempotencyKey,
       });
       if ("error" in result) {
         setMpError(result.error);
         setMpLoading(false);
         return;
       }
+      // Fresh key for a possible next order with the same cart contents.
+      regenerateIdempotencyKey();
       // task 5.7: redirect browser to Mercado Pago checkout
       window.location.href = result.initPoint;
     } catch {

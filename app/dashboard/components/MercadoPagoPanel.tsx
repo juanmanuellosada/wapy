@@ -51,16 +51,8 @@ export function MercadoPagoPanel({ mpStatus, checkoutMode, mpConnectResult, mpEr
         setError(disconnectResult.error);
         return;
       }
-      // Reset checkout mode to whatsapp when disconnecting
-      if (currentMode === 'mercadopago') {
-        const modeResult = await setCheckoutMode('whatsapp');
-        if ('error' in modeResult) {
-          // Connection was revoked so setCheckoutMode won't gate us, but just warn
-          console.warn('[MercadoPagoPanel] resetMode failed after disconnect:', modeResult.error);
-        } else {
-          setCurrentMode('whatsapp');
-        }
-      }
+      // The server already resets checkout_mode to 'whatsapp' atomically when disconnecting.
+      setCurrentMode('whatsapp');
       router.refresh();
     });
   }

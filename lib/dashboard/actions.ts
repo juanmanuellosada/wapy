@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { checkSlugAvailable } from '@/lib/onboarding/actions';
+import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 
 // ---------------------------------------------------------------------------
 // Auth guard
@@ -82,6 +83,23 @@ export async function toggleStoreStatus(): Promise<ToggleResult> {
   }
 
   const newStatus = store.status === 'published' ? 'paused' : 'published';
+
+  // (#11) Re-publishing (paused → published) in Mercado Pago mode requires a valid,
+  // non-revoked connection — same guard as the initial publish (lib/onboarding/actions.ts).
+  if (newStatus === 'published' && store.checkout_mode === 'mercadopago') {
+    let mpStatus;
+    try {
+      mpStatus = await getStoreMpConnectionStatus(store.id);
+    } catch {
+      return { error: 'No se pudo verificar la conexión con Mercado Pago.' };
+    }
+    if (!mpStatus.connected || mpStatus.revoked) {
+      return {
+        error:
+          'Conectá Mercado Pago antes de publicar en modo Mercado Pago, o cambiá a modo WhatsApp.',
+      };
+    }
+  }
 
   const admin = createAdminClient();
   const { error } = await admin

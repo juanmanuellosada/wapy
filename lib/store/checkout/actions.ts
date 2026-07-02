@@ -7,6 +7,7 @@ import { buildAuthorizationUrl, getStoreMpConnectionStatus } from '@/lib/store/c
 import { createCheckoutPreference } from '@/lib/store/checkout/mp-client';
 import { createPendingOrder } from '@/lib/store/orders/actions';
 import { buyerSchema, type BuyerInput, type CartItemInput } from '@/lib/store/checkout/schemas';
+import { isPubliclyAvailable } from '@/lib/subscription/state';
 
 // ---------------------------------------------------------------------------
 // Auth helpers (same pattern as lib/subscription/actions.ts)
@@ -88,11 +89,13 @@ export async function startCheckout({
   cart,
   buyer,
   couponCode,
+  idempotencyKey,
 }: {
   slug: string;
   cart: CartItemInput[];
   buyer: BuyerInput;
   couponCode?: string | null;
+  idempotencyKey?: string | null;
 }): Promise<{ initPoint: string } | { error: string }> {
   try {
     // 1. Validate buyer data with Zod schema (task 5.1)
@@ -111,13 +114,22 @@ export async function startCheckout({
     const admin = createAdminClient();
     const { data: store, error: storeError } = await admin
       .from('stores')
-      .select('id, slug, checkout_mode, status')
+      .select(
+        'id, slug, checkout_mode, status, blocked_at, mp_subscription_status, subscription_status_changed_at, trial_ends_at, payment_exempt, mp_preapproval_id'
+      )
       .eq('slug', slug)
       .eq('status', 'published')
       .maybeSingle();
 
     if (storeError || !store) {
       return { error: 'Tienda no disponible.' };
+    }
+
+    // 3.1 Guard: a store whose subscription is blocked (or otherwise not
+    // publicly available) must not accept checkouts, even if reached by a
+    // direct call or a race with the billing cron. (#5)
+    if (!isPubliclyAvailable(store, new Date())) {
+      return { error: 'Esta tienda no está disponible en este momento.' };
     }
 
     // 4. Validate checkout_mode (task 5.3)
@@ -157,6 +169,9 @@ export async function startCheckout({
       // Pass only the code — discount_amount is intentionally omitted so createPendingOrder
       // re-validates server-side against real DB prices (never trusting the client amount).
       coupon_code: couponCode ?? null,
+      // Idempotency (#6): a double submit (reload/back/timeout) with the same key
+      // reuses the existing order instead of creating a duplicate and re-deducting stock.
+      idempotency_key: idempotencyKey ?? null,
     });
 
     if ('error' in orderResult) {
@@ -227,7 +242,21 @@ export async function disconnectMercadoPago(): Promise<{ ok: true } | { error: s
       throw new Error(error.message);
     }
 
+    // (#8) Reset checkout_mode to 'whatsapp' in this same server-side action so the
+    // store never sits in an inconsistent state (mode=mercadopago with a revoked
+    // connection). Previously the dashboard client made this a separate write.
+    if (store.checkout_mode === 'mercadopago') {
+      const { error: modeError } = await admin
+        .from('stores')
+        .update({ checkout_mode: 'whatsapp', updated_at: new Date().toISOString() })
+        .eq('id', store.id);
+      if (modeError) {
+        console.error('[checkout/disconnectMercadoPago] failed to reset checkout_mode', { modeError });
+      }
+    }
+
     revalidatePath('/dashboard');
+    revalidatePath('/[slug]', 'page');
     return { ok: true };
   } catch (err) {
     const message =
