@@ -152,6 +152,15 @@ export function CartProvider({
     } catch {
       // Ignore parse errors
     }
+    // If the buyer was sent back here to retry a payment (e.g. from the MP
+    // failure page), open the cart automatically so they see it's intact.
+    try {
+      if (new URLSearchParams(window.location.search).get("cart") === "open") {
+        dispatch({ type: "SET_OPEN", open: true });
+      }
+    } catch {
+      // Ignore (e.g. no window)
+    }
   }, [storageKey]);
 
   // Persist cart to localStorage whenever items or coupon change

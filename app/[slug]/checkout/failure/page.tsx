@@ -45,15 +45,18 @@ export default async function CheckoutFailurePage({ params, searchParams }: Prop
         <p className="text-base" style={{ color: "var(--store-ink-secondary, #6b7280)" }}>
           {reasonMessage}
         </p>
+        <p className="text-sm" style={{ color: "var(--store-ink-secondary, #6b7280)" }}>
+          Tu carrito sigue guardado, no perdiste nada.
+        </p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mt-2">
         <Link
-          href={`/${slug}`}
+          href={`/${slug}?cart=open`}
           className="rounded-full px-6 py-3 text-sm font-semibold transition-opacity hover:opacity-80"
           style={{ background: "#ef4444", color: "#ffffff" }}
         >
-          Reintentar pago
+          Volver a mi carrito
         </Link>
         <Link
           href={`/${slug}`}
