@@ -71,6 +71,10 @@ const PAYMENT_STATUS_LABELS: Record<OrderPaymentStatus, string> = {
   approved: 'Pagado',
   rejected: 'Rechazado',
   cancelled: 'Pago cancelado',
+  refunded: 'Reembolsado',
+  charged_back: 'Contracargo',
+  in_mediation: 'En disputa',
+  in_process: 'En proceso',
 };
 
 const PAYMENT_STATUS_BADGE: Record<OrderPaymentStatus, string> = {
@@ -78,6 +82,10 @@ const PAYMENT_STATUS_BADGE: Record<OrderPaymentStatus, string> = {
   approved: 'bg-green-500/15 text-green-300 border-green-500/20',
   rejected: 'bg-red-500/15 text-red-300 border-red-500/20',
   cancelled: 'bg-red-500/10 text-red-300/60 border-red-500/15',
+  refunded: 'bg-purple-500/15 text-purple-300 border-purple-500/20',
+  charged_back: 'bg-rose-500/15 text-rose-300 border-rose-500/20',
+  in_mediation: 'bg-orange-500/15 text-orange-300 border-orange-500/20',
+  in_process: 'bg-sky-500/10 text-sky-300/80 border-sky-500/15',
 };
 
 const CHANNEL_LABELS: Record<OrderChannel, string> = {

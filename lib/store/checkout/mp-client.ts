@@ -148,6 +148,8 @@ export interface MpPaymentResult {
   id: number | null;
   status: string | null;
   external_reference: string | null;
+  /** Amount actually charged (ARS), for reconciliation against the order total. */
+  transaction_amount: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,5 +177,6 @@ export async function getPayment(input: GetPaymentInput): Promise<MpPaymentResul
     id: response.id !== undefined ? response.id : null,
     status: response.status ?? null,
     external_reference: response.external_reference ?? null,
+    transaction_amount: response.transaction_amount ?? null,
   };
 }
