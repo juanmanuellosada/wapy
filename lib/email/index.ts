@@ -4,7 +4,10 @@ import Invite from '@/emails/Invite';
 import NewLeadNotification from '@/emails/NewLeadNotification';
 import PasswordReset from '@/emails/PasswordReset';
 import ConfirmSignup from '@/emails/ConfirmSignup';
+import OrderApprovedOwner from '@/emails/OrderApprovedOwner';
+import OrderConfirmedBuyer from '@/emails/OrderConfirmedBuyer';
 import { PLAN_PRICES, formatPlanPrice } from '@/lib/subscription/plans';
+import { formatARS } from '@/lib/store/whatsapp/buildMessage';
 import type { PlanId } from '@/lib/plans/limits';
 import type { Database } from '@/lib/supabase/types';
 
@@ -64,5 +67,76 @@ export async function sendConfirmSignupEmail({ to, url }: { to: string; url: str
     to,
     subject: 'Confirmá tu cuenta de Wapy',
     react: React.createElement(ConfirmSignup, { url }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Notificación de pago de pedido aprobado (webhook de Mercado Pago)
+// ---------------------------------------------------------------------------
+
+interface OrderEmailItemInput {
+  productName: string;
+  quantity: number;
+  variantLabel: string | null;
+  unitPriceCents: number;
+}
+
+function formatOrderItems(items: OrderEmailItemInput[]) {
+  return items.map((item) => ({
+    productName: item.productName,
+    quantity: item.quantity,
+    variantLabel: item.variantLabel,
+    lineTotalFormatted: formatARS((item.unitPriceCents * item.quantity) / 100),
+  }));
+}
+
+export async function sendOrderApprovedOwnerEmail({
+  to,
+  storeName,
+  orderRef,
+  items,
+  totalCents,
+}: {
+  to: string;
+  storeName: string;
+  orderRef: string;
+  items: OrderEmailItemInput[];
+  totalCents: number;
+}) {
+  return sendEmail({
+    to,
+    subject: `Nuevo pago recibido en ${storeName}`,
+    react: React.createElement(OrderApprovedOwner, {
+      storeName,
+      orderRef,
+      items: formatOrderItems(items),
+      totalFormatted: formatARS(totalCents / 100),
+      dashboardUrl: `${APP_URL}/dashboard/orders`,
+    }),
+  });
+}
+
+export async function sendOrderConfirmedBuyerEmail({
+  to,
+  storeName,
+  orderRef,
+  items,
+  totalCents,
+}: {
+  to: string;
+  storeName: string;
+  orderRef: string;
+  items: OrderEmailItemInput[];
+  totalCents: number;
+}) {
+  return sendEmail({
+    to,
+    subject: `Tu pago fue confirmado — ${storeName}`,
+    react: React.createElement(OrderConfirmedBuyer, {
+      storeName,
+      orderRef,
+      items: formatOrderItems(items),
+      totalFormatted: formatARS(totalCents / 100),
+    }),
   });
 }
