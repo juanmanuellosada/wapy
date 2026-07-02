@@ -200,6 +200,7 @@ export type Database = {
           delivery_address: string | null
           discount_cents: number | null
           id: string
+          idempotency_key: string | null
           mp_payment_id: string | null
           mp_preference_id: string | null
           notes: string | null
@@ -222,6 +223,7 @@ export type Database = {
           delivery_address?: string | null
           discount_cents?: number | null
           id?: string
+          idempotency_key?: string | null
           mp_payment_id?: string | null
           mp_preference_id?: string | null
           notes?: string | null
@@ -244,6 +246,7 @@ export type Database = {
           delivery_address?: string | null
           discount_cents?: number | null
           id?: string
+          idempotency_key?: string | null
           mp_payment_id?: string | null
           mp_preference_id?: string | null
           notes?: string | null

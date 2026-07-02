@@ -18,6 +18,10 @@ type CreateOrderInput = {
   customer_email?: string | null;
   customer_phone?: string | null;
   delivery_address?: string | null;
+  // Idempotency (Ola 1 hardening): when provided and an order with the same
+  // key already exists, that existing order is returned instead of creating
+  // a new one (and stock is not deducted twice).
+  idempotency_key?: string | null;
 };
 
 /** Line item ready to pass to Mercado Pago Checkout Pro (unit_price in ARS). */
@@ -40,10 +44,20 @@ type CreateOrderResult =
   | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' }
   | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
   | { error: 'qty_violation'; productId: string; productName: string; min: number; step: number }
-  | { error: 'coupon_invalid'; message: string };
+  | { error: 'coupon_invalid'; message: string }
+  | { error: 'invalid_price'; productId: string; productName: string }
+  | { error: 'rounding_error' };
 
 export async function createPendingOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
   const admin = createAdminClient();
+  const channel = input.channel ?? 'whatsapp';
+
+  // 0. Idempotency: if a key is provided and an order already used it, return
+  // that existing order instead of creating a new one (no double stock deduction).
+  if (input.idempotency_key) {
+    const existing = await findOrderByIdempotencyKey(admin, input.idempotency_key);
+    if (existing) return existing;
+  }
 
   // 1. Validate store exists and is published
   const { data: store } = await admin
@@ -254,6 +268,16 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     }
   });
 
+  // 3.5 MP guard: a $0 item cannot be charged through Mercado Pago (still fine
+  // for WhatsApp/catalog browsing, where $0 remains a valid "consult price" case).
+  if (channel === 'mercadopago') {
+    const zeroPriceItem = enrichedItems.find((i) => i.effectivePrice <= 0);
+    if (zeroPriceItem) {
+      const p = productMap.get(zeroPriceItem.product_id)!;
+      return { error: 'invalid_price', productId: p.id, productName: p.name };
+    }
+  }
+
   // 4. Recalculate total server-side using effective prices
   const totalCents = enrichedItems.reduce((sum, i) => sum + i.effectivePrice * i.quantity, 0);
 
@@ -290,6 +314,67 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     discountCents = Math.round(input.discount_amount * 100);
   }
 
+  // 5.1 Build MP-ready items (unit_price in ARS) BEFORE writing anything to the DB,
+  // so a rounding failure aborts cleanly with no order/stock side effects.
+  //
+  // When a coupon was validated server-side (mpFinalTotalCents < totalCents), distribute the
+  // discount proportionally across items so the MP preference charges exactly mpFinalTotalCents.
+  // Each non-last item's unit price is the proportional price rounded to the nearest centavo;
+  // the LAST item absorbs whatever is left so the sum matches mpFinalTotalCents EXACTLY.
+  // If the remainder can't be expressed as a clean per-unit centavo price (degenerate case,
+  // e.g. very small amounts split across many units), we abort instead of sending MP an
+  // inconsistent total.
+  let mp_items: MpOrderItem[];
+  if (mpFinalTotalCents < totalCents && totalCents > 0) {
+    const ratio = mpFinalTotalCents / totalCents;
+    const items: MpOrderItem[] = [];
+    let allocatedCents = 0;
+    let degenerate = false;
+
+    enrichedItems.forEach((item, idx) => {
+      const title = productMap.get(item.product_id)!.name;
+      const isLast = idx === enrichedItems.length - 1;
+
+      if (!isLast) {
+        const centsPerUnit = Math.round((item.effectivePrice / 100) * ratio * 100);
+        if (centsPerUnit < 1) {
+          degenerate = true;
+          return;
+        }
+        allocatedCents += centsPerUnit * item.quantity;
+        items.push({ title, quantity: item.quantity, unit_price: centsPerUnit / 100, currency_id: 'ARS' });
+      } else {
+        const remainingCents = mpFinalTotalCents - allocatedCents;
+        if (remainingCents < item.quantity || remainingCents % item.quantity !== 0) {
+          degenerate = true;
+          return;
+        }
+        items.push({
+          title,
+          quantity: item.quantity,
+          unit_price: remainingCents / item.quantity / 100,
+          currency_id: 'ARS',
+        });
+      }
+    });
+
+    if (degenerate) {
+      Sentry.captureMessage('createPendingOrder: mp_items rounding could not be reconciled exactly', {
+        tags: { feature: 'checkout-mp-rounding' },
+        extra: { storeId: input.store_id, totalCents, mpFinalTotalCents },
+      });
+      return { error: 'rounding_error' };
+    }
+    mp_items = items;
+  } else {
+    mp_items = enrichedItems.map((i) => ({
+      title: productMap.get(i.product_id)!.name,
+      quantity: i.quantity,
+      unit_price: i.effectivePrice / 100,
+      currency_id: 'ARS' as const,
+    }));
+  }
+
   const { data: order, error: orderError } = await admin
     .from('orders')
     .insert({
@@ -300,16 +385,23 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       coupon_code: input.coupon_code ?? null,
       discount_cents: discountCents,
       // task 5.2: MP checkout fields (null for whatsapp orders)
-      channel: input.channel ?? 'whatsapp',
+      channel,
       customer_name: input.customer_name ?? null,
       customer_email: input.customer_email ?? null,
       customer_phone: input.customer_phone ?? null,
       delivery_address: input.delivery_address ?? null,
+      idempotency_key: input.idempotency_key ?? null,
     })
     .select('id')
     .single();
 
   if (orderError || !order) {
+    // Unique-index collision on idempotency_key: another request for the same key
+    // won the race and already created the order — return that one instead of failing.
+    if (orderError?.code === '23505' && input.idempotency_key) {
+      const existing = await findOrderByIdempotencyKey(admin, input.idempotency_key);
+      if (existing) return existing;
+    }
     console.error('[createPendingOrder] order insert failed:', orderError);
     Sentry.captureException(orderError ?? new Error('order insert returned no data'), {
       tags: { feature: 'checkout-persist' },
@@ -355,6 +447,11 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   // For a true atomic guarantee, a Postgres RPC would be preferable; we keep JS
   // updates here because the project has no RPC precedent and the validation step
   // already provides strong optimistic concurrency protection.
+  // Tracks items whose stock was actually deducted in this loop, so that if a
+  // later item aborts the order we only replenish what we actually took (not
+  // the whole order — items after the failure point were never deducted).
+  const deductedItems: Array<{ product_id: string | null; variant_id: string | null; quantity: number }> = [];
+
   for (const item of enrichedItems) {
     if (item.variant_id) {
       const variantStock = variantMap.get(item.variant_id)!.stock;
@@ -376,6 +473,8 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
               extra: { variantId: item.variant_id, orderId: order.id },
             }
           );
+          // Reponer lo que ya se descontó de items previos de este mismo pedido.
+          await replenishStockItems(admin, deductedItems);
           // The order is already inserted; mark it cancelled to avoid fulfillment
           await admin
             .from('orders')
@@ -383,6 +482,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
             .eq('id', order.id);
           return { error: 'stock_insufficient', details: [] };
         }
+        deductedItems.push({ product_id: null, variant_id: item.variant_id, quantity: item.quantity });
       }
     } else {
       // Simple product — deduct from products.stock (existing behavior preserved)
@@ -393,66 +493,275 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
           .update({ stock: p.stock - item.quantity })
           .eq('id', item.product_id)
           .gte('stock', item.quantity);
+        deductedItems.push({ product_id: item.product_id, variant_id: null, quantity: item.quantity });
       }
     }
   }
 
-  // 7. Increment coupon uses_count (best-effort — does not block order creation if it fails).
-  // Note: Supabase JS does not support atomic increment via .update(), so we fetch then update.
-  // This is an approximation: uses_count may drift under concurrent load, which is acceptable per design.
-  if (input.coupon_code) {
-    try {
-      const { data: couponRow } = await admin
-        .from('coupons')
-        .select('id, uses_count')
-        .eq('store_id', input.store_id)
-        .eq('code', input.coupon_code)
-        .maybeSingle();
-      if (couponRow) {
-        await admin
-          .from('coupons')
-          .update({ uses_count: (couponRow.uses_count ?? 0) + 1 })
-          .eq('id', couponRow.id);
-      }
-    } catch (e) {
-      console.warn('[createPendingOrder] coupon uses_count increment failed (best-effort):', e);
-    }
+  // 7. Coupon uses_count timing:
+  //   - WhatsApp: counted immediately at creation (existing behavior, preserved).
+  //   - Mercado Pago: NOT counted here — counted on payment approval instead, via
+  //     confirmOrderOnApproval() → incrementCouponUse() (Ola 2 webhook).
+  if (input.coupon_code && channel === 'whatsapp') {
+    await incrementCouponUse(order.id);
   }
 
-  // 8. Return order reference + MP-ready items (unit_price in ARS, for createCheckoutPreference).
-  //
-  // When a coupon was validated server-side (mpFinalTotalCents < totalCents), distribute the
-  // discount proportionally across items so the MP preference charges exactly finalTotal.
-  // Each item's unit_price is scaled by the ratio finalTotal/total, rounded to 2 decimal places.
-  // The LAST item absorbs the rounding residual so the sum equals mpFinalTotalCents (±1 cent).
-  let mp_items: MpOrderItem[];
-  if (mpFinalTotalCents < totalCents && totalCents > 0) {
-    const finalTotalARS = mpFinalTotalCents / 100;
-    const ratio = mpFinalTotalCents / totalCents;
-    let accumulatedARS = 0;
-    mp_items = enrichedItems.map((item, idx) => {
-      const title = productMap.get(item.product_id)!.name;
-      const isLast = idx === enrichedItems.length - 1;
-      let unit_price: number;
-      if (isLast) {
-        const remaining = finalTotalARS - accumulatedARS;
-        unit_price = Math.max(0.01, Math.round((remaining / item.quantity) * 100) / 100);
-      } else {
-        unit_price = Math.max(0.01, Math.round((item.effectivePrice / 100) * ratio * 100) / 100);
-        accumulatedARS += unit_price * item.quantity;
-      }
-      return { title, quantity: item.quantity, unit_price, currency_id: 'ARS' as const };
-    });
-  } else {
-    mp_items = enrichedItems.map((i) => ({
-      title: productMap.get(i.product_id)!.name,
-      quantity: i.quantity,
-      unit_price: i.effectivePrice / 100,
-      currency_id: 'ARS' as const,
-    }));
-  }
-
+  // 8. Return order reference + the MP-ready items computed in step 5.1.
   return { order_id: order.id, mp_items };
+}
+
+// ---------------------------------------------------------------------------
+// createPendingOrder internals
+// ---------------------------------------------------------------------------
+
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+/** Idempotency lookup: reconstructs the CreateOrderResult for an order that already exists. */
+async function findOrderByIdempotencyKey(
+  admin: AdminClient,
+  idempotencyKey: string
+): Promise<CreateOrderResult | null> {
+  const { data } = await admin
+    .from('orders')
+    .select('id, order_items(product_name, unit_price_cents, quantity)')
+    .eq('idempotency_key', idempotencyKey)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  return {
+    order_id: data.id,
+    mp_items: (data.order_items ?? []).map((i) => ({
+      title: i.product_name,
+      quantity: i.quantity,
+      unit_price: i.unit_price_cents / 100,
+      currency_id: 'ARS' as const,
+    })),
+  };
+}
+
+/** Adds `quantity` back to product/variant stock for each item. No-op for infinite-stock (null) items. */
+async function replenishStockItems(
+  admin: AdminClient,
+  items: Array<{ product_id: string | null; variant_id: string | null; quantity: number }>
+): Promise<void> {
+  for (const item of items) {
+    if (item.variant_id) {
+      const { data: variant } = await admin
+        .from('product_variants')
+        .select('stock')
+        .eq('id', item.variant_id)
+        .maybeSingle();
+      if (variant && variant.stock !== null) {
+        await admin
+          .from('product_variants')
+          .update({ stock: variant.stock + item.quantity })
+          .eq('id', item.variant_id);
+      }
+    } else if (item.product_id) {
+      const { data: product } = await admin
+        .from('products')
+        .select('stock')
+        .eq('id', item.product_id)
+        .maybeSingle();
+      if (product && product.stock !== null) {
+        await admin
+          .from('products')
+          .update({ stock: product.stock + item.quantity })
+          .eq('id', item.product_id);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MP order lifecycle helpers (Ola 1 hardening)
+//
+// These are called by createPendingOrder (WhatsApp path) and are exported for
+// the Mercado Pago webhook (Ola 2) to call on payment approval / refund /
+// chargeback. Each one is idempotent by re-checking the order's current state
+// before acting — no extra "already processed" column is needed.
+// ---------------------------------------------------------------------------
+
+/**
+ * Replenishes stock for every item of an order. Idempotent: no-ops if the
+ * order is already 'cancelled' (assumes stock was replenished when it was).
+ * Must be called BEFORE the caller flips the order's status to 'cancelled'.
+ */
+export async function replenishOrderStock(
+  orderId: string
+): Promise<{ ok: true; alreadyReplenished: boolean } | { error: 'not_found' }> {
+  const admin = createAdminClient();
+
+  const { data: order } = await admin.from('orders').select('id, status').eq('id', orderId).maybeSingle();
+  if (!order) return { error: 'not_found' };
+  if (order.status === 'cancelled') {
+    return { ok: true, alreadyReplenished: true };
+  }
+
+  const { data: items } = await admin
+    .from('order_items')
+    .select('product_id, variant_id, quantity')
+    .eq('order_id', orderId);
+
+  await replenishStockItems(admin, items ?? []);
+  return { ok: true, alreadyReplenished: false };
+}
+
+/**
+ * Increments the applied coupon's uses_count for an order. Idempotent: only
+ * acts while the order's status is still 'pending' (i.e. not yet counted).
+ * Must be called BEFORE the caller flips the order's status to 'confirmed'.
+ */
+export async function incrementCouponUse(
+  orderId: string
+): Promise<{ ok: true; incremented: boolean } | { error: 'not_found' }> {
+  const admin = createAdminClient();
+
+  const { data: order } = await admin
+    .from('orders')
+    .select('id, status, store_id, coupon_code')
+    .eq('id', orderId)
+    .maybeSingle();
+  if (!order) return { error: 'not_found' };
+  if (!order.coupon_code || order.status !== 'pending') {
+    return { ok: true, incremented: false };
+  }
+
+  const { data: couponRow } = await admin
+    .from('coupons')
+    .select('id, uses_count')
+    .eq('store_id', order.store_id)
+    .eq('code', order.coupon_code)
+    .maybeSingle();
+  if (!couponRow) return { ok: true, incremented: false };
+
+  await admin
+    .from('coupons')
+    .update({ uses_count: (couponRow.uses_count ?? 0) + 1 })
+    .eq('id', couponRow.id);
+
+  return { ok: true, incremented: true };
+}
+
+/**
+ * Reverts a previously-counted coupon use for an order. Idempotent: only acts
+ * while the order's status is still 'confirmed' (i.e. was counted and not yet
+ * reverted). Must be called BEFORE the caller flips the order's status to 'cancelled'.
+ */
+export async function revertCouponUse(
+  orderId: string
+): Promise<{ ok: true; reverted: boolean } | { error: 'not_found' }> {
+  const admin = createAdminClient();
+
+  const { data: order } = await admin
+    .from('orders')
+    .select('id, status, store_id, coupon_code')
+    .eq('id', orderId)
+    .maybeSingle();
+  if (!order) return { error: 'not_found' };
+  if (!order.coupon_code || order.status !== 'confirmed') {
+    return { ok: true, reverted: false };
+  }
+
+  const { data: couponRow } = await admin
+    .from('coupons')
+    .select('id, uses_count')
+    .eq('store_id', order.store_id)
+    .eq('code', order.coupon_code)
+    .maybeSingle();
+  if (!couponRow) return { ok: true, reverted: false };
+
+  await admin
+    .from('coupons')
+    .update({ uses_count: Math.max(0, (couponRow.uses_count ?? 0) - 1) })
+    .eq('id', couponRow.id);
+
+  return { ok: true, reverted: true };
+}
+
+/**
+ * Confirms an order on MP payment approval: sets status='confirmed' + confirmed_at,
+ * and counts the coupon use. Idempotent: no-ops unless the order is currently 'pending'.
+ * Uses the admin client because status/confirmed_at transitions here happen with no
+ * authenticated owner session (called from the webhook).
+ */
+export async function confirmOrderOnApproval(
+  orderId: string
+): Promise<{ ok: true; alreadyConfirmed: boolean } | { error: 'not_found' }> {
+  const admin = createAdminClient();
+
+  const { data: order } = await admin.from('orders').select('id, status').eq('id', orderId).maybeSingle();
+  if (!order) return { error: 'not_found' };
+  if (order.status !== 'pending') {
+    return { ok: true, alreadyConfirmed: true };
+  }
+
+  // Count the coupon use while status is still 'pending' in the DB.
+  await incrementCouponUse(orderId);
+
+  const { error } = await admin
+    .from('orders')
+    .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
+    .eq('id', orderId)
+    .eq('status', 'pending');
+
+  if (error) {
+    console.error('[confirmOrderOnApproval] update failed:', error);
+    Sentry.captureException(error, { tags: { feature: 'mp-order-lifecycle' }, extra: { orderId } });
+  }
+
+  return { ok: true, alreadyConfirmed: false };
+}
+
+/**
+ * Reverts an order on MP refund/chargeback: replenishes stock, reverts the
+ * coupon use, and sets status='cancelled'. Idempotent — each step no-ops if
+ * already applied (see replenishOrderStock / revertCouponUse).
+ */
+export async function revertOrderOnRefund(
+  orderId: string
+): Promise<{ ok: true } | { error: 'not_found' }> {
+  const admin = createAdminClient();
+
+  const { data: order } = await admin.from('orders').select('id, status').eq('id', orderId).maybeSingle();
+  if (!order) return { error: 'not_found' };
+
+  await revertCouponUse(orderId);
+  await replenishOrderStock(orderId);
+
+  if (order.status !== 'cancelled') {
+    const { error } = await admin
+      .from('orders')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+      .eq('id', orderId)
+      .neq('status', 'cancelled');
+    if (error) {
+      console.error('[revertOrderOnRefund] update failed:', error);
+      Sentry.captureException(error, { tags: { feature: 'mp-order-lifecycle' }, extra: { orderId } });
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Returns the net amount (ARS) expected to have been charged for an order —
+ * total minus the applied discount — so the webhook can reconcile it against
+ * payment.transaction_amount from Mercado Pago. Returns null if not found.
+ */
+export async function getOrderNetAmount(orderId: string): Promise<number | null> {
+  const admin = createAdminClient();
+
+  const { data: order } = await admin
+    .from('orders')
+    .select('total_cents, discount_cents')
+    .eq('id', orderId)
+    .maybeSingle();
+  if (!order) return null;
+
+  const netCents = order.total_cents - (order.discount_cents ?? 0);
+  return netCents / 100;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,7 +789,15 @@ async function requireOwnerStore() {
 
 export type OrderStatus = 'pending' | 'confirmed' | 'cancelled' | 'delivered';
 export type OrderChannel = 'whatsapp' | 'mercadopago';
-export type OrderPaymentStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type OrderPaymentStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'cancelled'
+  | 'refunded'
+  | 'charged_back'
+  | 'in_mediation'
+  | 'in_process';
 
 export type OrderWithItems = {
   id: string;
@@ -843,6 +1160,13 @@ export async function updateOrderStatus(
   const current = existing.status as OrderStatus;
   if (!ALLOWED_TRANSITIONS[current].includes(next_status)) {
     return { error: 'invalid_transition' };
+  }
+
+  // Replenish stock BEFORE flipping the status to 'cancelled' — replenishOrderStock
+  // checks the order's current status to stay idempotent, so it must run while
+  // the order is still 'pending'/'confirmed' in the DB.
+  if (next_status === 'cancelled') {
+    await replenishOrderStock(order_id);
   }
 
   const now = new Date().toISOString();
