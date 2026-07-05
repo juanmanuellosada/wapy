@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
+import { resolveEffectivePrice } from '@/lib/store/pricing';
 
 // 3.1 Each cart item may carry an optional variantId.
 type CreateOrderInput = {
@@ -89,6 +90,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     id: string;
     name: string;
     price_cents: number;
+    promo_price_cents: number | null;
     stock: number | null;
     section_id: string | null;
     min_quantity: number;
@@ -97,7 +99,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   };
   const { data: products } = (await admin
     .from('products')
-    .select('id, name, price_cents, stock, section_id, min_quantity, qty_step, sections(name)')
+    .select('id, name, price_cents, promo_price_cents, stock, section_id, min_quantity, qty_step, sections(name)')
     .eq('store_id', input.store_id)
     .eq('is_active', true)
     .in('id', productIds)) as { data: ProductRow[] | null };
@@ -131,6 +133,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       product_id: string;
       stock: number | null; // null = no tracking (infinite stock)
       price_override: number | null;
+      promo_price_override: number | null;
       deleted_at: string | null;
       product_variant_option_values: Array<{
         option_value_id: string;
@@ -146,7 +149,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     const { data: variantRows } = await admin
       .from('product_variants')
       .select(
-        'id, product_id, stock, price_override, deleted_at, product_variant_option_values(option_value_id, product_option_values(value, product_option_types(position, name)))'
+        'id, product_id, stock, price_override, promo_price_override, deleted_at, product_variant_option_values(option_value_id, product_option_values(value, product_option_types(position, name)))'
       )
       .in('id', variantIds);
 
@@ -242,12 +245,11 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   };
 
   const enrichedItems: EnrichedItem[] = validItems.map((item) => {
+    const product = productMap.get(item.product_id)!;
+
     if (item.variant_id) {
       const variant = variantMap.get(item.variant_id)!;
-      const effectivePrice =
-        variant.price_override !== null
-          ? variant.price_override
-          : productMap.get(item.product_id)!.price_cents;
+      const { effectiveCents } = resolveEffectivePrice(product, variant);
 
       // Build label: values sorted by option type position, joined with " / "
       const valueEntries = (variant.product_variant_option_values ?? [])
@@ -258,13 +260,10 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
         .sort((a, b) => a.position - b.position);
       const variantLabel = valueEntries.map((e) => e.value).join(' / ') || null;
 
-      return { ...item, effectivePrice, variantLabel };
+      return { ...item, effectivePrice: effectiveCents, variantLabel };
     } else {
-      return {
-        ...item,
-        effectivePrice: productMap.get(item.product_id)!.price_cents,
-        variantLabel: null,
-      };
+      const { effectiveCents } = resolveEffectivePrice(product);
+      return { ...item, effectivePrice: effectiveCents, variantLabel: null };
     }
   });
 

@@ -20,7 +20,7 @@ import { extractSocialHandle } from "@/lib/store/social-links";
 import type { StoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
 import { parseBanner } from "@/lib/store/theme";
 import { useCart, cartItemKey } from "./CartContext";
-import ProductCardClient, { VariantSelector } from "./ProductCardClient";
+import ProductCardClient, { VariantSelector, useVariantSelection } from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
 import { buildOrderWhatsappMessage } from "@/lib/store/whatsapp/buildMessage";
@@ -735,6 +735,20 @@ function ProductModal({
   const minQty = product.min_quantity ?? 1;
   const step = product.qty_step ?? 1;
 
+  // Lifted variant selection state — shared by the header price (tachado/promo,
+  // reactive to the active variant) and the VariantSelector's add-to-cart flow,
+  // so the price shown and the price charged can never diverge. Works for
+  // simple products too: with no option types, activeVariant stays null and
+  // resolveEffectivePrice falls back to the product-level promo.
+  const variantSelection = useVariantSelection(
+    variantData?.optionTypes ?? [],
+    variantData?.variants ?? [],
+    product.priceCents,
+    product.image,
+    product.promoPriceCents
+  );
+  const { regularPrice, effectivePrice, onPromo } = variantSelection;
+
   // For modal: simple product (no variant), key is just the productId
   const itemKey = cartItemKey(product.id, null);
   const existingItem = items.find((i) => cartItemKey(i.productId, i.variantId) === itemKey);
@@ -804,7 +818,7 @@ function ProductModal({
       addItem({
         productId: product.id,
         name: product.name,
-        price: product.price,
+        price: effectivePrice,
         image: product.image,
       });
       if (qty > 1) {
@@ -872,9 +886,16 @@ function ProductModal({
             >
               {product.name}
             </h2>
-            <p className="text-2xl font-bold" style={{ color: accentColor }}>
-              {formatARS(product.price)}
-            </p>
+            <div className="flex items-baseline gap-2 flex-wrap">
+              {onPromo && (
+                <span className="text-base font-medium line-through" style={{ color: "var(--store-ink-muted)" }}>
+                  {formatARS(regularPrice)}
+                </span>
+              )}
+              <p className="text-2xl font-bold" style={{ color: accentColor }}>
+                {formatARS(effectivePrice)}
+              </p>
+            </div>
           </div>
 
           {product.description && (
@@ -954,8 +975,10 @@ function ProductModal({
               accentColor={accentColor}
               optionTypes={variantData.optionTypes}
               variants={variantData.variants}
-              priceCents={Math.round(product.price * 100)}
+              priceCents={product.priceCents}
+              promoPriceCents={product.promoPriceCents}
               layout="modal"
+              externalState={variantSelection}
             />
           ) : (
             <button
@@ -1903,6 +1926,7 @@ export default function StoreClient({
         description: p.description ?? "",
         price: p.price_cents / 100,
         priceCents: p.price_cents,
+        promoPriceCents: p.promo_price_cents,
         image: getProductImage(p),
         imageUrls: p.image_urls ?? [],
         stock: p.stock ?? null,

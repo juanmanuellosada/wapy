@@ -29,6 +29,7 @@ export interface StorefrontVariant {
   id: string;
   stock: number | null; // null = no tracking (infinite stock)
   price_override: number | null;
+  promo_price_override: number | null;
   image_url: string | null;
   position: number;
   /** Map from optionTypeId → optionValueId for this variant's combination. */
@@ -107,7 +108,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
       // Fetch variants + their option value associations
       const { data: variantRows } = await anon
         .from('product_variants')
-        .select('id, product_id, stock, price_override, image_url, position, product_variant_option_values(option_value_id, product_option_values(id, option_type_id))')
+        .select('id, product_id, stock, price_override, promo_price_override, image_url, position, product_variant_option_values(option_value_id, product_option_values(id, option_type_id))')
         .in('product_id', productIds)
         .is('deleted_at', null)
         .order('position');
@@ -145,6 +146,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
       for (const v of variantRows ?? []) {
         const vTyped = v as {
           id: string; product_id: string; stock: number | null; price_override: number | null;
+          promo_price_override: number | null;
           image_url: string | null; position: number;
           product_variant_option_values: Array<{
             option_value_id: string;
@@ -166,6 +168,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
           id: vTyped.id,
           stock: vTyped.stock,
           price_override: vTyped.price_override,
+          promo_price_override: vTyped.promo_price_override,
           image_url: vTyped.image_url,
           position: vTyped.position,
           optionValues,

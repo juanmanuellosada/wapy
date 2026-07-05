@@ -79,6 +79,7 @@ export default async function SlugPage({ params, searchParams }: Props) {
             description: p.description ?? "",
             price: p.price_cents / 100,
             priceCents: p.price_cents,
+            promoPriceCents: p.promo_price_cents,
             image:
               p.image_urls && p.image_urls.length > 0
                 ? p.image_urls[0]

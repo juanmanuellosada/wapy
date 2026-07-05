@@ -513,6 +513,7 @@ const updateVariantSchema = z.object({
   variantId: z.string().uuid(),
   stock: z.number().int().min(0, 'El stock debe ser ≥ 0').nullable(),
   priceOverride: z.number().int().min(0, 'El precio debe ser ≥ 0').nullable(),
+  promoPriceOverride: z.number().int().min(0, 'El promo debe ser ≥ 0').nullable(),
   imageUrl: z.string().nullable().optional(),
 });
 
@@ -520,6 +521,7 @@ export type UpdateVariantInput = {
   variantId: string;
   stock: number | null;
   priceOverride: number | null;
+  promoPriceOverride: number | null;
   imageUrl?: string | null;
 };
 
@@ -534,7 +536,7 @@ export async function updateVariant(
   const parsed = updateVariantSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const { variantId, stock, priceOverride, imageUrl } = parsed.data;
+  const { variantId, stock, priceOverride, promoPriceOverride, imageUrl } = parsed.data;
 
   try {
   const admin = createAdminClient();
@@ -542,16 +544,26 @@ export async function updateVariant(
   // Verify ownership via product → store chain
   const { data: variant } = await admin
     .from('product_variants')
-    .select('id, product_id, products(store_id)')
+    .select('id, product_id, products(store_id, price_cents)')
     .eq('id', variantId)
     .maybeSingle();
 
   const variantWithProduct = variant as typeof variant & {
-    products: { store_id: string } | null;
+    products: { store_id: string; price_cents: number } | null;
   };
 
   if (!variantWithProduct || variantWithProduct.products?.store_id !== store.id) {
     return { error: 'Variedad no encontrada.' };
+  }
+
+  // D4: promo < regular server-side — el regular puede venir del producto (cross-table),
+  // así que no se puede validar con un CHECK de DB. "Regular" es el price_override que
+  // se está guardando en esta misma llamada (o el precio del producto si no hay override).
+  if (promoPriceOverride !== null) {
+    const regularCents = priceOverride ?? variantWithProduct.products?.price_cents ?? 0;
+    if (promoPriceOverride >= regularCents) {
+      return { error: 'El precio promocional debe ser menor al precio regular de la variedad.' };
+    }
   }
 
   const { error } = await admin
@@ -559,6 +571,7 @@ export async function updateVariant(
     .update({
       stock,
       price_override: priceOverride,
+      promo_price_override: promoPriceOverride,
       ...(imageUrl !== undefined ? { image_url: imageUrl } : {}),
     })
     .eq('id', variantId);
@@ -1032,6 +1045,7 @@ export type VariantData = {
   id: string;
   stock: number | null; // null = no tracking (infinite stock)
   price_override: number | null;
+  promo_price_override: number | null;
   image_url: string | null;
   position: number;
   // value ids that compose this variant (option_value_id for each type)
@@ -1074,7 +1088,7 @@ export async function getProductVariantsData(
   // Fetch active variants with their option value links
   const { data: rawVariants } = await admin
     .from('product_variants')
-    .select('id, stock, price_override, image_url, position, product_variant_option_values(option_value_id)')
+    .select('id, stock, price_override, promo_price_override, image_url, position, product_variant_option_values(option_value_id)')
     .eq('product_id', productId)
     .is('deleted_at', null)
     .order('position');
@@ -1083,6 +1097,7 @@ export async function getProductVariantsData(
     id: v.id,
     stock: v.stock,
     price_override: v.price_override,
+    promo_price_override: v.promo_price_override,
     image_url: v.image_url,
     position: v.position,
     option_value_ids: (

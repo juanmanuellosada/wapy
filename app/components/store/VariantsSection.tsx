@@ -135,6 +135,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   // ---- per-variant editing ----
   const [stockInputs, setStockInputs] = useState<Record<string, string>>({});
   const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
+  const [promoInputs, setPromoInputs] = useState<Record<string, string>>({});
   const [variantErrors, setVariantErrors] = useState<Record<string, string>>({});
   const [savingVariant, setSavingVariant] = useState<string | null>(null);
 
@@ -203,12 +204,15 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       // Initialize input buffers
       const stocks: Record<string, string> = {};
       const prices: Record<string, string> = {};
+      const promos: Record<string, string> = {};
       for (const v of result.variants) {
         stocks[v.id] = v.stock !== null ? String(v.stock) : '';
         prices[v.id] = v.price_override != null ? formatPrice(v.price_override) : '';
+        promos[v.id] = v.promo_price_override != null ? formatPrice(v.promo_price_override) : '';
       }
       setStockInputs(stocks);
       setPriceInputs(prices);
+      setPromoInputs(promos);
     } catch {
       setServerError('No se pudo cargar las variedades.');
     } finally {
@@ -224,9 +228,11 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   const handleVariantBlur = async (variantId: string) => {
     const stockStr = (stockInputs[variantId] ?? '').trim();
     const priceStr = priceInputs[variantId] ?? '';
+    const promoStr = promoInputs[variantId] ?? '';
 
     const stock: number | null = stockStr === '' ? null : parseInt(stockStr, 10);
     const priceOverride = parsePriceCents(priceStr);
+    const promoPriceOverride = parsePriceCents(promoStr);
 
     const errors: Record<string, string> = { ...variantErrors };
 
@@ -242,19 +248,32 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       toast.error('Precio debe ser un número ≥ 0.');
       return;
     }
+    if (promoStr.trim() !== '') {
+      const regularCents = priceOverride ?? productPriceCents;
+      if (promoPriceOverride === null || promoPriceOverride < 0 || promoPriceOverride >= regularCents) {
+        errors[variantId] = 'El promo debe ser ≥ 0 y menor al precio de la variedad.';
+        setVariantErrors(errors);
+        toast.error('El promo debe ser ≥ 0 y menor al precio de la variedad.');
+        return;
+      }
+    }
 
     delete errors[variantId];
     setVariantErrors(errors);
 
     setSavingVariant(variantId);
     try {
-      const result = await updateVariant({ variantId, stock, priceOverride });
+      const result = await updateVariant({ variantId, stock, priceOverride, promoPriceOverride });
       if ('error' in result) {
         setVariantErrors((prev) => ({ ...prev, [variantId]: result.error }));
         toast.error(result.error);
       } else {
         setVariants((prev) =>
-          prev.map((v) => (v.id === variantId ? { ...v, stock, price_override: priceOverride } : v))
+          prev.map((v) =>
+            v.id === variantId
+              ? { ...v, stock, price_override: priceOverride, promo_price_override: promoPriceOverride }
+              : v
+          )
         );
       }
     } catch {
@@ -762,6 +781,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                   <th className="text-left text-xs text-white/40 font-medium py-2 pr-3 w-auto">Combinación</th>
                   <th className="text-left text-xs text-white/40 font-medium py-2 pr-3 w-28">Stock</th>
                   <th className="text-left text-xs text-white/40 font-medium py-2 pr-3 w-36">Precio (opcional)</th>
+                  <th className="text-left text-xs text-white/40 font-medium py-2 pr-3 w-36">Promo (opcional)</th>
                   <th className="text-left text-xs text-white/40 font-medium py-2 w-24">Imagen</th>
                 </tr>
               </thead>
@@ -773,6 +793,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                     label={variantLabel(variant, optionTypes)}
                     stockInput={stockInputs[variant.id] ?? ''}
                     priceInput={priceInputs[variant.id] ?? ''}
+                    promoInput={promoInputs[variant.id] ?? ''}
                     priceOverridePlaceholder={formatPrice(productPriceCents)}
                     error={variantErrors[variant.id]}
                     saving={savingVariant === variant.id}
@@ -780,6 +801,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                     fileInputRef={() => {}}
                     onStockChange={(v) => setStockInputs((prev) => ({ ...prev, [variant.id]: v }))}
                     onPriceChange={(v) => setPriceInputs((prev) => ({ ...prev, [variant.id]: v }))}
+                    onPromoChange={(v) => setPromoInputs((prev) => ({ ...prev, [variant.id]: v }))}
                     onBlur={() => handleVariantBlur(variant.id)}
                     onImageFileSelected={(file) => handleImageUpload(variant.id, file)}
                   />
@@ -797,6 +819,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                 label={variantLabel(variant, optionTypes)}
                 stockInput={stockInputs[variant.id] ?? ''}
                 priceInput={priceInputs[variant.id] ?? ''}
+                promoInput={promoInputs[variant.id] ?? ''}
                 priceOverridePlaceholder={formatPrice(productPriceCents)}
                 error={variantErrors[variant.id]}
                 saving={savingVariant === variant.id}
@@ -804,6 +827,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                 fileInputRef={() => {}}
                 onStockChange={(v) => setStockInputs((prev) => ({ ...prev, [variant.id]: v }))}
                 onPriceChange={(v) => setPriceInputs((prev) => ({ ...prev, [variant.id]: v }))}
+                onPromoChange={(v) => setPromoInputs((prev) => ({ ...prev, [variant.id]: v }))}
                 onBlur={() => handleVariantBlur(variant.id)}
                 onImageFileSelected={(file) => handleImageUpload(variant.id, file)}
               />
@@ -824,6 +848,7 @@ type VariantRowProps = {
   label: string;
   stockInput: string;
   priceInput: string;
+  promoInput: string;
   priceOverridePlaceholder: string;
   error?: string;
   saving: boolean;
@@ -831,6 +856,7 @@ type VariantRowProps = {
   fileInputRef: (el: HTMLInputElement | null) => void;
   onStockChange: (v: string) => void;
   onPriceChange: (v: string) => void;
+  onPromoChange: (v: string) => void;
   onBlur: () => void;
   onImageFileSelected: (file: File) => void;
 };
@@ -840,6 +866,7 @@ function VariantRow({
   label,
   stockInput,
   priceInput,
+  promoInput,
   priceOverridePlaceholder,
   error,
   saving,
@@ -847,6 +874,7 @@ function VariantRow({
   fileInputRef,
   onStockChange,
   onPriceChange,
+  onPromoChange,
   onBlur,
   onImageFileSelected,
 }: VariantRowProps) {
@@ -883,6 +911,21 @@ function VariantRow({
             />
           </div>
         </td>
+        <td className="py-2.5 pr-3">
+          <div className="relative">
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-white/40">$</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={promoInput}
+              onChange={(e) => onPromoChange(e.target.value)}
+              onBlur={onBlur}
+              placeholder="Sin promo"
+              className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 pl-6 pr-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+              aria-label={`Precio promocional para ${label}`}
+            />
+          </div>
+        </td>
         <td className="py-2.5">
           <VariantImageCell
             imageUrl={variant.image_url}
@@ -896,7 +939,7 @@ function VariantRow({
       </tr>
       {error && (
         <tr>
-          <td colSpan={4} className="pb-2">
+          <td colSpan={5} className="pb-2">
             <p role="alert" className="text-xs text-red-400">{error}</p>
           </td>
         </tr>
@@ -914,6 +957,7 @@ function VariantCard({
   label,
   stockInput,
   priceInput,
+  promoInput,
   priceOverridePlaceholder,
   error,
   saving,
@@ -921,6 +965,7 @@ function VariantCard({
   fileInputRef,
   onStockChange,
   onPriceChange,
+  onPromoChange,
   onBlur,
   onImageFileSelected,
 }: VariantRowProps) {
@@ -951,6 +996,21 @@ function VariantCard({
               onChange={(e) => onPriceChange(e.target.value)}
               onBlur={onBlur}
               placeholder={priceOverridePlaceholder}
+              className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 pl-6 pr-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-white/40 mb-1">Promo (opcional)</label>
+          <div className="relative">
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-white/40">$</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={promoInput}
+              onChange={(e) => onPromoChange(e.target.value)}
+              onBlur={onBlur}
+              placeholder="Sin promo"
               className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 pl-6 pr-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
             />
           </div>

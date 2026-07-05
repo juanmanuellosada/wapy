@@ -17,11 +17,20 @@ const productFormSchema = z.object({
   name: z.string().min(1, 'El nombre es requerido').max(120, 'Máximo 120 caracteres'),
   description: z.string().max(500, 'Máximo 500 caracteres').optional(),
   price_display: z.string().min(1, 'El precio es requerido'),
+  promo_price_display: z.string().optional(),
   stock: z.string().optional(),
   section_id: z.string().optional(),
   min_quantity: z.string().optional(),
   qty_step: z.string().optional(),
-});
+}).refine(
+  (data) => {
+    if (!data.promo_price_display || data.promo_price_display.trim() === '') return true;
+    const promo = parsePriceCents(data.promo_price_display);
+    const regular = parsePriceCents(data.price_display);
+    return promo >= 0 && promo < regular;
+  },
+  { message: 'El precio promocional debe ser menor al precio regular.', path: ['promo_price_display'] }
+);
 
 type ProductFormData = z.infer<typeof productFormSchema>;
 
@@ -76,6 +85,7 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
       name: product?.name ?? '',
       description: product?.description ?? '',
       price_display: product ? formatPrice(product.price_cents) : '',
+      promo_price_display: product?.promo_price_cents != null ? formatPrice(product.promo_price_cents) : '',
       stock: product?.stock != null ? String(product.stock) : '',
       section_id: product?.section_id ?? '',
       min_quantity: product ? String((product as unknown as { min_quantity?: number }).min_quantity ?? 1) : '1',
@@ -112,6 +122,10 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
     setServerError(null);
 
     const price_cents = parsePriceCents(data.price_display);
+    const promo_price_cents =
+      data.promo_price_display && data.promo_price_display.trim() !== ''
+        ? parsePriceCents(data.promo_price_display)
+        : null;
     const min_quantity = Math.max(1, parseInt(data.min_quantity ?? '1', 10) || 1);
     const qty_step = Math.max(1, parseInt(data.qty_step ?? '1', 10) || 1);
 
@@ -120,6 +134,7 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
       name: data.name,
       description: data.description || null,
       price_cents,
+      promo_price_cents,
       stock: data.stock ? parseInt(data.stock, 10) : null,
       section_id: data.section_id || null,
       image_urls: imageUrls,
@@ -141,6 +156,7 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
       name: data.name,
       description: data.description ?? null,
       price_cents,
+      promo_price_cents,
       currency: 'ARS',
       stock: data.stock ? parseInt(data.stock, 10) : null,
       section_id: data.section_id || null,
@@ -262,6 +278,33 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
                   className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
                 />
               </div>
+            )}
+          </div>
+
+          {/* Promo price (optional) */}
+          <div>
+            <label htmlFor="prod-promo-price" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
+              Precio promocional <span className="text-white/30 font-normal">(opcional)</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-white/40">$</span>
+              <input
+                id="prod-promo-price"
+                type="text"
+                inputMode="numeric"
+                placeholder="Sin promo"
+                {...register('promo_price_display')}
+                className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 pl-7 pr-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+                aria-invalid={!!errors.promo_price_display}
+              />
+            </div>
+            {allowVariants && (
+              <p className="text-xs text-white/40 mt-1">
+                Si el producto tiene variedades, cargá el promo por variedad más abajo.
+              </p>
+            )}
+            {errors.promo_price_display && (
+              <p role="alert" className="text-xs text-red-400 mt-1">{errors.promo_price_display.message}</p>
             )}
           </div>
 

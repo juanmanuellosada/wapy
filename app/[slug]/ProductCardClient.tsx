@@ -4,6 +4,7 @@ import React, { useState, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { Plus } from "lucide-react";
 import type { StorefrontOptionType, StorefrontVariant } from "@/lib/storefront/resolve";
+import { resolveEffectivePrice } from "@/lib/store/pricing";
 import { useCart, cartItemKey } from "./CartContext";
 
 // Inline placeholder SVG — matches StoreClient's PLACEHOLDER_IMAGE
@@ -30,8 +31,11 @@ export interface VariantSelectionState {
   isValueReachable: (optionTypeId: string, optionValueId: string) => boolean;
   activeVariant: StorefrontVariant | null;
   isSelectionComplete: boolean;
+  regularPriceCents: number;
+  regularPrice: number;
   effectivePriceCents: number;
   effectivePrice: number;
+  onPromo: boolean;
   effectiveImage: string | null;
   effectiveStock: number | null;
   isOutOfStock: boolean;
@@ -42,7 +46,8 @@ export function useVariantSelection(
   optionTypes: StorefrontOptionType[],
   variants: StorefrontVariant[],
   priceCents: number,
-  productImage: string
+  productImage: string,
+  promoPriceCents: number | null = null
 ): VariantSelectionState {
   const [selectedValues, setSelectedValues] = useState<Record<string, string>>({});
 
@@ -60,7 +65,11 @@ export function useVariantSelection(
     );
   }, [isSelectionComplete, variants, optionTypes, selectedValues]);
 
-  const effectivePriceCents = activeVariant?.price_override ?? priceCents;
+  const { regularCents: regularPriceCents, effectiveCents: effectivePriceCents, onPromo } = resolveEffectivePrice(
+    { price_cents: priceCents, promo_price_cents: promoPriceCents },
+    activeVariant
+  );
+  const regularPrice = regularPriceCents / 100;
   const effectivePrice = effectivePriceCents / 100;
   const effectiveImage = activeVariant?.image_url ?? productImage;
   const effectiveStock = activeVariant?.stock ?? null;
@@ -104,8 +113,11 @@ export function useVariantSelection(
     isValueReachable,
     activeVariant,
     isSelectionComplete,
+    regularPriceCents,
+    regularPrice,
     effectivePriceCents,
     effectivePrice,
+    onPromo,
     effectiveImage,
     effectiveStock,
     isOutOfStock,
@@ -118,7 +130,8 @@ export function useVariantSelection(
 export interface SimpleProduct {
   id: string;
   name: string;
-  price: number; // ARS float (price_cents / 100)
+  price: number; // ARS float (price_cents / 100) — regular price, sin promo
+  promoPriceCents: number | null;
   image: string;
   stock: number | null;
   description: string;
@@ -150,11 +163,13 @@ function SimpleProductCard<T extends SimpleProduct>({
   product,
   accentColor,
   onOpenModal,
+  priceCents,
   isHighlighted,
 }: {
   product: T;
   accentColor: string;
   onOpenModal: (p: T) => void;
+  priceCents: number;
   isHighlighted?: boolean;
 }) {
   const { addItem, setQty, items, openCart } = useCart();
@@ -162,6 +177,13 @@ function SimpleProductCard<T extends SimpleProduct>({
   const isLowStock = product.stock !== null && product.stock >= 1 && product.stock <= 5;
   const minQty = product.min_quantity ?? 1;
   const step = product.qty_step ?? 1;
+
+  const { regularCents, effectiveCents, onPromo } = resolveEffectivePrice({
+    price_cents: priceCents,
+    promo_price_cents: product.promoPriceCents,
+  });
+  const regularPrice = regularCents / 100;
+  const effectivePrice = effectiveCents / 100;
 
   // Sum all line items for this product (across any variants) to compute currentQty
   const currentQtyInCart = items
@@ -180,7 +202,7 @@ function SimpleProductCard<T extends SimpleProduct>({
       addItem({
         productId: product.id,
         name: product.name,
-        price: product.price,
+        price: effectivePrice,
         image: product.image,
       });
       if (toAdd > 1) {
@@ -200,6 +222,10 @@ function SimpleProductCard<T extends SimpleProduct>({
     ? `Mín. ${minQty}`
     : `De a ${step}`;
 
+  const priceLabel = onPromo
+    ? `antes ${formatARS(regularPrice)}, ahora ${formatARS(effectivePrice)} en promoción`
+    : formatARS(effectivePrice);
+
   return (
     <article
       id={`product-${product.id}`}
@@ -211,7 +237,7 @@ function SimpleProductCard<T extends SimpleProduct>({
         boxShadow: isHighlighted ? `0 0 0 3px ${accentColor}` : undefined,
         transition: "box-shadow 0.3s ease",
       }}
-      aria-label={`${product.name}, ${formatARS(product.price)}${isOutOfStock ? ", sin stock" : ""}`}
+      aria-label={`${product.name}, ${priceLabel}${isOutOfStock ? ", sin stock" : ""}`}
     >
       {/* Image */}
       <div
@@ -257,9 +283,16 @@ function SimpleProductCard<T extends SimpleProduct>({
           </p>
         )}
         <div className="flex items-center justify-between gap-2 mt-auto">
-          <span className="text-sm sm:text-base font-bold" style={{ color: "var(--store-ink)" }}>
-            {formatARS(product.price)}
-          </span>
+          <div className="flex items-baseline gap-1.5 flex-wrap">
+            {onPromo && (
+              <span className="text-xs line-through" style={{ color: "var(--store-ink-muted)" }}>
+                {formatARS(regularPrice)}
+              </span>
+            )}
+            <span className="text-sm sm:text-base font-bold" style={{ color: onPromo ? accentColor : "var(--store-ink)" }}>
+              {formatARS(effectivePrice)}
+            </span>
+          </div>
           <button
             onClick={handleAdd}
             disabled={isOutOfStock}
@@ -303,6 +336,7 @@ export function VariantSelector({
   optionTypes,
   variants,
   priceCents,
+  promoPriceCents = null,
   layout = "card",
   externalState,
 }: {
@@ -311,6 +345,7 @@ export function VariantSelector({
   optionTypes: StorefrontOptionType[];
   variants: StorefrontVariant[];
   priceCents: number;
+  promoPriceCents?: number | null;
   layout?: "card" | "modal";
   externalState?: VariantSelectionState;
 }) {
@@ -319,7 +354,7 @@ export function VariantSelector({
   const step = product.qty_step ?? 1;
 
   // Self-managed state (used when no externalState is provided, e.g. modal)
-  const selfState = useVariantSelection(optionTypes, variants, priceCents, product.image);
+  const selfState = useVariantSelection(optionTypes, variants, priceCents, product.image, promoPriceCents);
 
   const {
     selectedValues,
@@ -327,7 +362,9 @@ export function VariantSelector({
     isValueReachable,
     activeVariant,
     isSelectionComplete,
+    regularPrice,
     effectivePrice,
+    onPromo,
     effectiveImage,
     isOutOfStock,
     variantLabel,
@@ -461,9 +498,16 @@ export function VariantSelector({
       {/* Price + Add button row (card layout) or full-width button (modal layout) */}
       {layout === "card" ? (
         <div className="flex items-center justify-between gap-2 mt-auto">
-          <span className="text-sm sm:text-base font-bold" style={{ color: "var(--store-ink)" }}>
-            {formatARS(effectivePrice)}
-          </span>
+          <div className="flex items-baseline gap-1.5 flex-wrap">
+            {onPromo && (
+              <span className="text-xs line-through" style={{ color: "var(--store-ink-muted)" }}>
+                {formatARS(regularPrice)}
+              </span>
+            )}
+            <span className="text-sm sm:text-base font-bold" style={{ color: onPromo ? accentColor : "var(--store-ink)" }}>
+              {formatARS(effectivePrice)}
+            </span>
+          </div>
           <button
             onClick={handleAdd}
             disabled={!canAdd}
@@ -520,7 +564,7 @@ function VariantProductCard<T extends SimpleProduct>({
     : `De a ${step}`;
 
   // Shared selection state — used by both the image overlay and VariantSelector
-  const selectionState = useVariantSelection(optionTypes, variants, priceCents, product.image);
+  const selectionState = useVariantSelection(optionTypes, variants, priceCents, product.image, product.promoPriceCents);
   const { isSelectionComplete, effectiveStock, isOutOfStock } = selectionState;
 
   const isLowStock =
@@ -596,6 +640,7 @@ function VariantProductCard<T extends SimpleProduct>({
           optionTypes={optionTypes}
           variants={variants}
           priceCents={priceCents}
+          promoPriceCents={product.promoPriceCents}
           layout="card"
           externalState={selectionState}
         />
@@ -621,6 +666,7 @@ export default function ProductCardClient<T extends SimpleProduct>({
         product={product}
         accentColor={accentColor}
         onOpenModal={onOpenModal}
+        priceCents={priceCents}
         isHighlighted={isHighlighted}
       />
     );

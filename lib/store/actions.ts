@@ -332,7 +332,22 @@ type ProductInput = {
   is_active?: boolean;
   min_quantity?: number;
   qty_step?: number;
+  // undefined = not touched by this call (preserves the existing value on update);
+  // null = explicitly "sin promo".
+  promo_price_cents?: number | null;
 };
+
+/** Validates a product-level promo price against its regular price. Server is the source of truth (design Decisión 4). */
+function validatePromoPrice(
+  promo: number | null | undefined,
+  regularCents: number
+): { ok: true; value: number | null } | { ok: false; error: string } {
+  if (promo === undefined || promo === null) return { ok: true, value: null };
+  if (promo < 0 || promo >= regularCents) {
+    return { error: 'El precio promocional debe ser mayor o igual a 0 y menor al precio regular.', ok: false };
+  }
+  return { ok: true, value: promo };
+}
 
 export async function saveStoreProduct(
   product: ProductInput
@@ -352,6 +367,16 @@ export async function saveStoreProduct(
   }
 
   if (product.id) {
+    // promo_price_cents is only included in the update when the caller explicitly
+    // sends it — callers that don't touch pricing (toggle active, reorder) must not
+    // silently wipe out an existing promo.
+    const promoUpdate: { promo_price_cents?: number | null } = {};
+    if (product.promo_price_cents !== undefined) {
+      const promoResult = validatePromoPrice(product.promo_price_cents, product.price_cents);
+      if (!promoResult.ok) return { error: promoResult.error };
+      promoUpdate.promo_price_cents = promoResult.value;
+    }
+
     const { error } = await admin
       .from('products')
       .update({
@@ -366,6 +391,7 @@ export async function saveStoreProduct(
         updated_at: new Date().toISOString(),
         min_quantity: product.min_quantity ?? 1,
         qty_step: product.qty_step ?? 1,
+        ...promoUpdate,
       })
       .eq('id', product.id)
       .eq('store_id', store.id);
@@ -388,6 +414,9 @@ export async function saveStoreProduct(
     }
   }
 
+  const promoResult = validatePromoPrice(product.promo_price_cents, product.price_cents);
+  if (!promoResult.ok) return { error: promoResult.error };
+
   const { data: newProduct, error: insertError } = await admin
     .from('products')
     .insert({
@@ -395,6 +424,7 @@ export async function saveStoreProduct(
       name: product.name,
       description: product.description ?? null,
       price_cents: product.price_cents,
+      promo_price_cents: promoResult.value,
       stock: product.stock ?? null,
       section_id: product.section_id ?? null,
       image_urls: product.image_urls,

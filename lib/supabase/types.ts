@@ -368,6 +368,7 @@ export type Database = {
           position: number
           price_override: number | null
           product_id: string
+          promo_price_override: number | null
           stock: number | null
           updated_at: string
         }
@@ -379,6 +380,7 @@ export type Database = {
           position?: number
           price_override?: number | null
           product_id: string
+          promo_price_override?: number | null
           stock?: number | null
           updated_at?: string
         }
@@ -390,6 +392,7 @@ export type Database = {
           position?: number
           price_override?: number | null
           product_id?: string
+          promo_price_override?: number | null
           stock?: number | null
           updated_at?: string
         }
@@ -415,6 +418,7 @@ export type Database = {
           name: string
           position: number
           price_cents: number
+          promo_price_cents: number | null
           qty_step: number
           section_id: string | null
           stock: number | null
@@ -432,6 +436,7 @@ export type Database = {
           name: string
           position?: number
           price_cents: number
+          promo_price_cents?: number | null
           qty_step?: number
           section_id?: string | null
           stock?: number | null
@@ -449,6 +454,7 @@ export type Database = {
           name?: string
           position?: number
           price_cents?: number
+          promo_price_cents?: number | null
           qty_step?: number
           section_id?: string | null
           stock?: number | null

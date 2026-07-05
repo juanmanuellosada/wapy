@@ -6,8 +6,9 @@ export interface UIProduct {
   sectionId: string;
   name: string;
   description: string;
-  price: number; // ARS float (price_cents / 100)
+  price: number; // ARS float (price_cents / 100) — regular price, sin promo
   priceCents: number; // raw cents — needed for variant price fallback
+  promoPriceCents: number | null; // promo del producto (solo aplica cuando no hay variantes)
   image: string;
   imageUrls: string[]; // all images for the gallery
   stock: number | null; // null = no tracking, 0 = out of stock, N = N units available
