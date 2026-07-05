@@ -9,7 +9,9 @@ import { createAdminClient } from '@/lib/supabase/server';
 // POST /api/webhooks/mercadopago
 //
 // Receives Mercado Pago subscription notifications.
-// Decision 4: The webhook only REGISTERS state; it never sets blocked_at.
+// Decision 4: The webhook never BLOCKS (never sets blocked_at to a timestamp),
+// but it DOES unblock: when the re-read preapproval is 'authorized', it clears
+// blocked_at to NULL (fix-subscription-auto-unblock).
 // Decision 5: Always re-reads the preapproval from MP (never trust the body).
 // ---------------------------------------------------------------------------
 
@@ -168,7 +170,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const statusChanged = currentStore.mp_subscription_status !== mpStatus;
   const now = new Date().toISOString();
 
-  // NEVER set blocked_at from the webhook (Decision 4)
+  // NEVER block from the webhook (Decision 4). But DO unblock when the
+  // re-read preapproval is authorized — a confirmed payment is safe to trust.
   const { error: updateError } = await admin
     .from('stores')
     .update({
@@ -176,6 +179,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       mp_subscription_status: mpStatus,
       updated_at: now,
       ...(statusChanged ? { subscription_status_changed_at: now } : {}),
+      ...(mpStatus === 'authorized' ? { blocked_at: null } : {}),
     })
     .eq('id', storeId);
 

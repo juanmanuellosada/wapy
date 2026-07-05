@@ -11,7 +11,7 @@ export interface StoreBillingFields {
   mp_preapproval_id: string | null;
 }
 
-const GRACE_DAYS = 7;
+const GRACE_DAYS = 5;
 
 /**
  * Derives the subscription state from raw store fields.

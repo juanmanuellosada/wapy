@@ -51,8 +51,8 @@ describe('getSubscriptionState', () => {
     expect(getSubscriptionState(store, NOW)).toBe('active');
   });
 
-  // grace — paused within 7 days
-  it('returns grace when paused less than 7 days ago', () => {
+  // grace — paused within 5 days
+  it('returns grace when paused less than 5 days ago', () => {
     const changedAt = new Date(NOW.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString(); // 3 days ago
     const store = makeStore({
       mp_subscription_status: 'paused',
@@ -62,8 +62,8 @@ describe('getSubscriptionState', () => {
     expect(getSubscriptionState(store, NOW)).toBe('grace');
   });
 
-  // grace — cancelled within 7 days
-  it('returns grace when cancelled less than 7 days ago', () => {
+  // grace — cancelled within 5 days
+  it('returns grace when cancelled less than 5 days ago', () => {
     const changedAt = new Date(NOW.getTime() - 1 * 24 * 60 * 60 * 1000).toISOString(); // 1 day ago
     const store = makeStore({
       mp_subscription_status: 'cancelled',
@@ -73,9 +73,9 @@ describe('getSubscriptionState', () => {
     expect(getSubscriptionState(store, NOW)).toBe('grace');
   });
 
-  // grace border: exactly 7 days is NOT within grace (7 days < 7 is false)
-  it('returns blocked (not grace) when paused exactly 7 days ago', () => {
-    const changedAt = new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // grace border: exactly 5 days is NOT within grace (5 days < 5 is false)
+  it('returns blocked (not grace) when paused exactly 5 days ago', () => {
+    const changedAt = new Date(NOW.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString();
     const store = makeStore({
       mp_subscription_status: 'paused',
       subscription_status_changed_at: changedAt,
@@ -85,12 +85,23 @@ describe('getSubscriptionState', () => {
   });
 
   // grace expired → blocked
-  it('returns blocked when paused more than 7 days ago', () => {
+  it('returns blocked when paused more than 5 days ago', () => {
     const changedAt = new Date(NOW.getTime() - 10 * 24 * 60 * 60 * 1000).toISOString();
     const store = makeStore({
       mp_subscription_status: 'paused',
       subscription_status_changed_at: changedAt,
       mp_preapproval_id: 'pa-123',
+    });
+    expect(getSubscriptionState(store, NOW)).toBe('blocked');
+  });
+
+  // authorized + blocked_at still set → still blocked (unblocking is the caller's
+  // job by clearing blocked_at; the pure function itself never clears it)
+  it('returns blocked when authorized but blocked_at is still set', () => {
+    const store = makeStore({
+      mp_subscription_status: 'authorized',
+      mp_preapproval_id: 'pa-789',
+      blocked_at: '2026-05-01T00:00:00Z',
     });
     expect(getSubscriptionState(store, NOW)).toBe('blocked');
   });

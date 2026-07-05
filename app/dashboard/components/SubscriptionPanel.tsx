@@ -256,7 +256,7 @@ export function SubscriptionPanel({ store, subState, daysLeft }: Props) {
         onClose={() => setCancelConfirmOpen(false)}
         onConfirm={handleCancelConfirm}
         title="Cancelar suscripción"
-        message="¿Confirmás que querés cancelar tu suscripción? Tu tienda seguirá activa durante el período de gracia (7 días) y luego quedará suspendida."
+        message="¿Confirmás que querés cancelar tu suscripción? Tu tienda seguirá activa durante el período de gracia (5 días) y luego quedará suspendida."
         confirmLabel="Sí, cancelar"
         variant="destructive"
       />

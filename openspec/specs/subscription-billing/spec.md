@@ -4,7 +4,7 @@
 TBD - created by archiving change wapy-mercadopago-billing. Update Purpose after archive.
 ## Requirements
 ### Requirement: Subscription state machine
-El sistema SHALL derivar el estado de suscripción de una tienda a partir de sus campos crudos (`payment_exempt`, `trial_ends_at`, `mp_subscription_status`, `subscription_status_changed_at`, `blocked_at`) mediante una función pura, produciendo uno de: `exempt`, `trial`, `active`, `grace`, `blocked`. La precedencia SHALL ser: `exempt` > `blocked` > `active` > `grace` > `trial`.
+El sistema SHALL derivar el estado de suscripción de una tienda a partir de sus campos crudos (`payment_exempt`, `trial_ends_at`, `mp_subscription_status`, `subscription_status_changed_at`, `blocked_at`) mediante una función pura, produciendo uno de: `exempt`, `trial`, `active`, `grace`, `blocked`. La precedencia SHALL ser: `exempt` > `blocked` > `active` > `grace` > `trial`. El período de gracia SHALL ser de 5 días.
 
 #### Scenario: Tienda exenta
 - **WHEN** una tienda tiene `payment_exempt = true`
@@ -23,7 +23,7 @@ El sistema SHALL derivar el estado de suscripción de una tienda a partir de sus
 - **THEN** su estado es `trial`
 
 #### Scenario: En gracia tras pago fallido
-- **WHEN** `mp_subscription_status` es `paused` o `cancelled` y han pasado menos de 7 días desde `subscription_status_changed_at`
+- **WHEN** `mp_subscription_status` es `paused` o `cancelled` y han pasado menos de 5 días desde `subscription_status_changed_at`
 - **THEN** su estado es `grace`
 
 ### Requirement: Trial de 14 días para tiendas nuevas
@@ -68,7 +68,7 @@ El sistema SHALL permitir al dueño cambiar el plan de su tienda entre `inicial`
 - **THEN** `stores.plan` pasa a `inicial`, los límites de inicial aplican hacia adelante, y el cobro se ajusta al plan Inicial (los productos ya existentes por encima del límite no se eliminan)
 
 ### Requirement: Webhook de Mercado Pago registra estado
-El sistema SHALL exponer un endpoint POST que reciba notificaciones de Mercado Pago, valide la firma HMAC con `MP_WEBHOOK_SECRET`, re-lea el preapproval desde la API de MP, y actualice en la tienda `mp_preapproval_id`, `mp_subscription_status` y `subscription_status_changed_at`. El webhook SHALL NOT setear `blocked_at`.
+El sistema SHALL exponer un endpoint POST que reciba notificaciones de Mercado Pago, valide la firma HMAC con `MP_WEBHOOK_SECRET`, re-lea el preapproval desde la API de MP, y actualice en la tienda `mp_preapproval_id`, `mp_subscription_status` y `subscription_status_changed_at`. El webhook SHALL NOT bloquear (nunca setea `blocked_at` a un timestamp), pero SHALL desbloquear la tienda (setear `blocked_at = NULL`) cuando el preapproval leído desde MP tenga `status = 'authorized'`.
 
 #### Scenario: Firma inválida o ausente
 - **WHEN** llega una notificación sin firma válida
@@ -76,7 +76,11 @@ El sistema SHALL exponer un endpoint POST que reciba notificaciones de Mercado P
 
 #### Scenario: Suscripción autorizada
 - **WHEN** llega una notificación válida cuyo preapproval (leído desde MP) tiene `status = 'authorized'` y `external_reference = store_id`
-- **THEN** la tienda queda con `mp_subscription_status = 'authorized'` y `mp_preapproval_id` seteado
+- **THEN** la tienda queda con `mp_subscription_status = 'authorized'`, `mp_preapproval_id` seteado y `blocked_at = NULL`
+
+#### Scenario: Desbloqueo al reactivar tras pago
+- **WHEN** una tienda con `blocked_at` no nulo recibe una notificación cuyo preapproval tiene `status = 'authorized'`
+- **THEN** `blocked_at` vuelve a `NULL` y su estado derivado pasa a `active` (queda públicamente accesible sin intervención manual)
 
 #### Scenario: Idempotencia ante reentregas
 - **WHEN** llega dos veces la misma notificación con el mismo `status`
@@ -84,10 +88,10 @@ El sistema SHALL exponer un endpoint POST que reciba notificaciones de Mercado P
 
 #### Scenario: El webhook no bloquea
 - **WHEN** llega una notificación con `status = 'cancelled'`
-- **THEN** se registra `mp_subscription_status = 'cancelled'` pero `blocked_at` permanece nulo
+- **THEN** se registra `mp_subscription_status = 'cancelled'` pero `blocked_at` no se setea a un timestamp
 
 ### Requirement: Cron diario aplica bloqueos
-El sistema SHALL exponer un endpoint de cron, protegido por `CRON_SECRET`, que se ejecute a diario y sea el único en setear `blocked_at`. El cron SHALL bloquear: (1) tiendas con `trial_ends_at` vencido, `mp_preapproval_id` nulo y `payment_exempt = false`; y (2) tiendas con `mp_subscription_status` en `paused`/`cancelled` desde hace más de 7 días y `payment_exempt = false`.
+El sistema SHALL exponer un endpoint de cron, protegido por `CRON_SECRET`, que se ejecute a diario y sea el único en setear `blocked_at` a un timestamp. El cron SHALL bloquear: (1) tiendas con `trial_ends_at` vencido, `mp_preapproval_id` nulo y `payment_exempt = false`; y (2) tiendas con `mp_subscription_status` en `paused`/`cancelled` desde hace más de 5 días y `payment_exempt = false`. El cron SHALL además reconciliar el desbloqueo: limpiar `blocked_at = NULL` en toda tienda con `mp_subscription_status = 'authorized'` y `blocked_at` no nulo.
 
 #### Scenario: Acceso no autorizado al cron
 - **WHEN** se llama al endpoint sin el `Authorization: Bearer <CRON_SECRET>` correcto
@@ -98,16 +102,20 @@ El sistema SHALL exponer un endpoint de cron, protegido por `CRON_SECRET`, que s
 - **THEN** la tienda queda con `blocked_at` seteado
 
 #### Scenario: Pago fallido pasada la gracia
-- **WHEN** corre el cron y una tienda no exenta está en `paused`/`cancelled` hace más de 7 días
+- **WHEN** corre el cron y una tienda no exenta está en `paused`/`cancelled` hace más de 5 días
 - **THEN** la tienda queda con `blocked_at` seteado
 
 #### Scenario: Dentro de la gracia no se bloquea
-- **WHEN** corre el cron y una tienda está en `paused` hace menos de 7 días
+- **WHEN** corre el cron y una tienda está en `paused` hace menos de 5 días
 - **THEN** la tienda NO se bloquea
 
 #### Scenario: Exenta nunca se bloquea
 - **WHEN** corre el cron y una tienda tiene `payment_exempt = true`
 - **THEN** la tienda nunca queda bloqueada por el cron
+
+#### Scenario: Reconciliación desbloquea tienda autorizada
+- **WHEN** corre el cron y una tienda tiene `mp_subscription_status = 'authorized'` y `blocked_at` no nulo
+- **THEN** el cron limpia `blocked_at = NULL` (red de seguridad si el webhook no la desbloqueó)
 
 ### Requirement: Bloqueo del dashboard del dueño
 El sistema SHALL restringir el dashboard del dueño cuando su tienda está en estado `blocked`, permitiendo el acceso únicamente a la sección de Suscripción.
@@ -175,3 +183,4 @@ El sistema SHALL escribir los campos de billing (`mp_preapproval_id`, `mp_subscr
 #### Scenario: El cliente no puede escribir billing
 - **WHEN** un cliente intenta modificar directamente un campo de billing vía la API de datos
 - **THEN** la operación es rechazada (sin política de escritura para roles no-service)
+
