@@ -3,3 +3,5 @@
 - [Supabase Storage + ES256 JWT gotcha](wapy-storage-jwt-gotcha.md) — Storage worker no verifica ES256, `auth.uid()` queda NULL, toda RLS con subquery falla. Subir SIEMPRE vía Server Action + admin client.
 - [Cobro con Mercado Pago en Wapy](wapy-mercadopago-billing.md) — Suscripciones MP: 4 preapproval plans (con/sin trial), webhook registra + cron bloquea, exención, bloqueo dual. Migración 027 creada, PENDIENTE de aplicar a prod.
 - [Sistema de email Resend](wapy-resend-email-system.md) — Auth emails por Resend vía Send Email Hook de Supabase + plantillas react-email. Código listo; activación del hook en dashboard es PENDIENTE manual.
+- [MP checkout: estrategia de planes](wapy-mp-checkout-strategy.md) — MP (checkout comprador) y cupones son transversales a los 3 planes, no un tier nuevo. Modo de cobro self-service. Fix de cupones en MP + dirección/teléfono opcionales.
+- [MP: gaps conocidos](wapy-mp-known-gaps.md) — Backlog auditado 2026-06-29 (docs/mercadopago-audit-2026-06.md), documentado sin arreglar. Tier 1: stock fantasma, reembolsos no representados, status no pasa a confirmed, cross-store webhook, sin guard de suscripción, sin idempotencia.
