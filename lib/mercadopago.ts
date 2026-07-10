@@ -114,17 +114,20 @@ export async function createSubscriptionPreapproval(
   };
 
   try {
-    const response = await preApproval.create({
-      body: {
-        status: 'pending',
-        payer_email: payerEmail,
-        external_reference: store.id,
-        reason: `Wapy — Plan ${store.plan.charAt(0).toUpperCase() + store.plan.slice(1)}`,
-        back_url: `${APP_URL}/dashboard`,
-        // AutoRecurringWithFreeTrial is a superset of AutoRecurringRequest; cast is safe
-        auto_recurring: autoRecurring as Parameters<typeof preApproval.create>[0]['body']['auto_recurring'],
-      },
-    });
+    // notification_url is accepted by the MP API but missing from the SDK's
+    // PreApprovalRequest type; extend it here the same way auto_recurring is cast below.
+    const body: Parameters<typeof preApproval.create>[0]['body'] & { notification_url: string } = {
+      status: 'pending',
+      payer_email: payerEmail,
+      external_reference: store.id,
+      reason: `Wapy — Plan ${store.plan.charAt(0).toUpperCase() + store.plan.slice(1)}`,
+      back_url: `${APP_URL}/dashboard`,
+      notification_url: `${APP_URL}/api/webhooks/mercadopago`,
+      // AutoRecurringWithFreeTrial is a superset of AutoRecurringRequest; cast is safe
+      auto_recurring: autoRecurring as Parameters<typeof preApproval.create>[0]['body']['auto_recurring'],
+    };
+
+    const response = await preApproval.create({ body });
 
     // Prefer sandbox_init_point in non-production environments.
     // Cast via unknown because PreApprovalResponse lacks an index signature.

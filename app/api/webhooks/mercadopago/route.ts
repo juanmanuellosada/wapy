@@ -50,10 +50,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // --- 2. Identify the notification type ---
   // MP sends:
   //   type = "subscription_preapproval" → data.id IS the preapproval ID
-  //   type = "subscription_authorized_payment" → data.id IS a payment ID, not a preapproval
-  // For authorized_payment we don't have a direct preapproval id in the webhook,
-  // so we skip writing (ack 200) — the preapproval state was already updated by
-  // the subscription_preapproval notification. See Decision 4.
+  //   type = "subscription_authorized_payment" → data.id IS an authorized_payment ID,
+  //     not a preapproval. We resolve its preapproval_id below (step 3) and reconcile
+  //     it through the same preapproval flow as subscription_preapproval.
   const notificationType =
     typeof body?.type === 'string' ? body.type : null;
   const notificationAction =
@@ -61,9 +60,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   if (
     notificationType !== null &&
-    notificationType !== 'subscription_preapproval'
+    notificationType !== 'subscription_preapproval' &&
+    notificationType !== 'subscription_authorized_payment'
   ) {
-    // Not a preapproval notification (could be payment, test, etc.) — ack without writing
+    // Not a subscription notification (could be payment, test, etc.) — ack without writing
     console.info('[webhook/mercadopago] Ignored notification type', {
       type: notificationType,
       action: notificationAction,
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   if (!dataId) {
-    // No preapproval id resolvable — ack without writing
+    // No id resolvable — ack without writing
     console.warn('[webhook/mercadopago] Missing data.id — acking without write', {
       type: notificationType,
       xRequestId,
@@ -81,17 +81,51 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true });
   }
 
-  // --- 3. Re-read the preapproval from MP (Decision 5: never trust the body) ---
+  // --- 3. Resolve the preapproval id ---
+  // For subscription_preapproval, data.id already IS the preapproval id.
+  // For subscription_authorized_payment, data.id is the authorized_payment id;
+  // fetch it from MP to get its preapproval_id.
+  let preapprovalIdToFetch = dataId;
+  if (notificationType === 'subscription_authorized_payment') {
+    let authorizedPayment: { preapproval_id?: string | null };
+    try {
+      const res = await fetch(`https://api.mercadopago.com/authorized_payments/${dataId}`, {
+        headers: { Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}` },
+      });
+      if (!res.ok) {
+        throw new Error(`MP authorized_payments returned ${res.status}`);
+      }
+      authorizedPayment = await res.json();
+    } catch (err) {
+      console.error('[webhook/mercadopago] Failed to fetch authorized_payment from MP', {
+        dataId,
+        err,
+      });
+      return NextResponse.json({ error: 'Failed to fetch authorized_payment' }, { status: 502 });
+    }
+
+    if (!authorizedPayment?.preapproval_id) {
+      console.warn('[webhook/mercadopago] authorized_payment has no preapproval_id', {
+        dataId,
+        xRequestId,
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    preapprovalIdToFetch = authorizedPayment.preapproval_id;
+  }
+
+  // --- 4. Re-read the preapproval from MP (Decision 5: never trust the body) ---
   let preapprovalData: {
     id?: string | null;
     status?: string | null;
     external_reference?: string | null;
   };
   try {
-    preapprovalData = await preApproval.get({ id: dataId });
+    preapprovalData = await preApproval.get({ id: preapprovalIdToFetch });
   } catch (err) {
     console.error('[webhook/mercadopago] Failed to fetch preapproval from MP', {
-      dataId,
+      dataId: preapprovalIdToFetch,
       err,
     });
     return NextResponse.json({ error: 'Failed to fetch preapproval' }, { status: 502 });
@@ -114,7 +148,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // external_reference = store_id
   const storeId = externalReference;
 
-  // --- 4. Idempotent upsert (Decision 5) ---
+  // --- 5. Idempotent upsert (Decision 5) ---
   // Read the current status to decide whether subscription_status_changed_at should advance
   const admin = createAdminClient();
 
@@ -141,7 +175,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true });
   }
 
-  // --- 4b. Cancel superseded preapproval (v2) ---
+  // --- 5b. Cancel superseded preapproval (v2) ---
   // When a new preapproval is authorized and it differs from the stored one,
   // cancel the old one to avoid double-billing (e.g. after a plan change or reactivation).
   // Non-fatal: if cancellation fails (e.g. already cancelled) we log and continue.
