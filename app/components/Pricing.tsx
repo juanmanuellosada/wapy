@@ -99,7 +99,7 @@ export default function Pricing() {
           Simple y transparente
         </h2>
         <p className="text-white/55 text-lg max-w-xl mx-auto mb-14">
-          14 días de prueba gratis. Sin tarjeta de crédito. Sin sorpresas.
+          7 días de prueba gratis. Sin tarjeta de crédito. Sin sorpresas.
         </p>
 
         {/* Cards — inicial → medio → pro */}
@@ -112,7 +112,7 @@ export default function Pricing() {
                 Inicial
               </span>
               <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#F5C84B] text-[#16222E] text-[10px] font-extrabold uppercase tracking-wide">
-                Probá 14 días gratis
+                Probá 7 días gratis
               </span>
               <div className="flex items-baseline gap-1 mt-2">
                 <span
@@ -161,7 +161,7 @@ export default function Pricing() {
                 Medio
               </span>
               <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#F5C84B] text-[#16222E] text-[10px] font-extrabold uppercase tracking-wide">
-                Probá 14 días gratis
+                Probá 7 días gratis
               </span>
               <div className="flex items-baseline gap-1 mt-2">
                 <span
@@ -204,7 +204,7 @@ export default function Pricing() {
                 Pro
               </span>
               <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#F5C84B] text-[#16222E] text-[10px] font-extrabold uppercase tracking-wide">
-                Probá 14 días gratis
+                Probá 7 días gratis
               </span>
               <div className="flex items-baseline gap-1 mt-2">
                 <span
@@ -315,7 +315,7 @@ export default function Pricing() {
                   </td>
                 </tr>
                 <tr>
-                  <td className="px-5 py-4 text-white/65 font-medium">Prueba gratis 14 días</td>
+                  <td className="px-5 py-4 text-white/65 font-medium">Prueba gratis 7 días</td>
                   <td className="px-5 py-4 text-center">
                     <Check className="w-4 h-4 text-[#F5C84B] mx-auto" strokeWidth={2.5} />
                   </td>

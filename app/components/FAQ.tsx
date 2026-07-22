@@ -7,7 +7,7 @@ const faqs = [
   {
     question: '¿Cómo cobran la suscripción?',
     answer:
-      'Te facturamos la suscripción a Wapy por transferencia bancaria o MercadoPago al terminar el trial de 14 días. Sin cargo automático a tarjeta, sin sorpresas. Si no querés continuar, no hacés nada. (Esto es aparte del checkout que usan tus clientes para pagar sus compras en tu tienda.)',
+      'Te facturamos la suscripción a Wapy por transferencia bancaria o MercadoPago al terminar el trial de 7 días. Sin cargo automático a tarjeta, sin sorpresas. Si no querés continuar, no hacés nada. (Esto es aparte del checkout que usan tus clientes para pagar sus compras en tu tienda.)',
   },
   {
     question: '¿Mis clientes pueden pagar online con Mercado Pago?',
@@ -35,7 +35,7 @@ const faqs = [
       'Tus clientes navegan tu tienda, arman el carrito, y al hacer clic en "Comprar" se abre WhatsApp en su celular con el pedido pre-escrito hacia tu número. Vos lo recibís como cualquier mensaje. Así de simple.',
   },
   {
-    question: '¿Qué pasa al terminar el trial de 14 días?',
+    question: '¿Qué pasa al terminar el trial de 7 días?',
     answer:
       'Te avisamos por mail unos días antes. Si querés seguir, nos mandás el pago y listo, tu tienda continúa sin interrupciones. Si no, tu tienda se pausa automáticamente y podés retomar cuando quieras.',
   },

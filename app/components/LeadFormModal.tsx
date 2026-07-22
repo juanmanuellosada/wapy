@@ -244,7 +244,7 @@ export function LeadFormModal({ open, onClose, plan }: Props) {
                 </button>
 
                 <p className="text-center text-xs text-[#16222E]/40">
-                  Sin tarjeta · 14 días gratis · Te contactamos en 24hs
+                  Sin tarjeta · 7 días gratis · Te contactamos en 24hs
                 </p>
               </form>
             </>

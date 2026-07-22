@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
+import { TRIAL_DAYS } from '@/lib/subscription/constants';
 import { basicsSchema } from './schemas';
 import { stepIndexFor, nextStepName } from './steps';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
@@ -139,10 +140,10 @@ export async function saveBasics(formData: {
     .maybeSingle();
 
   // If the whitelist row already carries a trial_ends_at (manually set by admin),
-  // respect it; otherwise default to 14 days from now for new stores post-billing.
+  // respect it; otherwise default to TRIAL_DAYS from now for new stores post-billing.
   const trialEndsAt =
     whitelistRow?.trial_ends_at ??
-    new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+    new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: newStore, error: insertError } = await admin
     .from('stores')

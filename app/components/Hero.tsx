@@ -91,7 +91,7 @@ export default function Hero() {
 
             {/* Trust line */}
             <p className="mt-6 text-white/35 text-sm">
-              14 días gratis · Sin tarjeta · Sin código
+              7 días gratis · Sin tarjeta · Sin código
             </p>
           </div>
 
