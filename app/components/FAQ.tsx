@@ -75,8 +75,8 @@ export default function FAQ() {
             Preguntas frecuentes
           </span>
           <h2
-            className="text-3xl md:text-4xl font-bold text-[#16222E]"
-            style={{ fontFamily: 'var(--font-agbalumo)' }}
+            className="text-3xl md:text-4xl font-extrabold text-[#16222E]"
+            style={{ fontFamily: 'var(--font-body)' }}
           >
             Lo que todos preguntan
           </h2>

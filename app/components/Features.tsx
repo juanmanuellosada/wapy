@@ -133,8 +133,8 @@ export default function Features() {
             Funcionalidades
           </span>
           <h2
-            className="text-3xl md:text-5xl font-bold text-[#F5C84B] mb-4"
-            style={{ fontFamily: "var(--font-agbalumo)" }}
+            className="text-3xl md:text-5xl font-extrabold text-[#F5C84B] mb-4"
+            style={{ fontFamily: "var(--font-body)" }}
           >
             Todo lo que necesitás
           </h2>

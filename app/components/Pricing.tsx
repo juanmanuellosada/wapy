@@ -93,8 +93,8 @@ export default function Pricing() {
           Precios
         </span>
         <h2
-          className="text-3xl md:text-5xl font-bold text-white mb-4"
-          style={{ fontFamily: 'var(--font-agbalumo)' }}
+          className="text-3xl md:text-5xl font-extrabold text-white mb-4"
+          style={{ fontFamily: 'var(--font-body)' }}
         >
           Simple y transparente
         </h2>

@@ -35,8 +35,8 @@ export default function HowItWorks() {
             Simple y rápido
           </span>
           <h2
-            className="text-3xl md:text-5xl font-bold text-[#16222E] mb-4"
-            style={{ fontFamily: "var(--font-agbalumo)" }}
+            className="text-3xl md:text-5xl font-extrabold text-[#16222E] mb-4"
+            style={{ fontFamily: "var(--font-body)" }}
           >
             Cómo funciona
           </h2>

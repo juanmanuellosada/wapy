@@ -52,9 +52,9 @@ export default function Hero() {
             </div>
 
             <h1
-              className="font-bold text-white leading-tight mb-5"
+              className="font-extrabold text-white leading-tight mb-5"
               style={{
-                fontFamily: "var(--font-agbalumo)",
+                fontFamily: "var(--font-body)",
                 fontSize: "clamp(2.4rem, 6.5vw, 4.2rem)",
                 lineHeight: 1.08,
               }}
