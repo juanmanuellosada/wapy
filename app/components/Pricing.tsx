@@ -39,6 +39,7 @@ const proFeatures: Feature[] = [
   { label: 'Secciones ilimitadas' },
   { label: 'Imágenes ilimitadas por producto' },
   { label: 'Variantes (talles, colores)', highlight: true },
+  { label: 'Carga masiva de productos por ZIP', highlight: true },
   { label: 'Checkout por WhatsApp' },
   { label: 'Checkout Mercado Pago' },
   { label: 'Cupones de descuento' },
@@ -285,6 +286,18 @@ export default function Pricing() {
                   </td>
                   <td className="px-5 py-4 text-center bg-[#F5C84B]/5">
                     <Check className="w-4 h-4 text-[#F5C84B] mx-auto" strokeWidth={2.5} />
+                  </td>
+                  <td className="px-5 py-4 text-center">
+                    <Check className="w-4 h-4 text-[#F5C84B] mx-auto" strokeWidth={2.5} />
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-5 py-4 text-white/65 font-medium">Carga masiva de productos</td>
+                  <td className="px-5 py-4 text-center">
+                    <X className="w-4 h-4 text-white/30 mx-auto" strokeWidth={2.5} />
+                  </td>
+                  <td className="px-5 py-4 text-center bg-[#F5C84B]/5">
+                    <X className="w-4 h-4 text-white/30 mx-auto" strokeWidth={2.5} />
                   </td>
                   <td className="px-5 py-4 text-center">
                     <Check className="w-4 h-4 text-[#F5C84B] mx-auto" strokeWidth={2.5} />

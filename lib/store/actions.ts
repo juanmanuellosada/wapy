@@ -15,6 +15,8 @@ import { getPlanLimits, isUnlimited } from '@/lib/plans/limits';
 import type { PlanId } from '@/lib/plans/limits';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 import { getSubscriptionState } from '@/lib/subscription/state';
+import { validateProductFields, checkBatchFits } from '@/lib/store/product-validation';
+import { MAX_PHOTOS_PER_ZIP } from '@/lib/store/bulk-import/zip';
 
 // Section item schema (without the min-1 array constraint — dashboard can have 0)
 const sectionItemSchema = z.object({
@@ -443,6 +445,182 @@ export async function saveStoreProduct(
 
   revalidatePath('/dashboard', 'layout');
   return { ok: true, productId: newProduct.id };
+}
+
+// ---------------------------------------------------------------------------
+// bulkCreateProducts — INSERT en lote de productos borrador desde un import
+// de fotos (design.md, Decisiones 2, 5, 7 y 8). Plan Pro únicamente.
+// ---------------------------------------------------------------------------
+
+type BulkCreateItem = { name: string; imageUrl: string };
+type BulkCreateDefaults = { sectionId?: string | null; priceCents?: number };
+
+export async function bulkCreateProducts(
+  items: BulkCreateItem[],
+  defaults?: BulkCreateDefaults
+): Promise<{ ok: true; created: number } | { error: string }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const storePlan = (store as unknown as { plan: PlanId | null }).plan;
+  const { allowBulkProducts, maxProducts } = getPlanLimits(storePlan);
+  if (!allowBulkProducts) {
+    return { error: 'Tu plan no incluye alta masiva de productos. Pasate a Pro para habilitarla.' };
+  }
+
+  if (items.length === 0) {
+    return { error: 'No hay fotos para crear productos.' };
+  }
+  if (items.length > MAX_PHOTOS_PER_ZIP) {
+    return { error: `El lote no puede superar los ${MAX_PHOTOS_PER_ZIP} productos.` };
+  }
+  if (items.some((item) => !item.name?.trim() || !item.imageUrl?.trim())) {
+    return { error: 'Cada producto necesita un nombre y una imagen.' };
+  }
+
+  const priceCents = defaults?.priceCents ?? 0;
+  if (!Number.isInteger(priceCents) || priceCents < 0) {
+    return { error: 'El precio debe ser un número entero mayor o igual a 0.' };
+  }
+
+  const admin = createAdminClient();
+
+  // Sección por defecto del lote: si viene, debe pertenecer a esta tienda.
+  const sectionId = defaults?.sectionId ?? null;
+  if (sectionId) {
+    const { data: section } = await admin
+      .from('sections')
+      .select('id')
+      .eq('id', sectionId)
+      .eq('store_id', store.id)
+      .maybeSingle();
+    if (!section) return { error: 'La sección elegida no pertenece a tu tienda.' };
+  }
+
+  // Límite de productos del plan: se valida contra el lote completo, no de a
+  // uno (design.md, Decisión 8). Se rechaza el lote entero si no entra.
+  if (!isUnlimited(maxProducts)) {
+    const { count } = await admin
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', store.id);
+    const fit = checkBatchFits(count ?? 0, items.length, maxProducts);
+    if (!fit.ok) return { error: fit.message };
+  }
+
+  const { data: maxPositionRow } = await admin
+    .from('products')
+    .select('position')
+    .eq('store_id', store.id)
+    .order('position', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let nextPosition = (maxPositionRow?.position ?? -1) + 1;
+
+  const rows = items.map((item) => ({
+    store_id: store.id,
+    name: item.name,
+    description: null,
+    price_cents: priceCents,
+    promo_price_cents: null,
+    stock: null,
+    section_id: sectionId,
+    image_urls: [item.imageUrl],
+    position: nextPosition++,
+    is_active: false,
+    currency: 'ARS',
+  }));
+
+  const { data: inserted, error } = await admin.from('products').insert(rows).select('id');
+
+  if (error || !inserted) {
+    console.warn('[bulkCreateProducts] insert failed:', error);
+    return { error: 'No se pudieron crear los productos. Intentá de nuevo.' };
+  }
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true, created: inserted.length };
+}
+
+// ---------------------------------------------------------------------------
+// bulkUpdateProducts — UPDATE en lote desde la grilla de edición masiva
+// (design.md, Decisiones 6 y 7). Plan Pro únicamente.
+// ---------------------------------------------------------------------------
+
+type BulkUpdateRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  price_cents: number;
+  promo_price_cents: number | null;
+  section_id: string | null;
+  stock: number | null;
+  is_active: boolean;
+};
+
+export async function bulkUpdateProducts(
+  rows: BulkUpdateRow[]
+): Promise<{ ok: true; updated: number } | { error: string }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const storePlan = (store as unknown as { plan: PlanId | null }).plan;
+  const { allowBulkProducts } = getPlanLimits(storePlan);
+  if (!allowBulkProducts) {
+    return { error: 'Tu plan no incluye edición masiva de productos. Pasate a Pro para habilitarla.' };
+  }
+
+  if (rows.length === 0) {
+    return { error: 'No hay cambios para guardar.' };
+  }
+
+  const admin = createAdminClient();
+
+  // Todos los ids recibidos deben pertenecer a la tienda del usuario, o se
+  // rechaza la operación entera.
+  const ids = rows.map((r) => r.id);
+  const { data: owned } = await admin.from('products').select('id').eq('store_id', store.id).in('id', ids);
+  const ownedIds = new Set((owned ?? []).map((p) => p.id));
+  if (ids.some((id) => !ownedIds.has(id))) {
+    return { error: 'Uno o más productos no pertenecen a tu tienda.' };
+  }
+
+  // Validar todo el lote antes de escribir nada.
+  for (const row of rows) {
+    const issues = validateProductFields({
+      name: row.name,
+      description: row.description,
+      price_cents: row.price_cents,
+      promo_price_cents: row.promo_price_cents,
+      stock: row.stock,
+    });
+    if (issues.length > 0) return { error: issues[0].message };
+  }
+
+  // Un único UPDATE en lote (upsert por PK): éxito o fallo es todo-o-nada.
+  const updateRows = rows.map((row) => ({
+    id: row.id,
+    store_id: store.id,
+    name: row.name,
+    description: row.description,
+    price_cents: row.price_cents,
+    promo_price_cents: row.promo_price_cents,
+    section_id: row.section_id,
+    stock: row.stock,
+    is_active: row.is_active,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { error } = await admin.from('products').upsert(updateRows);
+
+  if (error) {
+    console.warn('[bulkUpdateProducts] upsert failed:', error);
+    return { error: 'No se pudieron guardar los cambios. Intentá de nuevo.' };
+  }
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true, updated: rows.length };
 }
 
 // ---------------------------------------------------------------------------

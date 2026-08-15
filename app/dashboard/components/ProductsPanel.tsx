@@ -1,9 +1,12 @@
 'use client';
 
-import { useState } from 'react';
-import { Plus, Pencil, Trash2, Eye, EyeOff, ChevronDown, ChevronRight, Copy, Download } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Plus, Pencil, Trash2, Eye, EyeOff, ChevronDown, ChevronRight, Copy, Download, FileArchive, Table2 } from 'lucide-react';
 import { SortableList } from '@/app/components/store/SortableList';
 import { ProductModal } from '@/app/components/store/ProductModal';
+import { BulkImportModal } from './BulkImportModal';
+import { BulkEditGrid } from './BulkEditGrid';
 import { saveStoreProduct, deleteStoreProduct, duplicateProduct } from '@/lib/store/actions';
 import { exportProductsCsv } from '@/lib/store/exports/products';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
@@ -21,6 +24,7 @@ type Props = {
   limitIsUnlimited: boolean;
   maxImagesPerProduct: number;
   allowVariants: boolean;
+  allowBulkProducts: boolean;
 };
 
 function formatPrice(cents: number): string {
@@ -31,8 +35,15 @@ function formatPrice(cents: number): string {
   }).format(cents / 100);
 }
 
-export function ProductsPanel({ store, initialProducts, sections, productsCount, productsLimit, limitIsUnlimited, maxImagesPerProduct, allowVariants }: Props) {
+export function ProductsPanel({ store, initialProducts, sections, productsCount, productsLimit, limitIsUnlimited, maxImagesPerProduct, allowVariants, allowBulkProducts }: Props) {
+  const router = useRouter();
   const [products, setProducts] = useState<Product[]>(initialProducts);
+  // Mantiene la lista sincronizada tras el refresh automático que dispara
+  // bulkCreateProducts/bulkUpdateProducts (vía revalidatePath) al cerrar
+  // el import o la grilla de edición masiva.
+  useEffect(() => {
+    setProducts(initialProducts);
+  }, [initialProducts]);
   const atProductsLimit = products.length >= productsLimit;
   const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -40,6 +51,8 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [bulkEditProducts, setBulkEditProducts] = useState<Product[] | null>(null);
 
   const toggleCollapsed = (key: string) => {
     setCollapsed((prev) => {
@@ -180,6 +193,15 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
     }
   };
 
+  const handleBulkImported = (created: number) => {
+    if (created > 0) router.refresh();
+  };
+
+  const closeBulkEdit = () => {
+    setBulkEditProducts(null);
+    router.refresh();
+  };
+
   const handleReorder = async (newOrder: Product[]) => {
     const reordered = newOrder.map((p, i) => ({ ...p, position: i }));
     setProducts((prev) => {
@@ -203,7 +225,7 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold text-[#FBF7EC]">Productos</h1>
           {!limitIsUnlimited && (
@@ -212,7 +234,7 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={handleExportCsv}
@@ -226,6 +248,33 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
             )}
             Exportar catálogo CSV
           </button>
+          {allowBulkProducts ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowBulkImport(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-white/50 hover:text-white hover:bg-white/8 border border-white/10 transition-colors cursor-pointer"
+              >
+                <FileArchive size={12} />
+                Importar ZIP de fotos
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkEditProducts(products)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-white/50 hover:text-white hover:bg-white/8 border border-white/10 transition-colors cursor-pointer"
+              >
+                <Table2 size={12} />
+                Edición masiva
+              </button>
+            </>
+          ) : (
+            <a
+              href="/#precios"
+              className="text-xs text-white/50 hover:text-white/80 transition-colors"
+            >
+              Importación y edición masiva con Pro →
+            </a>
+          )}
           <button
             type="button"
             onClick={() => setModalProduct(null)}
@@ -248,6 +297,30 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
           allowVariants={allowVariants}
           onSaved={handleProductSaved}
           onClose={() => setModalProduct(undefined)}
+        />
+      )}
+
+      {showBulkImport && (
+        <BulkImportModal
+          storeId={store.id}
+          sections={sections}
+          onClose={() => setShowBulkImport(false)}
+          onImported={handleBulkImported}
+          onOpenGrid={() => {
+            setShowBulkImport(false);
+            setBulkEditProducts(products.filter((p) => !p.is_active));
+          }}
+        />
+      )}
+
+      {bulkEditProducts && (
+        <BulkEditGrid
+          storeId={store.id}
+          products={bulkEditProducts}
+          sections={sections}
+          maxImagesPerProduct={maxImagesPerProduct}
+          allowVariants={allowVariants}
+          onClose={closeBulkEdit}
         />
       )}
 
