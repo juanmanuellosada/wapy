@@ -396,7 +396,7 @@ export function BulkImportModal({ storeId, sections, onClose, onImported, onOpen
                 <FileArchive size={28} className="text-white/30 mx-auto mb-2" />
                 <p className="text-sm text-white/50">Arrastrá o clickeá para subir un ZIP con las fotos</p>
                 <p className="text-xs text-white/30 mt-1">
-                  Máx. 60 MB · hasta 100 fotos · .jpg, .jpeg, .png, .webp
+                  Máx. 60 MB · hasta {MAX_PHOTOS_PER_ZIP} fotos · .jpg, .jpeg, .png, .webp
                 </p>
               </div>
 

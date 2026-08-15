@@ -2,7 +2,7 @@
 // (design.md, Decisión 2). La descompresión en sí vive en el cliente (grupo 3).
 
 export const MAX_ZIP_BYTES = 60 * 1024 * 1024; // 60 MB
-export const MAX_PHOTOS_PER_ZIP = 100;
+export const MAX_PHOTOS_PER_ZIP = 150;
 
 export const ACCEPTED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'] as const;
 

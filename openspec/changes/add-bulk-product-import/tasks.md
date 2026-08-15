@@ -51,5 +51,5 @@
 - [x] 6.1 Agregar en `app/components/Pricing.tsx` la fila comparativa de alta masiva + edición masiva, marcada solo para Pro
 - [x] 6.2 Verificar los textos en español rioplatense (voseo) y el uso de `toast` de `@/lib/toast` para los avisos, con `serverError` en bloque `role="alert"` para los errores de formulario
 - [ ] 6.3 Prueba manual end-to-end en Pro: ZIP de macOS con `__MACOSX/` y archivos mezclados → import → productos en borrador a $0 → grilla → precios + sección + publicar en lote → guardar → verificar en la tienda pública
-- [ ] 6.4 Prueba manual de rechazo: ZIP > 60 MB, ZIP con > 100 fotos, ZIP sin imágenes válidas, y acceso desde una tienda de plan `medio`
+- [ ] 6.4 Prueba manual de rechazo: ZIP > 60 MB, ZIP con > 150 fotos, ZIP sin imágenes válidas, y acceso desde una tienda de plan `medio`
 - [x] 6.5 Correr `npx vitest run` y `npm run build`, y confirmar que no hizo falta ninguna migración de esquema

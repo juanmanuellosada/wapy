@@ -95,15 +95,15 @@ El sistema SHALL procesar únicamente las entradas del ZIP cuya extensión sea `
 - **THEN** el sistema crea 8 productos e ignora los archivos no soportados sin contarlos como fallos
 
 ### Requirement: Límites de tamaño y cantidad del import
-El sistema SHALL rechazar, antes de procesarlo, un ZIP que supere los 60 MB, indicando el tope y sugiriendo dividirlo. El sistema SHALL rechazar un ZIP que contenga más de 100 fotos válidas, informando cuántas trae y cuál es el máximo, sin crear ningún producto ni truncar el lote. Cada foto individual SHALL respetar los límites vigentes de imagen de producto (25 MB de archivo original y 5 MB una vez comprimido).
+El sistema SHALL rechazar, antes de procesarlo, un ZIP que supere los 60 MB, indicando el tope y sugiriendo dividirlo. El sistema SHALL rechazar un ZIP que contenga más de 150 fotos válidas, informando cuántas trae y cuál es el máximo, sin crear ningún producto ni truncar el lote. Cada foto individual SHALL respetar los límites vigentes de imagen de producto (25 MB de archivo original y 5 MB una vez comprimido).
 
 #### Scenario: ZIP demasiado pesado
 - **WHEN** el dueño intenta cargar un ZIP de 85 MB
 - **THEN** el sistema lo rechaza antes de descomprimirlo, informa el límite de 60 MB y no crea ningún producto
 
 #### Scenario: ZIP con demasiadas fotos
-- **WHEN** el dueño carga un ZIP con 140 fotos válidas
-- **THEN** el sistema rechaza el import informando que trae 140 fotos y que el máximo por ZIP es 100, y no crea ningún producto
+- **WHEN** el dueño carga un ZIP con 151 fotos válidas
+- **THEN** el sistema rechaza el import informando que trae 151 fotos y que el máximo por ZIP es 150, y no crea ningún producto
 
 #### Scenario: Una foto individual excede el peso permitido
 - **WHEN** una de las fotos del ZIP sigue superando los 5 MB después de comprimirse

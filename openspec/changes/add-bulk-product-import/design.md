@@ -4,9 +4,9 @@ Hoy el alta de productos es exclusivamente unitaria: `ProductModal` (react-hook-
 
 Restricciones del entorno que condicionan el diseño:
 
-- **`next.config.ts` fija `experimental.serverActions.bodySizeLimit: '10mb'`.** Un ZIP con 50–100 fotos de celular supera eso sin esfuerzo. Subirlo entero a una server action no es viable sin cambiar esa configuración global (que aplicaría a *todas* las actions).
+- **`next.config.ts` fija `experimental.serverActions.bodySizeLimit: '10mb'`.** Un ZIP con 50–150 fotos de celular supera eso sin esfuerzo. Subirlo entero a una server action no es viable sin cambiar esa configuración global (que aplicaría a *todas* las actions).
 - **Todo el proyecto es síncrono.** No hay cola, ni jobs, ni `trigger.dev`/`inngest`. Los únicos procesos diferidos son dos Vercel Cron. Introducir infraestructura de background jobs para esta feature sería desproporcionado.
-- **Vercel Functions tienen tope de duración.** Procesar 100 imágenes con `sharp` dentro de una sola invocación es un riesgo de timeout real.
+- **Vercel Functions tienen tope de duración.** Procesar 150 imágenes con `sharp` dentro de una sola invocación es un riesgo de timeout real.
 - **La pipeline de imágenes ya existe y funciona**: `compressImage` en el browser (25 MB máx. origen → 1 MB objetivo, 1600 px, web worker) y `uploadProductImageAction` en el server (valida ≤ 5 MB y MIME, optimiza con `sharp` a WebP q80 1600 px, sube a `product-images/{storeId}/{uuid}.webp` con admin client tras verificar ownership).
 - **El dashboard es mobile-first** y la UI es Tailwind v4 escrita a mano: no hay `@tanstack/react-table`, ni shadcn, ni Radix. Cualquier "grilla" hay que construirla, y tiene que funcionar en un teléfono.
 - **`products.name` está validado a máx. 120 caracteres** en el form; `description` a 500. `price_cents >= 0` admite 0. `image_urls` es `text[]` con `CHECK <= 20`.
@@ -49,12 +49,12 @@ El ZIP se lee con `File.arrayBuffer()` y se descomprime **client-side**. Cada en
 ### Decisión 2: Límites concretos del import
 
 - **Tamaño máximo del ZIP: 60 MB.** Por encima de eso, descomprimir en memoria en un teléfono de gama media es riesgoso. Se valida antes de leer el archivo, con mensaje claro sugiriendo partirlo en varios ZIPs.
-- **Máximo de fotos procesadas por ZIP: 100.** Si el ZIP contiene más entradas válidas, se rechaza el import indicando cuántas trae y el tope, en vez de truncar silenciosamente (truncar sería sorpresa desagradable: el dueño creería que cargó todo).
+- **Máximo de fotos procesadas por ZIP: 150.** Si el ZIP contiene más entradas válidas, se rechaza el import indicando cuántas trae y el tope, en vez de truncar silenciosamente (truncar sería sorpresa desagradable: el dueño creería que cargó todo).
 - **Formatos aceptados: `.jpg`, `.jpeg`, `.png`, `.webp`**, en coincidencia con `validateProductImageFile`. Cualquier otra extensión se ignora sin contarla como error.
 - **Entradas ignoradas silenciosamente:** directorios, `__MACOSX/`, `.DS_Store`, `Thumbs.db`, archivos ocultos (nombre que arranca con `.`) y entradas de tamaño 0.
 - **Por foto** rigen los límites ya existentes: 25 MB de origen (`MAX_ORIGINAL_BYTES`) y 5 MB tras comprimir (`MAX_FINAL_BYTES`).
 
-**Por qué esos números:** 60 MB / 100 fotos cubre con margen el caso real de un catálogo de indumentaria o gastronomía fotografiado con celular (fotos de 2–5 MB, que tras `compressImage` bajan a ~0.5–1 MB). Son topes de UX, no de seguridad: el guard real de abuso es el gating de plan y el límite de productos, validados en el servidor.
+**Por qué esos números:** 60 MB / 150 fotos cubre con margen el caso real de un catálogo de indumentaria o gastronomía fotografiado con celular (fotos de 2–5 MB, que tras `compressImage` bajan a ~0.5–1 MB). Son topes de UX, no de seguridad: el guard real de abuso es el gating de plan y el límite de productos, validados en el servidor.
 
 ### Decisión 3: Subida con concurrencia acotada a 3, y fallos parciales tolerados
 
@@ -123,9 +123,9 @@ El esquema actual de `products` cubre todo el caso: `price_cents >= 0` admite `0
 
 ## Risks / Trade-offs
 
-- **[El import depende de la pestaña abierta]** → Con 100 fotos en 4G el proceso puede tardar varios minutos; si el usuario cierra la pestaña, quedan productos creados a medias y fotos huérfanas en el bucket. Mitigación: mostrar progreso explícito con contador ("subiendo 34 de 80"), advertir de no cerrar la pestaña mientras corre, y crear los productos en una sola llamada al final para que el estado en DB sea todo-o-nada respecto de esa llamada. Se acepta el riesgo residual de fotos huérfanas en Storage: no rompen nada y el costo de almacenamiento es marginal.
+- **[El import depende de la pestaña abierta]** → Con 150 fotos en 4G el proceso puede tardar varios minutos; si el usuario cierra la pestaña, quedan productos creados a medias y fotos huérfanas en el bucket. Mitigación: mostrar progreso explícito con contador ("subiendo 34 de 80"), advertir de no cerrar la pestaña mientras corre, y crear los productos en una sola llamada al final para que el estado en DB sea todo-o-nada respecto de esa llamada. Se acepta el riesgo residual de fotos huérfanas en Storage: no rompen nada y el costo de almacenamiento es marginal.
 
-- **[Descomprimir en memoria en mobile]** → Un ZIP de 60 MB más las imágenes descomprimidas puede tensionar un teléfono de gama baja y hacer que el navegador mate la pestaña. Mitigación: tope de 60 MB, procesar las entradas de a una liberando la referencia tras subirla (no materializar los 100 `File` a la vez), y reusar `compressImage` que ya trabaja en web worker.
+- **[Descomprimir en memoria en mobile]** → Un ZIP de 60 MB más las imágenes descomprimidas puede tensionar un teléfono de gama baja y hacer que el navegador mate la pestaña. Mitigación: tope de 60 MB, procesar las entradas de a una liberando la referencia tras subirla (no materializar los 150 `File` a la vez), y reusar `compressImage` que ya trabaja en web worker.
 
 - **[Fotos subidas sin producto asociado]** → Si la acción de creación en lote falla después de subir las 80 fotos, quedan 80 objetos huérfanos en `product-images/{storeId}/`. Mitigación: la acción de creación es una única llamada corta (solo un insert en lote, sin trabajo pesado), así que la ventana de fallo es chica; ante error se muestra un mensaje con opción de reintentar la creación reusando las URLs ya subidas, sin volver a subir nada.
 
@@ -151,4 +151,4 @@ Feature puramente aditiva, sin migración de esquema ni cambio de comportamiento
 ## Open Questions
 
 - **¿Conviene además una acción de "publicar todos los borradores con precio > 0"?** Sería el cierre natural del flujo (importar → completar precios → publicar todo lo que quedó listo). Queda fuera de esta iteración; las acciones en lote de la grilla ya permiten hacerlo con selección manual.
-- **¿Hace falta un límite de imports por día o por hora?** Con el gating de Pro y el límite de 100 fotos por ZIP el riesgo de abuso es bajo. Se difiere hasta ver uso real.
+- **¿Hace falta un límite de imports por día o por hora?** Con el gating de Pro y el límite de 150 fotos por ZIP el riesgo de abuso es bajo. Se difiere hasta ver uso real.
