@@ -5,6 +5,8 @@ import { sendPasswordResetEmail, sendConfirmSignupEmail } from '@/lib/email';
 
 export const runtime = 'nodejs';
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+
 // ---------------------------------------------------------------------------
 // Types — Supabase Send Email Hook payload
 // ---------------------------------------------------------------------------
@@ -63,14 +65,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3. Build the verification link pointing to Supabase's native verifier
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+  // 3. Build the verification link pointing to our own /auth/confirm route.
+  // We deliberately do NOT point at Supabase's native /auth/v1/verify: that
+  // endpoint relies on @supabase/ssr's hardcoded PKCE flow, whose code
+  // verifier lives in a cookie on the device that requested the reset. If the
+  // user opens the email on a different device, verification fails with
+  // "PKCE code verifier not found in storage". verifyOtp with token_hash
+  // (used by /auth/confirm) has no such requirement.
   const { token_hash, email_action_type, redirect_to } = data.email_data;
+
+  let nextPath = '/';
+  try {
+    nextPath = new URL(redirect_to).pathname || '/';
+  } catch {
+    // redirect_to wasn't a valid absolute URL — fall back to the app root.
+  }
+
   const verifyUrl =
-    `${supabaseUrl}/auth/v1/verify` +
-    `?token=${token_hash}` +
-    `&type=${email_action_type}` +
-    `&redirect_to=${redirect_to}`;
+    `${APP_URL}/auth/confirm` +
+    `?token_hash=${encodeURIComponent(token_hash)}` +
+    `&type=${encodeURIComponent(email_action_type)}` +
+    `&next=${encodeURIComponent(nextPath)}`;
 
   const to = data.user.email;
 

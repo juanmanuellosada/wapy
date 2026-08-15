@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from '@/lib/supabase/client';
 import { resetPasswordAction } from '@/lib/auth/actions';
 import { resetPasswordSchema, ResetPasswordInput } from '@/lib/auth/schemas';
 import { FormField } from '../components/FormField';
@@ -13,9 +13,12 @@ import { SubmitButton } from '../components/SubmitButton';
 
 type SessionStatus = 'loading' | 'ready' | 'invalid';
 
+const SESSION_CHECK_TIMEOUT_MS = 5000;
+
 export default function ResetPasswordPage() {
   const router = useRouter();
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>('loading');
+  const [invalidReason, setInvalidReason] = useState<string | null>(null);
   const [state, formAction, isPending] = useActionState(resetPasswordAction, null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -44,26 +47,60 @@ export default function ResetPasswordPage() {
   };
 
   useEffect(() => {
-    // Supabase Auth sends the recovery token in the URL hash.
-    // createBrowserClient automatically detects it and establishes a session.
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
+    // Supabase Auth can send the recovery token two ways depending on the
+    // configured flow: PKCE (`?code=...` query param) or implicit
+    // (`#access_token=...` hash). We support both without assuming which is active.
+    const supabase = createBrowserClient();
+    let resolved = false;
 
-    supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setSessionStatus('ready');
-      } else if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
-        // Only transition to invalid if we never got PASSWORD_RECOVERY
-        setSessionStatus((prev) => (prev === 'loading' ? 'invalid' : prev));
+    const markReady = () => {
+      if (resolved) return;
+      resolved = true;
+      // Strip the code/hash so a page refresh doesn't retry an already-consumed token.
+      window.history.replaceState(null, '', window.location.pathname);
+      setSessionStatus('ready');
+    };
+
+    const markInvalid = (reason?: string) => {
+      if (resolved) return;
+      resolved = true;
+      if (reason) setInvalidReason(reason);
+      setSessionStatus('invalid');
+    };
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') {
+        markReady();
       }
     });
 
-    // If no hash token is present at all, mark invalid immediately
-    if (!window.location.hash.includes('access_token')) {
-      setSessionStatus('invalid');
+    const params = new URLSearchParams(window.location.search);
+    const errorDescription = params.get('error_description') ?? params.get('error');
+    const code = params.get('code');
+    const hasHashToken = window.location.hash.includes('access_token');
+
+    if (errorDescription) {
+      markInvalid(errorDescription);
+    } else if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+        if (error) markInvalid(error.message);
+        else markReady();
+      });
+    } else if (hasHashToken) {
+      // Implicit flow: the onAuthStateChange listener above will fire PASSWORD_RECOVERY.
+    } else {
+      // Safety net: a session may already be active (e.g. re-render after it resolved).
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session) markReady();
+      });
     }
+
+    const timeout = setTimeout(() => markInvalid(), SESSION_CHECK_TIMEOUT_MS);
+
+    return () => {
+      clearTimeout(timeout);
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   if (sessionStatus === 'loading') {
@@ -81,6 +118,7 @@ export default function ResetPasswordPage() {
         <h1 className="text-xl font-bold text-[#16222E] mb-2">Link inválido o expirado</h1>
         <p className="text-sm text-[#16222E]/60 mb-6">
           Este link de recuperación ya no es válido. Podés solicitar uno nuevo.
+          {invalidReason && <span className="block mt-1 text-xs">({invalidReason})</span>}
         </p>
         <Link
           href="/forgot-password"
