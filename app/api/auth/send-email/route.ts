@@ -74,11 +74,29 @@ export async function POST(req: NextRequest) {
   // (used by /auth/confirm) has no such requirement.
   const { token_hash, email_action_type, redirect_to } = data.email_data;
 
-  let nextPath = '/';
-  try {
-    nextPath = new URL(redirect_to).pathname || '/';
-  } catch {
-    // redirect_to wasn't a valid absolute URL — fall back to the app root.
+  // `redirect_to` is not trustworthy: Supabase silently swaps it for the
+  // project's SITE_URL (pathname "/") whenever the requested URL isn't in the
+  // Redirect URLs allowlist configured in the Supabase dashboard — state that
+  // lives outside this repo. The landing path must instead be derived from
+  // `email_action_type`, which Supabase always sets correctly.
+  const DEFAULT_NEXT_PATH_BY_ACTION_TYPE: Record<string, string> = {
+    recovery: '/reset-password',
+    signup: '/',
+    email: '/',
+  };
+
+  const defaultNextPath = DEFAULT_NEXT_PATH_BY_ACTION_TYPE[email_action_type] ?? '/';
+
+  let nextPath = defaultNextPath;
+  if (email_action_type !== 'recovery') {
+    try {
+      const redirectPathname = new URL(redirect_to).pathname;
+      if (redirectPathname && redirectPathname !== '/') {
+        nextPath = redirectPathname;
+      }
+    } catch {
+      // redirect_to wasn't a valid absolute URL — keep the default.
+    }
   }
 
   const verifyUrl =
