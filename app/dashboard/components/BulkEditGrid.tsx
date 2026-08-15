@@ -7,11 +7,11 @@
 // y validación en línea con las mismas reglas que ProductModal (lib/store/product-validation.ts).
 
 import { useState, useRef, useMemo, useCallback, useEffect, memo } from 'react';
-import { Search, X, Loader2, Eye, EyeOff, Pencil, AlertCircle } from 'lucide-react';
+import { Search, X, Loader2, Eye, EyeOff, Pencil, AlertCircle, Trash2 } from 'lucide-react';
 import { Select, type SelectOption } from '@/app/components/Select';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
 import { ProductModal } from '@/app/components/store/ProductModal';
-import { bulkUpdateProducts } from '@/lib/store/actions';
+import { bulkUpdateProducts, bulkDeleteProducts } from '@/lib/store/actions';
 import { validateProductFields, type ProductValidationIssue } from '@/lib/store/product-validation';
 import type { Product, Section } from '@/lib/onboarding/state';
 import { toast } from '@/lib/toast';
@@ -375,11 +375,16 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
   const [modalProductId, setModalProductId] = useState<string | null>(null);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
 
   const [bulkPrice, setBulkPrice] = useState('');
   const [bulkStock, setBulkStock] = useState('');
   const [bulkSectionId, setBulkSectionId] = useState('');
 
+  const remainingCount = useMemo(
+    () => productIds.reduce((n, id) => n + (rowsById[id] ? 1 : 0), 0),
+    [productIds, rowsById]
+  );
   const dirtyCount = useMemo(
     () => productIds.reduce((n, id) => n + (rowsById[id]?.dirty ? 1 : 0), 0),
     [productIds, rowsById]
@@ -542,6 +547,25 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
     toast.info('Se descartaron los cambios pendientes.');
   };
 
+  const handleBulkDeleteConfirmed = async () => {
+    const ids = Array.from(selectedIds);
+    const result = await bulkDeleteProducts(ids);
+    setShowBulkDeleteConfirm(false);
+
+    if ('error' in result) {
+      toast.error(result.error);
+      return;
+    }
+
+    setRowsById((prev) => {
+      const next = { ...prev };
+      for (const id of ids) delete next[id];
+      return next;
+    });
+    setSelectedIds(new Set());
+    toast.success(`Se eliminaron ${result.deleted} producto${result.deleted === 1 ? '' : 's'}.`);
+  };
+
   const requestClose = () => {
     if (dirtyCount > 0) setShowExitConfirm(true);
     else onClose();
@@ -573,7 +597,7 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
         <div>
           <h1 className="text-base font-bold text-[#FBF7EC]">Edición masiva</h1>
           <p className="text-xs text-white/40">
-            {visibleIds.length} de {productIds.length} producto{productIds.length === 1 ? '' : 's'}
+            {visibleIds.length} de {remainingCount} producto{remainingCount === 1 ? '' : 's'}
           </p>
         </div>
         <button
@@ -715,6 +739,17 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
               Despublicar
             </button>
           </div>
+
+          <div className="flex items-end gap-1.5 md:ml-auto">
+            <button
+              type="button"
+              onClick={() => setShowBulkDeleteConfirm(true)}
+              className="h-9 px-3 rounded-lg text-xs font-semibold text-red-400 bg-red-500/10 hover:bg-red-500/20 flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Trash2 size={14} />
+              Eliminar
+            </button>
+          </div>
         </div>
       )}
 
@@ -834,6 +869,16 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
         title="Descartar cambios"
         message={`Se van a perder los cambios sin guardar de ${dirtyCount} producto${dirtyCount === 1 ? '' : 's'}.`}
         confirmLabel="Sí, descartar"
+        variant="destructive"
+      />
+
+      <ConfirmModal
+        open={showBulkDeleteConfirm}
+        onClose={() => setShowBulkDeleteConfirm(false)}
+        onConfirm={handleBulkDeleteConfirmed}
+        title="Eliminar productos"
+        message={`Vas a eliminar ${selectedIds.size} producto${selectedIds.size === 1 ? '' : 's'}. Esta acción no se puede deshacer.`}
+        confirmLabel="Sí, eliminar"
         variant="destructive"
       />
     </div>

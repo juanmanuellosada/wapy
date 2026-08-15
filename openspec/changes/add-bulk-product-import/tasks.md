@@ -38,6 +38,8 @@
 - [x] 4.7 Implementar el guardado explícito: contador de cambios sin guardar, botón "Guardar cambios" que envía solo las filas sucias a `bulkUpdateProducts`, opción de descartar, y confirmación al intentar salir con cambios pendientes
 - [x] 4.8 Memoizar las filas y verificar que la grilla se mantiene fluida con ~200 productos
 - [x] 4.9 Ofrecer desde cada fila la apertura del `ProductModal` existente para imágenes, variedades, cantidad mínima y múltiplo de venta
+- [x] 4.10 Agregar `bulkDeleteProducts(ids: string[])` en `lib/store/actions.ts`: `requireOwnerStore()`, gate `allowBulkProducts`, verificación de que todos los `id` pertenecen a la tienda (rechazo total si alguno no), borrado de fila + limpieza best-effort de imágenes en Storage (misma lógica que `deleteStoreProduct`), y un único `revalidatePath`
+- [x] 4.11 Agregar en `BulkEditGrid.tsx` el botón "Eliminar" en la barra de acciones en lote (estilo destructivo) con `ConfirmModal` de confirmación indicando la cantidad seleccionada y que la acción no se puede deshacer; al confirmar, remover las filas borradas del estado local (sin que sigan contando como cambios pendientes), limpiar la selección y mostrar un toast con el resultado
 
 ## 5. Integración en el dashboard y gating de UI
 

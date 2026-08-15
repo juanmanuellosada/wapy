@@ -675,6 +675,76 @@ export async function deleteStoreProduct(
 }
 
 // ---------------------------------------------------------------------------
+// bulkDeleteProducts — DELETE en lote desde la grilla de edición masiva.
+// Misma semántica que deleteStoreProduct (borrado de fila + imágenes de
+// Storage best-effort), aplicada a varios productos a la vez. Plan Pro
+// únicamente.
+// ---------------------------------------------------------------------------
+
+export async function bulkDeleteProducts(
+  ids: string[]
+): Promise<{ ok: true; deleted: number } | { error: string }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const storePlan = (store as unknown as { plan: PlanId | null }).plan;
+  const { allowBulkProducts } = getPlanLimits(storePlan);
+  if (!allowBulkProducts) {
+    return { error: 'Tu plan no incluye edición masiva de productos. Pasate a Pro para habilitarla.' };
+  }
+
+  if (ids.length === 0) {
+    return { error: 'No hay productos seleccionados.' };
+  }
+
+  const admin = createAdminClient();
+
+  // Todos los ids recibidos deben pertenecer a la tienda del usuario, o se
+  // rechaza la operación entera sin borrar nada.
+  const { data: owned } = await admin
+    .from('products')
+    .select('id, image_urls')
+    .eq('store_id', store.id)
+    .in('id', ids);
+  const ownedById = new Map((owned ?? []).map((p) => [p.id, p]));
+  if (ids.some((id) => !ownedById.has(id))) {
+    return { error: 'Uno o más productos no pertenecen a tu tienda.' };
+  }
+
+  // Borrado de imágenes de Storage, best-effort — igual que deleteStoreProduct.
+  const paths = ids.flatMap((id) => {
+    const imageUrls = ownedById.get(id)?.image_urls;
+    if (!imageUrls) return [];
+    return imageUrls
+      .map((url) => {
+        try {
+          const u = new URL(url);
+          const match = u.pathname.match(/\/product-images\/(.+)$/);
+          return match ? match[1] : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter((p): p is string => p !== null);
+  });
+
+  if (paths.length > 0) {
+    try {
+      await admin.storage.from('product-images').remove(paths);
+    } catch (e) {
+      console.warn('[bulkDeleteProducts] storage remove failed:', e);
+    }
+  }
+
+  const { error } = await admin.from('products').delete().eq('store_id', store.id).in('id', ids);
+
+  if (error) return { error: 'No se pudieron borrar los productos.' };
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true, deleted: ids.length };
+}
+
+// ---------------------------------------------------------------------------
 // duplicateProduct — INSERT a copy of an existing product with "(copia N)" suffix.
 // ---------------------------------------------------------------------------
 

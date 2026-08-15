@@ -45,6 +45,29 @@ El sistema SHALL permitir seleccionar varias filas de la grilla, incluida una ac
 - **WHEN** no hay ninguna fila seleccionada
 - **THEN** las acciones en lote no están disponibles
 
+### Requirement: Borrado masivo de productos desde la grilla
+El sistema SHALL permitir borrar en lote los productos seleccionados en la grilla de edición masiva. El borrado SHALL requerir confirmación explícita del dueño antes de ejecutarse y SHALL indicar en el mensaje de confirmación cuántos productos se van a eliminar y que la acción no se puede deshacer. El sistema SHALL verificar en el servidor que todos los productos incluidos en el borrado en lote pertenecen a la tienda del usuario autenticado, rechazando la operación completa sin borrar nada si alguno no le pertenece. Al completarse el borrado, las filas eliminadas SHALL dejar de mostrarse en la grilla y SHALL dejar de contar como cambios pendientes sin guardar.
+
+#### Scenario: Borrado exitoso de varios productos
+- **WHEN** el dueño selecciona 5 productos y confirma el borrado
+- **THEN** los 5 productos se eliminan, dejan de aparecer en la grilla y el sistema confirma cuántos se borraron
+
+#### Scenario: La confirmación es obligatoria
+- **WHEN** el dueño hace clic en "Eliminar" con productos seleccionados
+- **THEN** el sistema no borra nada hasta que el dueño confirme la acción en el diálogo de confirmación
+
+#### Scenario: Cancelar la confirmación no borra nada
+- **WHEN** el dueño abre el diálogo de confirmación de borrado y lo cancela
+- **THEN** ningún producto se elimina y la selección se mantiene intacta
+
+#### Scenario: Producto de otra tienda en el borrado en lote
+- **WHEN** un borrado en lote incluye el identificador de un producto que no pertenece a la tienda del usuario
+- **THEN** el servidor rechaza la operación completa y no borra ningún producto
+
+#### Scenario: Las filas borradas no cuentan como cambios pendientes
+- **WHEN** el dueño tenía cambios sin guardar en productos que luego borra en lote
+- **THEN** tras el borrado esos productos ya no figuran en el contador de cambios sin guardar de la grilla
+
 ### Requirement: Guardado explícito de los cambios pendientes
 El sistema SHALL acumular las ediciones en la interfaz y persistirlas únicamente cuando el dueño confirma el guardado, enviando en una sola operación solamente los productos modificados. El sistema SHALL indicar de forma visible cuántos productos tienen cambios sin guardar, SHALL permitir descartarlos, y SHALL advertir antes de abandonar la grilla con cambios pendientes. El sistema NO SHALL guardar automáticamente cada campo al editarlo.
 
