@@ -74,44 +74,13 @@ function HeroSkeleton() {
   );
 }
 
-function ProductCardSkeleton() {
+/** Sections render collapsed, so the skeleton is just the header row. */
+function SectionSkeleton() {
   return (
-    <div
-      className="flex flex-col rounded-2xl overflow-hidden border border-gray-100 dark:border-gray-800"
-      aria-hidden="true"
-    >
-      {/* 3:4 image area */}
-      <SkeletonPulse className="w-full rounded-none" style={{ aspectRatio: "3/4" }} />
-      {/* Info */}
-      <div className="flex flex-col gap-2 p-3 sm:p-4">
-        {/* Product name */}
-        <SkeletonPulse className="h-4 w-4/5" />
-        <SkeletonPulse className="h-3 w-3/5" />
-        {/* Price + button row */}
-        <div className="flex items-center justify-between gap-2 mt-1">
-          <SkeletonPulse className="h-5 w-16" />
-          <SkeletonPulse className="h-7 w-20 rounded-full" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SectionSkeleton({ cardCount = 4 }: { cardCount?: number }) {
-  return (
-    <div className="flex flex-col gap-6 sm:gap-8">
-      {/* Section header: title + rule */}
-      <div className="flex items-center gap-3">
-        <SkeletonPulse className="h-6 w-36" />
-        <div className="h-px flex-1 bg-gray-100 dark:bg-gray-800 rounded-none" aria-hidden="true" />
-        <SkeletonPulse className="h-4 w-4 rounded-full shrink-0" />
-      </div>
-      {/* Product grid — 2 cols mobile / 3 md / 4 lg */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
-        {Array.from({ length: cardCount }).map((_, i) => (
-          <ProductCardSkeleton key={i} />
-        ))}
-      </div>
+    <div className="flex items-center gap-3">
+      <SkeletonPulse className="h-6 w-36" />
+      <div className="h-px flex-1 bg-gray-100 dark:bg-gray-800 rounded-none" aria-hidden="true" />
+      <SkeletonPulse className="h-4 w-4 rounded-full shrink-0" />
     </div>
   );
 }
@@ -121,10 +90,12 @@ export default function StoreLoading() {
     <div className="min-h-screen bg-white dark:bg-gray-950">
       <HeaderSkeleton />
       <HeroSkeleton />
-      <main className="mx-auto w-full max-w-6xl px-4 sm:px-6 md:px-8 py-10 sm:py-14 flex flex-col gap-14 sm:gap-20">
-        {/* Render 2 section skeletons — common case covers most stores */}
-        <SectionSkeleton cardCount={4} />
-        <SectionSkeleton cardCount={4} />
+      <main className="mx-auto w-full max-w-6xl px-4 sm:px-6 md:px-8 py-10 sm:py-14 flex flex-col gap-6 sm:gap-8">
+        {/* Collapsed section rows — common case covers most stores */}
+        <SectionSkeleton />
+        <SectionSkeleton />
+        <SectionSkeleton />
+        <SectionSkeleton />
       </main>
     </div>
   );

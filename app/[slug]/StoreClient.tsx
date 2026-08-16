@@ -11,6 +11,7 @@ import {
   Minus,
   Trash2,
   ChevronRight,
+  ChevronDown,
   Search,
   Sun,
   Moon,
@@ -258,6 +259,7 @@ function StoreHeader({
   sections,
   searchQuery,
   onSearchChange,
+  onSectionSelect,
 }: {
   storeName: string;
   storeSlug: string;
@@ -266,6 +268,8 @@ function StoreHeader({
   sections: SectionLite[];
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  /** Expands the target section before the anchor jump lands on it. */
+  onSectionSelect: (id: string) => void;
 }) {
   const { totalItems, openCart } = useCart();
   const { isDark, toggle } = useDarkMode(storeSlug);
@@ -408,6 +412,7 @@ function StoreHeader({
               <a
                 key={s.id}
                 href={`#${s.id}`}
+                onClick={() => onSectionSelect(s.id)}
                 className="store-nav-link px-3 py-1.5 text-sm font-medium rounded-full transition-colors cursor-pointer"
                 style={{ color: "var(--store-ink-secondary)" }}
               >
@@ -463,6 +468,7 @@ function StoreHeader({
             <a
               key={s.id}
               href={`#${s.id}`}
+              onClick={() => onSectionSelect(s.id)}
               className="shrink-0 px-3 py-1 text-xs font-medium rounded-full cursor-pointer whitespace-nowrap"
               style={{
                 background: "var(--store-border)",
@@ -1729,6 +1735,8 @@ function SectionBlock({
   onOpenModal,
   variantsByProduct,
   highlightedProductId,
+  isOpen,
+  onToggle,
 }: {
   section: UISection;
   products: UIProduct[];
@@ -1738,17 +1746,26 @@ function SectionBlock({
   onOpenModal: (p: UIProduct) => void;
   variantsByProduct: Record<string, ProductVariantData>;
   highlightedProductId?: string | null;
+  isOpen: boolean;
+  onToggle: (id: string) => void;
 }) {
   const hasDirectProducts = products.length > 0;
   const hasSubsections = subsections.length > 0;
-  const hasAnyContent =
-    hasDirectProducts ||
-    subsections.some((sub) => (productsBySection.get(sub.id) ?? []).length > 0);
+  const totalCount =
+    products.length +
+    subsections.reduce((acc, sub) => acc + (productsBySection.get(sub.id) ?? []).length, 0);
+  const hasAnyContent = totalCount > 0;
 
   return (
     <section id={section.id} className="scroll-mt-24" aria-labelledby={`section-${section.id}`}>
-      {/* Section header */}
-      <div className="flex items-center gap-3 mb-6 sm:mb-8">
+      {/* Section header — doubles as the accordion toggle (sections start collapsed) */}
+      <button
+        type="button"
+        onClick={() => onToggle(section.id)}
+        aria-expanded={isOpen}
+        aria-controls={`section-panel-${section.id}`}
+        className={`flex w-full items-center gap-3 text-left cursor-pointer${isOpen ? " mb-6 sm:mb-8" : ""}`}
+      >
         <h2
           id={`section-${section.id}`}
           className="text-xl sm:text-2xl font-bold"
@@ -1756,78 +1773,90 @@ function SectionBlock({
         >
           {section.name}
         </h2>
+        {hasAnyContent && (
+          <span
+            className="shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold"
+            style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
+          >
+            {totalCount}
+          </span>
+        )}
         <div
           className="h-px flex-1"
           style={{ background: "var(--store-border)" }}
           aria-hidden="true"
         />
-        <ChevronRight
-          className="h-4 w-4 shrink-0"
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 transition-transform${isOpen ? " rotate-180" : ""}`}
           aria-hidden="true"
           style={{ color: "var(--store-border-strong)" }}
         />
-      </div>
+      </button>
 
-      {/* Empty-section placeholder — only for top-level sections */}
-      {!hasAnyContent && (
-        <div
-          className="flex items-center justify-center rounded-xl border py-10 sm:py-12"
-          style={{ borderColor: "var(--store-border)" }}
-        >
-          <p
-            className="text-sm sm:text-base font-medium"
-            style={{ color: "var(--store-ink-secondary)" }}
-          >
-            Próximamente
-          </p>
-        </div>
-      )}
+      {isOpen && (
+        <div id={`section-panel-${section.id}`} className="pb-4 sm:pb-6">
+          {/* Empty-section placeholder — only for top-level sections */}
+          {!hasAnyContent && (
+            <div
+              className="flex items-center justify-center rounded-xl border py-10 sm:py-12"
+              style={{ borderColor: "var(--store-border)" }}
+            >
+              <p
+                className="text-sm sm:text-base font-medium"
+                style={{ color: "var(--store-ink-secondary)" }}
+              >
+                Próximamente
+              </p>
+            </div>
+          )}
 
-      {/* Direct products (if any) */}
-      {hasDirectProducts && (
-        <div className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6${hasSubsections ? " mb-10 sm:mb-12" : ""}`}>
-          {products.map((p) => (
-            <ProductCard
-              key={p.id}
-              product={p}
-              accentColor={accentColor}
-              onOpenModal={onOpenModal}
-              variantData={variantsByProduct[p.id]}
-              isHighlighted={highlightedProductId === p.id}
-            />
-          ))}
-        </div>
-      )}
+          {/* Direct products (if any) */}
+          {hasDirectProducts && (
+            <div className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6${hasSubsections ? " mb-10 sm:mb-12" : ""}`}>
+              {products.map((p) => (
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  accentColor={accentColor}
+                  onOpenModal={onOpenModal}
+                  variantData={variantsByProduct[p.id]}
+                  isHighlighted={highlightedProductId === p.id}
+                />
+              ))}
+            </div>
+          )}
 
-      {/* Subsections with sub-headers */}
-      {hasSubsections && (
-        <div className="flex flex-col gap-10 sm:gap-12">
-          {subsections.map((sub) => {
-            const subProducts = productsBySection.get(sub.id) ?? [];
-            if (subProducts.length === 0) return null;
-            return (
-              <div key={sub.id} id={sub.id} className="scroll-mt-24">
-                <h3
-                  className="text-base sm:text-lg font-semibold mb-4 sm:mb-5"
-                  style={{ color: "var(--store-ink-secondary)", fontFamily: "var(--font-rubik, Rubik)" }}
-                >
-                  {sub.name}
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
-                  {subProducts.map((p) => (
-                    <ProductCard
-                      key={p.id}
-                      product={p}
-                      accentColor={accentColor}
-                      onOpenModal={onOpenModal}
-                      variantData={variantsByProduct[p.id]}
-                      isHighlighted={highlightedProductId === p.id}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+          {/* Subsections with sub-headers */}
+          {hasSubsections && (
+            <div className="flex flex-col gap-10 sm:gap-12">
+              {subsections.map((sub) => {
+                const subProducts = productsBySection.get(sub.id) ?? [];
+                if (subProducts.length === 0) return null;
+                return (
+                  <div key={sub.id} id={sub.id} className="scroll-mt-24">
+                    <h3
+                      className="text-base sm:text-lg font-semibold mb-4 sm:mb-5"
+                      style={{ color: "var(--store-ink-secondary)", fontFamily: "var(--font-rubik, Rubik)" }}
+                    >
+                      {sub.name}
+                    </h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
+                      {subProducts.map((p) => (
+                        <ProductCard
+                          key={p.id}
+                          product={p}
+                          accentColor={accentColor}
+                          onOpenModal={onOpenModal}
+                          variantData={variantsByProduct[p.id]}
+                          isHighlighted={highlightedProductId === p.id}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -2049,6 +2078,31 @@ export default function StoreClient({
     updateUrl(filters, modalProduct?.id ?? null);
   }, [filters, modalProduct, updateUrl]);
 
+  // ─── Collapsed sections ─────────────────────────────────────────────────────
+  // Sections render collapsed by default; the visitor expands what interests
+  // them. A deep-linked product starts with its own section already open so the
+  // scroll-into-view effect below finds the card mounted.
+  const [openSectionIds, setOpenSectionIds] = useState<Set<string>>(() => {
+    if (!initialProductId) return new Set();
+    const row = productRows.find((p) => p.id === initialProductId);
+    const sec = row?.section_id ? sectionRows.find((s) => s.id === row.section_id) : undefined;
+    if (!sec) return new Set();
+    return new Set([sec.parent_id ?? sec.id]);
+  });
+
+  const toggleSection = useCallback((id: string) => {
+    setOpenSectionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const expandSection = useCallback((id: string) => {
+    setOpenSectionIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+
   // ─── Highlight state ─────────────────────────────────────────────────────────
 
   const [highlightedProductId, setHighlightedProductId] = useState<string | null>(null);
@@ -2109,6 +2163,7 @@ export default function StoreClient({
         sections={sectionLites}
         searchQuery={filters.q}
         onSearchChange={(q) => setFilters((prev) => ({ ...prev, q }))}
+        onSectionSelect={expandSection}
       />
 
       <StoreHero
@@ -2196,7 +2251,7 @@ export default function StoreClient({
           )
         ) : (
           /* Default: show by section (level-1 only), keep gap for visual separation */
-          <div className="flex flex-col gap-14 sm:gap-20">
+          <div className="flex flex-col gap-6 sm:gap-8">
             {sections
               .filter((s) => s.parentId === null)
               .map((s) => {
@@ -2213,6 +2268,8 @@ export default function StoreClient({
                     onOpenModal={openModal}
                     variantsByProduct={variantsByProduct}
                     highlightedProductId={highlightedProductId}
+                    isOpen={openSectionIds.has(s.id)}
+                    onToggle={toggleSection}
                   />
                 );
               })}
