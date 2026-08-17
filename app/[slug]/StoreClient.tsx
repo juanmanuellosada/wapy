@@ -1735,7 +1735,7 @@ function SectionBlock({
   onOpenModal,
   variantsByProduct,
   highlightedProductId,
-  isOpen,
+  openIds,
   onToggle,
 }: {
   section: UISection;
@@ -1746,9 +1746,10 @@ function SectionBlock({
   onOpenModal: (p: UIProduct) => void;
   variantsByProduct: Record<string, ProductVariantData>;
   highlightedProductId?: string | null;
-  isOpen: boolean;
+  openIds: Set<string>;
   onToggle: (id: string) => void;
 }) {
+  const isOpen = openIds.has(section.id);
   const hasDirectProducts = products.length > 0;
   const hasSubsections = subsections.length > 0;
   const totalCount =
@@ -1826,32 +1827,63 @@ function SectionBlock({
             </div>
           )}
 
-          {/* Subsections with sub-headers */}
+          {/* Subsections — second-level accordion, collapsed by default */}
           {hasSubsections && (
-            <div className="flex flex-col gap-10 sm:gap-12">
+            <div className="flex flex-col gap-4 sm:gap-6">
               {subsections.map((sub) => {
                 const subProducts = productsBySection.get(sub.id) ?? [];
                 if (subProducts.length === 0) return null;
+                const subOpen = openIds.has(sub.id);
                 return (
                   <div key={sub.id} id={sub.id} className="scroll-mt-24">
-                    <h3
-                      className="text-base sm:text-lg font-semibold mb-4 sm:mb-5"
-                      style={{ color: "var(--store-ink-secondary)", fontFamily: "var(--font-rubik, Rubik)" }}
+                    <button
+                      type="button"
+                      onClick={() => onToggle(sub.id)}
+                      aria-expanded={subOpen}
+                      aria-controls={`section-panel-${sub.id}`}
+                      className={`flex w-full items-center gap-3 text-left cursor-pointer${subOpen ? " mb-4 sm:mb-5" : ""}`}
                     >
-                      {sub.name}
-                    </h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6">
-                      {subProducts.map((p) => (
-                        <ProductCard
-                          key={p.id}
-                          product={p}
-                          accentColor={accentColor}
-                          onOpenModal={onOpenModal}
-                          variantData={variantsByProduct[p.id]}
-                          isHighlighted={highlightedProductId === p.id}
-                        />
-                      ))}
-                    </div>
+                      <h3
+                        className="text-base sm:text-lg font-semibold"
+                        style={{ color: "var(--store-ink-secondary)", fontFamily: "var(--font-rubik, Rubik)" }}
+                      >
+                        {sub.name}
+                      </h3>
+                      <span
+                        className="shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold"
+                        style={{ background: "var(--store-border)", color: "var(--store-ink-secondary)" }}
+                      >
+                        {subProducts.length}
+                      </span>
+                      <div
+                        className="h-px flex-1"
+                        style={{ background: "var(--store-border)" }}
+                        aria-hidden="true"
+                      />
+                      <ChevronDown
+                        className={`h-3.5 w-3.5 shrink-0 transition-transform${subOpen ? " rotate-180" : ""}`}
+                        aria-hidden="true"
+                        style={{ color: "var(--store-border-strong)" }}
+                      />
+                    </button>
+
+                    {subOpen && (
+                      <div
+                        id={`section-panel-${sub.id}`}
+                        className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-5 lg:gap-6"
+                      >
+                        {subProducts.map((p) => (
+                          <ProductCard
+                            key={p.id}
+                            product={p}
+                            accentColor={accentColor}
+                            onOpenModal={onOpenModal}
+                            variantData={variantsByProduct[p.id]}
+                            isHighlighted={highlightedProductId === p.id}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2087,7 +2119,8 @@ export default function StoreClient({
     const row = productRows.find((p) => p.id === initialProductId);
     const sec = row?.section_id ? sectionRows.find((s) => s.id === row.section_id) : undefined;
     if (!sec) return new Set();
-    return new Set([sec.parent_id ?? sec.id]);
+    if (!sec.parent_id) return new Set([sec.id]);
+    return new Set([sec.parent_id, sec.id]);
   });
 
   const toggleSection = useCallback((id: string) => {
@@ -2268,7 +2301,7 @@ export default function StoreClient({
                     onOpenModal={openModal}
                     variantsByProduct={variantsByProduct}
                     highlightedProductId={highlightedProductId}
-                    isOpen={openSectionIds.has(s.id)}
+                    openIds={openSectionIds}
                     onToggle={toggleSection}
                   />
                 );
