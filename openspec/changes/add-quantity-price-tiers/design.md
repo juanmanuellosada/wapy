@@ -58,13 +58,29 @@ solo display.
 `CartContext` agrupa por `productId`, suma cantidades y recalcula el unitario de cada línea con el mismo
 helper puro que usa el servidor.
 
-## Decisión 5 — En la edición masiva el lote se expresa en porcentaje
+## Decisión 5 — El lote soporta porcentaje y precio fijo, y acumula tramos
 
-Aplicar un `unit_price_cents` absoluto a 200 productos de precios distintos no tiene sentido. La acción en
-lote es "**-X% desde N unidades**" y calcula, para cada producto seleccionado,
-`unit_price_cents = round(price_cents × (1 - X/100))`. Reemplaza los tramos existentes de las filas
-seleccionadas por ese único tramo (con un segundo botón "Quitar tramos" para limpiar). La edición fina
-multi-tramo sigue estando en el modal de producto, accesible desde la grilla.
+La acción en lote nació solo con porcentaje, porque aplicar un `unit_price_cents` absoluto a 200
+productos de precios distintos no tiene sentido. Pero el caso inverso también es real: un catálogo
+donde todos los productos valen lo mismo y el dueño quiere la misma escalera exacta en todos. Así que
+el lote tiene tres modos, elegidos con un selector:
+
+| Modo | Unitario resultante | Cuándo sirve |
+| --- | --- | --- |
+| `% off` | `round(precio_de_la_fila × (100 − X) / 100)` | Productos de precios distintos |
+| `$ por unidad` | el valor tal cual | Precios iguales, el dueño piensa en el unitario |
+| `$ total del tramo` | `round(total / cantidad)` | Precios iguales, el dueño piensa en "3 x $2800" |
+
+Solo el modo porcentaje mira el precio de cada fila; los otros dos aplican el mismo número a toda la
+selección. El porcentaje acepta decimales (`6,67`) porque las escaleras derivadas de totales redondos
+casi nunca dan porcentajes enteros.
+
+**El botón agrega, no reemplaza.** Aplicar "desde 3" y después "desde 5" deja los dos tramos; solo se
+pisa un tramo existente cuando tiene la misma cantidad mínima. Es la única forma de armar una escalera
+completa desde el lote, y hace la acción idempotente. "Quitar tramos" limpia todos los de la selección.
+
+La validación de la fila (monotonía, tramo más barato que el precio regular) corre después de cada
+aplicación, así que una escalera incoherente se marca en rojo en la grilla antes de guardar.
 
 ## Decisión 6 — Sin gating por plan
 

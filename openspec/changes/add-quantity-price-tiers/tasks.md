@@ -32,6 +32,7 @@
 
 - [x] 6.1 En `app/dashboard/components/BulkEditGrid.tsx`: columna "Tramos" con resumen por fila (ej. "3+ · 6+") y edición fina delegada al modal
 - [x] 6.2 Acción en lote "-X% desde N unidades" que calcula el unitario de cada seleccionado desde su propio precio, + botón "Quitar tramos"
+- [x] 6.4 Modos `$ por unidad` y `$ total del tramo` además del porcentaje, y que el botón **agregue** el tramo en vez de reemplazar la escalera (ver design, Decisión 5)
 - [x] 6.3 Incluir los tramos en `toBulkUpdateRow` / detección de dirty / descarte de cambios
 
 ## 7. Storefront — propagación y display

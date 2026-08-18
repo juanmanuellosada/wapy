@@ -55,6 +55,32 @@ function tiersKey(tiers: PriceTier[]): string {
     .join('|');
 }
 
+/**
+ * Modo del tramo en lote:
+ *  · percent → cada fila calcula su unitario desde su propio precio (sirve con precios distintos)
+ *  · unit    → precio por unidad fijo, igual para toda la selección
+ *  · total   → precio total del tramo fijo; el unitario sale de dividirlo por la cantidad
+ */
+type BulkTierMode = 'percent' | 'unit' | 'total';
+
+const BULK_TIER_MODE_OPTIONS: SelectOption<BulkTierMode>[] = [
+  { value: 'percent', label: '% off' },
+  { value: 'unit', label: '$ por unidad' },
+  { value: 'total', label: '$ total del tramo' },
+];
+
+const BULK_TIER_PLACEHOLDER: Record<BulkTierMode, string> = {
+  percent: '10',
+  unit: '933,33',
+  total: '2800',
+};
+
+/** Parsea un porcentaje aceptando decimales con coma ("6,67"). NaN si no es válido. */
+function parsePercent(display: string): number {
+  const cleaned = display.replace(/[^0-9,.]/g, '').replace(',', '.');
+  return parseFloat(cleaned);
+}
+
 /** Resumen corto de los tramos para la celda de la grilla. */
 function tiersSummary(tiers: PriceTier[]): string {
   if (tiers.length === 0) return 'Sin tramos';
@@ -421,8 +447,9 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
   const [bulkPrice, setBulkPrice] = useState('');
   const [bulkStock, setBulkStock] = useState('');
   const [bulkSectionId, setBulkSectionId] = useState('');
-  const [bulkTierPercent, setBulkTierPercent] = useState('');
   const [bulkTierQty, setBulkTierQty] = useState('3');
+  const [bulkTierMode, setBulkTierMode] = useState<BulkTierMode>('percent');
+  const [bulkTierValue, setBulkTierValue] = useState('');
 
   const remainingCount = useMemo(
     () => productIds.reduce((n, id) => n + (rowsById[id] ? 1 : 0), 0),
@@ -510,30 +537,18 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
   );
 
   /**
-   * Aplica un tramo en lote a la selección. Se expresa en PORCENTAJE porque un
-   * precio unitario absoluto no tiene sentido sobre productos de precios distintos:
-   * cada fila calcula su propio unitario desde su precio actual (design, Decisión 5).
-   * `tiers === null` limpia los tramos de la selección.
+   * Aplica un cambio de tramos a cada fila seleccionada. Recibe una función para
+   * que cada fila pueda calcular sus tramos desde su propio precio.
    */
-  const applyTiersToSelected = useCallback(
-    (minQuantity: number | null, percentOff: number | null) => {
+  const patchSelectedTiers = useCallback(
+    (compute: (row: EditableFields) => PriceTier[]) => {
       if (selectedIds.size === 0) return;
       setRowsById((prev) => {
         const next = { ...prev };
         for (const id of selectedIds) {
           const current = next[id];
           if (!current) continue;
-          let tiers: PriceTier[] = [];
-          if (minQuantity !== null && percentOff !== null) {
-            const priceCents = parsePriceDisplay(current.price_display);
-            tiers = [
-              {
-                min_quantity: minQuantity,
-                unit_price_cents: Math.round((priceCents * (100 - percentOff)) / 100),
-              },
-            ];
-          }
-          const nextFields: EditableFields = { ...current, price_tiers: tiers };
+          const nextFields: EditableFields = { ...current, price_tiers: compute(current) };
           const baseline = baselineRef.current[id];
           next[id] = {
             ...nextFields,
@@ -548,6 +563,28 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
     },
     [selectedIds]
   );
+
+  /**
+   * Agrega (o pisa, si ya existe uno con esa misma cantidad mínima) UN tramo en la
+   * selección. Es acumulativo a propósito: aplicar "desde 3" y después "desde 5" deja
+   * los dos tramos, que es la única forma de armar una escalera completa desde el lote.
+   *
+   * `unitCentsFor` recibe el precio de cada fila, así el modo porcentaje sirve para
+   * productos de precios distintos y los modos absolutos ignoran ese precio.
+   */
+  const applyTierToSelected = useCallback(
+    (minQuantity: number, unitCentsFor: (priceCents: number) => number) => {
+      patchSelectedTiers((row) =>
+        sortTiers([
+          ...row.price_tiers.filter((t) => t.min_quantity !== minQuantity),
+          { min_quantity: minQuantity, unit_price_cents: unitCentsFor(parsePriceDisplay(row.price_display)) },
+        ])
+      );
+    },
+    [patchSelectedTiers]
+  );
+
+  const clearTiersFromSelected = useCallback(() => patchSelectedTiers(() => []), [patchSelectedTiers]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -822,45 +859,70 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
                 className={`${inputClass} w-16`}
               />
             </div>
+            <div className="w-40">
+              <label htmlFor="bulk-tier-mode" className="block text-[10px] font-semibold uppercase tracking-wide text-white/40 mb-1">
+                Tramo por
+              </label>
+              <Select
+                id="bulk-tier-mode"
+                value={bulkTierMode}
+                onChange={(v) => setBulkTierMode(v)}
+                options={BULK_TIER_MODE_OPTIONS}
+                ariaLabel="Cómo se expresa el tramo en lote"
+              />
+            </div>
             <div>
-              <label htmlFor="bulk-tier-percent" className="block text-[10px] font-semibold uppercase tracking-wide text-white/40 mb-1">
-                % off
+              <label htmlFor="bulk-tier-value" className="block text-[10px] font-semibold uppercase tracking-wide text-white/40 mb-1">
+                {bulkTierMode === 'percent' ? '% off' : '$'}
               </label>
               <input
-                id="bulk-tier-percent"
-                type="number"
-                min="1"
-                max="99"
-                step="1"
-                placeholder="10"
-                value={bulkTierPercent}
-                onChange={(e) => setBulkTierPercent(e.target.value)}
-                className={`${inputClass} w-16`}
+                id="bulk-tier-value"
+                type="text"
+                inputMode="decimal"
+                placeholder={BULK_TIER_PLACEHOLDER[bulkTierMode]}
+                value={bulkTierValue}
+                onChange={(e) => setBulkTierValue(e.target.value)}
+                className={`${inputClass} w-24`}
               />
             </div>
             <button
               type="button"
               onClick={() => {
                 const qty = parseInt(bulkTierQty, 10);
-                const percent = parseInt(bulkTierPercent, 10);
                 if (!Number.isInteger(qty) || qty < 2) {
                   toast.error('La cantidad desde la que aplica el tramo tiene que ser 2 o más.');
                   return;
                 }
-                if (!Number.isInteger(percent) || percent < 1 || percent > 99) {
-                  toast.error('El descuento del tramo tiene que estar entre 1% y 99%.');
-                  return;
+
+                if (bulkTierMode === 'percent') {
+                  const percent = parsePercent(bulkTierValue);
+                  if (!Number.isFinite(percent) || percent <= 0 || percent >= 100) {
+                    toast.error('El descuento del tramo tiene que estar entre 0% y 100%.');
+                    return;
+                  }
+                  applyTierToSelected(qty, (priceCents) =>
+                    Math.round((priceCents * (100 - percent)) / 100)
+                  );
+                } else {
+                  const cents = parsePriceDisplay(bulkTierValue);
+                  if (cents <= 0) {
+                    toast.error('Poné un precio mayor a 0 para el tramo.');
+                    return;
+                  }
+                  // 'unit' es el precio por unidad tal cual; 'total' se reparte entre las
+                  // unidades del tramo (entero, así el unitario sigue siendo cobrable por MP).
+                  const unitCents = bulkTierMode === 'unit' ? cents : Math.round(cents / qty);
+                  applyTierToSelected(qty, () => unitCents);
                 }
-                applyTiersToSelected(qty, percent);
               }}
-              disabled={bulkTierPercent.trim() === ''}
+              disabled={bulkTierValue.trim() === ''}
               className="h-9 px-3 rounded-lg text-xs font-semibold text-[#16222E] bg-[#F5C84B] hover:bg-[#FAE08A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
-              Aplicar tramo
+              Agregar tramo
             </button>
             <button
               type="button"
-              onClick={() => applyTiersToSelected(null, null)}
+              onClick={clearTiersFromSelected}
               className="h-9 px-3 rounded-lg text-xs font-semibold text-white/60 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
             >
               Quitar tramos
