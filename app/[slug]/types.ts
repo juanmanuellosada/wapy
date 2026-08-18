@@ -1,6 +1,8 @@
 // Shared UI types for the public storefront.
 // These are local-only representations derived from the Supabase row types.
 
+import type { PriceTier } from "@/lib/store/pricing";
+
 export interface UIProduct {
   id: string;
   sectionId: string;
@@ -14,4 +16,5 @@ export interface UIProduct {
   stock: number | null; // null = no tracking, 0 = out of stock, N = N units available
   min_quantity: number; // minimum units per order (default 1)
   qty_step: number; // increment step (default 1)
+  priceTiers: PriceTier[]; // tramos por cantidad, ordenados asc; [] = sin tramos
 }

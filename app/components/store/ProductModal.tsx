@@ -12,6 +12,14 @@ import { deleteImage } from '@/lib/onboarding/storage';
 import { uploadProductImageAction } from '@/lib/onboarding/upload-actions';
 import { saveStoreProduct } from '@/lib/store/actions';
 import type { Section, Product } from '@/lib/onboarding/state';
+import type { PriceTier } from '@/lib/store/pricing';
+import {
+  PriceTiersEditor,
+  tiersToDrafts,
+  draftsToTiers,
+  firstTierIssue,
+  type TierDraft,
+} from './PriceTiersEditor';
 
 const productFormSchema = z.object({
   name: z.string().min(1, 'El nombre es requerido').max(120, 'Máximo 120 caracteres'),
@@ -38,10 +46,16 @@ type Props = {
   storeId: string;
   sections: Section[];
   product?: Product | null; // null = new
+  /**
+   * Tramos por cantidad ya guardados del producto. `undefined` = este caller no
+   * administra tramos (ej. el wizard de onboarding): el editor no se muestra y el
+   * guardado no toca los tramos existentes. Un array (aunque sea vacío) sí los administra.
+   */
+  priceTiers?: PriceTier[];
   nextPosition: number;
   maxImagesPerProduct: number;
   allowVariants: boolean;
-  onSaved: (product: Product) => void;
+  onSaved: (product: Product, priceTiers: PriceTier[]) => void;
   onClose: () => void;
 };
 
@@ -56,7 +70,8 @@ function parsePriceCents(display: string): number {
   return Math.round(num * 100);
 }
 
-export function ProductModal({ storeId, sections, product, nextPosition, maxImagesPerProduct, allowVariants, onSaved, onClose }: Props) {
+export function ProductModal({ storeId, sections, product, priceTiers, nextPosition, maxImagesPerProduct, allowVariants, onSaved, onClose }: Props) {
+  const managesTiers = priceTiers !== undefined;
   const isEdit = !!product;
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
   const [saving, setSaving] = useState(false);
@@ -64,6 +79,7 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
   // Variants state: has variants → hide stock input, show read-only aggregate
   const [hasVariants, setHasVariants] = useState(false);
   const [variantsTotalStock, setVariantsTotalStock] = useState(0);
+  const [tierDrafts, setTierDrafts] = useState<TierDraft[]>(() => tiersToDrafts(priceTiers ?? []));
 
   const handleVariantsChange = useCallback(
     (hv: boolean, total: number) => {
@@ -129,6 +145,19 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
     const min_quantity = Math.max(1, parseInt(data.min_quantity ?? '1', 10) || 1);
     const qty_step = Math.max(1, parseInt(data.qty_step ?? '1', 10) || 1);
 
+    // Los tramos se validan contra el precio recién tipeado, no contra el guardado.
+    // Si este caller no administra tramos, se manda undefined y el server los preserva.
+    let price_tiers: PriceTier[] | undefined;
+    if (managesTiers) {
+      const tierIssue = firstTierIssue(tierDrafts, price_cents);
+      if (tierIssue) {
+        setServerError(tierIssue);
+        setSaving(false);
+        return;
+      }
+      price_tiers = draftsToTiers(tierDrafts);
+    }
+
     const result = await saveStoreProduct({
       id: product?.id,
       name: data.name,
@@ -142,6 +171,7 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
       is_active: true,
       min_quantity,
       qty_step,
+      price_tiers,
     });
 
     if ('error' in result) {
@@ -169,7 +199,7 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
       ...(({ min_quantity, qty_step } as unknown as object)),
     } as unknown as Product;
 
-    onSaved(savedProduct);
+    onSaved(savedProduct, price_tiers ?? []);
   };
 
   return (
@@ -307,6 +337,15 @@ export function ProductModal({ storeId, sections, product, nextPosition, maxImag
               <p role="alert" className="text-xs text-red-400 mt-1">{errors.promo_price_display.message}</p>
             )}
           </div>
+
+          {/* Descuento por cantidad (tramos) */}
+          {managesTiers && (
+            <PriceTiersEditor
+              drafts={tierDrafts}
+              onChange={setTierDrafts}
+              priceCents={parsePriceCents(watch('price_display') ?? '')}
+            />
+          )}
 
           {/* Min quantity + qty step */}
           {(() => {

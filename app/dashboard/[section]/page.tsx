@@ -13,6 +13,7 @@ import { OrdersStats } from '../components/OrdersStats';
 import { SubscriptionPanel } from '../components/SubscriptionPanel';
 import { CouponsPanel } from '../components/CouponsPanel';
 import { listOrders, getOrderStats } from '@/lib/store/orders/actions';
+import { getProductPriceTiers } from '@/lib/store/actions';
 import { getPlanLimits, isUnlimited, type PlanId } from '@/lib/plans/limits';
 import { getSubscriptionState, daysLeftInTrial } from '@/lib/subscription/state';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
@@ -92,6 +93,10 @@ export default async function DashboardSectionPage({
   const sections: Section[] = sectionsResult.data ?? [];
   const products: Product[] = productsResult.data ?? [];
 
+  // Tramos de precio por cantidad: solo hacen falta en la pantalla de productos.
+  const priceTiersByProduct =
+    section === 'products' ? await getProductPriceTiers(products.map((p) => p.id)) : {};
+
   const [ordersResult, statsResult] = section === 'orders'
     ? await Promise.all([listOrders({}), getOrderStats('30d')])
     : [null, null];
@@ -165,6 +170,7 @@ export default async function DashboardSectionPage({
         <ProductsPanel
           store={store}
           initialProducts={products}
+          priceTiersByProduct={priceTiersByProduct}
           sections={sections}
           productsCount={products.length}
           productsLimit={limits.maxProducts}

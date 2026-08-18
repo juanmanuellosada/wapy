@@ -1,21 +1,16 @@
 ---
 name: wapy-resend-email-system
-description: Sistema de email Resend con Send Email Hook de Supabase; activación del hook es un paso manual PENDIENTE en el dashboard
-metadata: 
-  node_type: memory
+description: Auth emails por Resend vía Send Email Hook de Supabase; el hook YA está activo y los links pasan por /auth/confirm con token_hash
+metadata:
   type: project
-  originSessionId: a693644c-0f95-44a8-9ce3-4c4276cb13bc
 ---
 
-Change OpenSpec `add-resend-email-system` implementada (2026-06-27): todos los emails de auth (recovery, confirmación de signup) salen por Resend con plantillas react-email de marca, vía el **Send Email Hook** de Supabase. Código: endpoint `app/api/auth/send-email/route.ts` (verifica firma Standard Webhooks con `SEND_EMAIL_HOOK_SECRET`, dispatch por `email_action_type`, link a `/auth/v1/verify` preservando `redirect_to=/reset-password`), módulo `lib/email/` (cliente Resend único lazy + helpers), plantillas en `emails/`. Se eliminó `lib/resend.ts` y el cliente Resend duplicado de `lib/leads/actions.ts`. Reemplaza la capability `mail-transport` de [[wapy-infra-decisions]]. Cobro/billing relacionado en [[wapy-mercadopago-billing]].
+Los emails de auth salen por Resend usando el Send Email Hook de Supabase, con plantillas react-email en `emails/` y el cliente centralizado en `lib/email/`. Endpoint del hook: `app/api/auth/send-email/route.ts`.
 
-**PENDIENTE (manual, sin esto siguen los mails genéricos de Supabase):**
-1. Verificar dominio `wapy.com.ar` en Resend (si no estaba) + `RESEND_API_KEY` en Vercel.
-2. Dashboard Supabase → Auth Hooks → crear "Send Email Hook" HTTPS apuntando a `https://<prod>/api/auth/send-email`, generar secret.
-3. Setear `SEND_EMAIL_HOOK_SECRET` (formato `v1,whsec_...`) en Vercel.
-4. Activar el hook y probar "olvidé contraseña" + signup en prod.
-Rollback: desactivar el hook en el dashboard → Supabase vuelve a sus mails default sin redeploy.
+**El hook YA está activo en el dashboard de Supabase** (confirmado el 2026-08-15 en los logs de auth: `"msg":"Hook ran successfully","hook":"https://www.wapy.com.ar/api/auth/send-email"`). Esto corrige la nota anterior que lo daba por pendiente.
 
-**Out of scope (fase futura):** welcome email, confirmación/recibo de orden, notificación de nueva orden al dueño, recibos MercadoPago, lifecycle suscripción/trial. `lib/email` quedó diseñado para absorberlos sin re-arquitectura.
+**El link del mail apunta a `/auth/confirm`, NO al `/auth/v1/verify` de Supabase.** Esto revierte la decisión original de "no hace falta /auth/confirm". La ruta valida el `token_hash` con `verifyOtp` server-side y deja la sesión en cookies. El motivo está en [[wapy-supabase-pkce-gotcha]]: con el verify de Supabase el flujo queda atado al dispositivo donde se pidió el reset.
 
-Estado: código verificado (typecheck limpio, 4 plantillas renderizan), NO archivada en OpenSpec todavía (task 6.3 = pasos manuales). Archivar con `/opsx:archive add-resend-email-system` cuando el hook esté activo y validado en prod.
+`next` se sanitiza en `/auth/confirm` (debe empezar con `/` y no con `//`) para evitar open redirect. Todos los query params del link van con `encodeURIComponent`.
+
+Relacionado: [[wapy-supabase-pkce-gotcha]], [[wapy-infra-decisions]].

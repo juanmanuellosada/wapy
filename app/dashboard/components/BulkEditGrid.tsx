@@ -7,12 +7,13 @@
 // y validación en línea con las mismas reglas que ProductModal (lib/store/product-validation.ts).
 
 import { useState, useRef, useMemo, useCallback, useEffect, memo } from 'react';
-import { Search, X, Loader2, Eye, EyeOff, Pencil, AlertCircle, Trash2 } from 'lucide-react';
+import { Search, X, Loader2, Eye, EyeOff, Pencil, AlertCircle, Trash2, Layers } from 'lucide-react';
 import { Select, type SelectOption } from '@/app/components/Select';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
 import { ProductModal } from '@/app/components/store/ProductModal';
 import { bulkUpdateProducts, bulkDeleteProducts } from '@/lib/store/actions';
 import { validateProductFields, type ProductValidationIssue } from '@/lib/store/product-validation';
+import { sortTiers, type PriceTier } from '@/lib/store/pricing';
 import type { Product, Section } from '@/lib/onboarding/state';
 import { toast } from '@/lib/toast';
 
@@ -44,7 +45,23 @@ type EditableFields = {
   section_id: string; // '' = sin sección
   stock_display: string; // '' = ilimitado
   is_active: boolean;
+  price_tiers: PriceTier[]; // tramos por cantidad; [] = sin tramos
 };
+
+/** Clave estable de un set de tramos, para comparar filas sin deep-equal. */
+function tiersKey(tiers: PriceTier[]): string {
+  return sortTiers(tiers)
+    .map((t) => `${t.min_quantity}:${t.unit_price_cents}`)
+    .join('|');
+}
+
+/** Resumen corto de los tramos para la celda de la grilla. */
+function tiersSummary(tiers: PriceTier[]): string {
+  if (tiers.length === 0) return 'Sin tramos';
+  return sortTiers(tiers)
+    .map((t) => `${t.min_quantity}+`)
+    .join(' · ');
+}
 
 type RowState = EditableFields & {
   id: string;
@@ -53,7 +70,7 @@ type RowState = EditableFields & {
   errors: ProductValidationIssue[];
 };
 
-function buildEditableFields(p: Product): EditableFields {
+function buildEditableFields(p: Product, tiers: PriceTier[] = []): EditableFields {
   return {
     name: p.name,
     description: p.description ?? '',
@@ -62,6 +79,7 @@ function buildEditableFields(p: Product): EditableFields {
     section_id: p.section_id ?? '',
     stock_display: p.stock != null ? String(p.stock) : '',
     is_active: p.is_active,
+    price_tiers: sortTiers(tiers),
   };
 }
 
@@ -76,6 +94,7 @@ function normalizeFields(f: EditableFields) {
     section_id: f.section_id || null,
     stock: stockTrim === '' ? null : Number(stockTrim),
     is_active: f.is_active,
+    price_tiers: sortTiers(f.price_tiers),
   };
 }
 
@@ -89,7 +108,8 @@ function isRowDirty(current: EditableFields, baseline: EditableFields): boolean 
     a.promo_price_cents !== b.promo_price_cents ||
     a.section_id !== b.section_id ||
     a.stock !== b.stock ||
-    a.is_active !== b.is_active
+    a.is_active !== b.is_active ||
+    tiersKey(a.price_tiers) !== tiersKey(b.price_tiers)
   );
 }
 
@@ -110,6 +130,7 @@ function computeRowValidation(fields: EditableFields): ProductValidationIssue[] 
       price_cents: n.price_cents,
       promo_price_cents: n.promo_price_cents,
       stock: stockIsGarbage ? null : n.stock,
+      price_tiers: n.price_tiers,
     })
   );
   return issues;
@@ -126,6 +147,7 @@ function toBulkUpdateRow(row: RowState) {
     section_id: n.section_id,
     stock: n.stock !== null && Number.isNaN(n.stock) ? null : n.stock,
     is_active: n.is_active,
+    price_tiers: n.price_tiers,
   };
 }
 
@@ -147,7 +169,7 @@ function buildSectionOptions(sections: Section[]): SelectOption[] {
 // ---------------------------------------------------------------------------
 
 const GRID_COLS =
-  'md:grid-cols-[minmax(200px,1.8fr)_minmax(140px,1.2fr)_100px_100px_150px_90px_100px_44px]';
+  'md:grid-cols-[minmax(190px,1.6fr)_minmax(130px,1.1fr)_96px_96px_110px_140px_84px_92px_44px]';
 
 const inputClass =
   'w-full min-w-0 rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors';
@@ -268,6 +290,22 @@ const ProductGridRow = memo(function ProductGridRow({
         </div>
       </Field>
 
+      <Field label="Tramos">
+        <button
+          type="button"
+          onClick={() => onOpenModal(row.id)}
+          className={`w-full h-9 rounded-lg flex items-center justify-center gap-1.5 px-2 text-xs font-medium transition-colors cursor-pointer ${
+            row.price_tiers.length > 0
+              ? 'text-[#F5C84B] bg-[#F5C84B]/10 hover:bg-[#F5C84B]/20'
+              : 'text-white/40 bg-white/5 hover:text-white hover:bg-white/10'
+          }`}
+          aria-label={`Editar los tramos por cantidad de ${row.name || 'este producto'} (${tiersSummary(row.price_tiers)})`}
+        >
+          <Layers size={13} className="flex-shrink-0" />
+          <span className="truncate">{tiersSummary(row.price_tiers)}</span>
+        </button>
+      </Field>
+
       <Field label="Sección">
         <Select
           value={row.section_id || null}
@@ -335,18 +373,21 @@ const ProductGridRow = memo(function ProductGridRow({
 type Props = {
   storeId: string;
   products: Product[];
+  /** Tramos por cantidad ya guardados, por product_id.
+   *  Requerido: si faltara, guardar la grilla borraría los tramos de todas las filas. */
+  priceTiersByProduct: Record<string, PriceTier[]>;
   sections: Section[];
   maxImagesPerProduct: number;
   allowVariants: boolean;
   onClose: () => void;
 };
 
-export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct, allowVariants, onClose }: Props) {
+export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections, maxImagesPerProduct, allowVariants, onClose }: Props) {
   const productIds = useMemo(() => products.map((p) => p.id), [products]);
   const sectionOptions = useMemo(() => buildSectionOptions(sections), [sections]);
 
   const baselineRef = useRef<Record<string, EditableFields>>(
-    Object.fromEntries(products.map((p) => [p.id, buildEditableFields(p)]))
+    Object.fromEntries(products.map((p) => [p.id, buildEditableFields(p, priceTiersByProduct[p.id] ?? [])]))
   );
   const originalProductsRef = useRef<Record<string, Product>>(
     Object.fromEntries(products.map((p) => [p.id, p]))
@@ -355,7 +396,7 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
   const [rowsById, setRowsById] = useState<Record<string, RowState>>(() => {
     const map: Record<string, RowState> = {};
     for (const p of products) {
-      const fields = buildEditableFields(p);
+      const fields = buildEditableFields(p, priceTiersByProduct[p.id] ?? []);
       map[p.id] = {
         ...fields,
         id: p.id,
@@ -380,6 +421,8 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
   const [bulkPrice, setBulkPrice] = useState('');
   const [bulkStock, setBulkStock] = useState('');
   const [bulkSectionId, setBulkSectionId] = useState('');
+  const [bulkTierPercent, setBulkTierPercent] = useState('');
+  const [bulkTierQty, setBulkTierQty] = useState('3');
 
   const remainingCount = useMemo(
     () => productIds.reduce((n, id) => n + (rowsById[id] ? 1 : 0), 0),
@@ -466,6 +509,46 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
     [selectedIds]
   );
 
+  /**
+   * Aplica un tramo en lote a la selección. Se expresa en PORCENTAJE porque un
+   * precio unitario absoluto no tiene sentido sobre productos de precios distintos:
+   * cada fila calcula su propio unitario desde su precio actual (design, Decisión 5).
+   * `tiers === null` limpia los tramos de la selección.
+   */
+  const applyTiersToSelected = useCallback(
+    (minQuantity: number | null, percentOff: number | null) => {
+      if (selectedIds.size === 0) return;
+      setRowsById((prev) => {
+        const next = { ...prev };
+        for (const id of selectedIds) {
+          const current = next[id];
+          if (!current) continue;
+          let tiers: PriceTier[] = [];
+          if (minQuantity !== null && percentOff !== null) {
+            const priceCents = parsePriceDisplay(current.price_display);
+            tiers = [
+              {
+                min_quantity: minQuantity,
+                unit_price_cents: Math.round((priceCents * (100 - percentOff)) / 100),
+              },
+            ];
+          }
+          const nextFields: EditableFields = { ...current, price_tiers: tiers };
+          const baseline = baselineRef.current[id];
+          next[id] = {
+            ...nextFields,
+            id,
+            imageUrl: current.imageUrl,
+            dirty: baseline ? isRowDirty(nextFields, baseline) : true,
+            errors: computeRowValidation(nextFields),
+          };
+        }
+        return next;
+      });
+    },
+    [selectedIds]
+  );
+
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -516,6 +599,7 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
           section_id: r.section_id,
           stock_display: r.stock_display,
           is_active: r.is_active,
+          price_tiers: r.price_tiers,
         };
         baselineRef.current[r.id] = savedFields;
         next[r.id] = { ...next[r.id], dirty: false };
@@ -724,6 +808,66 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
           </div>
 
           <div className="flex items-end gap-1.5">
+            <div>
+              <label htmlFor="bulk-tier-qty" className="block text-[10px] font-semibold uppercase tracking-wide text-white/40 mb-1">
+                Desde
+              </label>
+              <input
+                id="bulk-tier-qty"
+                type="number"
+                min="2"
+                step="1"
+                value={bulkTierQty}
+                onChange={(e) => setBulkTierQty(e.target.value)}
+                className={`${inputClass} w-16`}
+              />
+            </div>
+            <div>
+              <label htmlFor="bulk-tier-percent" className="block text-[10px] font-semibold uppercase tracking-wide text-white/40 mb-1">
+                % off
+              </label>
+              <input
+                id="bulk-tier-percent"
+                type="number"
+                min="1"
+                max="99"
+                step="1"
+                placeholder="10"
+                value={bulkTierPercent}
+                onChange={(e) => setBulkTierPercent(e.target.value)}
+                className={`${inputClass} w-16`}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const qty = parseInt(bulkTierQty, 10);
+                const percent = parseInt(bulkTierPercent, 10);
+                if (!Number.isInteger(qty) || qty < 2) {
+                  toast.error('La cantidad desde la que aplica el tramo tiene que ser 2 o más.');
+                  return;
+                }
+                if (!Number.isInteger(percent) || percent < 1 || percent > 99) {
+                  toast.error('El descuento del tramo tiene que estar entre 1% y 99%.');
+                  return;
+                }
+                applyTiersToSelected(qty, percent);
+              }}
+              disabled={bulkTierPercent.trim() === ''}
+              className="h-9 px-3 rounded-lg text-xs font-semibold text-[#16222E] bg-[#F5C84B] hover:bg-[#FAE08A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              Aplicar tramo
+            </button>
+            <button
+              type="button"
+              onClick={() => applyTiersToSelected(null, null)}
+              className="h-9 px-3 rounded-lg text-xs font-semibold text-white/60 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+            >
+              Quitar tramos
+            </button>
+          </div>
+
+          <div className="flex items-end gap-1.5">
             <button
               type="button"
               onClick={() => applyToSelected({ is_active: true })}
@@ -759,6 +903,7 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
         <span>Descripción</span>
         <span>Precio</span>
         <span>Promo</span>
+        <span>Tramos</span>
         <span>Sección</span>
         <span>Stock</span>
         <span>Activo</span>
@@ -825,12 +970,13 @@ export function BulkEditGrid({ storeId, products, sections, maxImagesPerProduct,
           storeId={storeId}
           sections={sections}
           product={modalProduct}
+          priceTiers={modalRow?.price_tiers ?? []}
           nextPosition={products.length}
           maxImagesPerProduct={maxImagesPerProduct}
           allowVariants={allowVariants}
-          onSaved={(saved) => {
+          onSaved={(saved, savedTiers) => {
             originalProductsRef.current[saved.id] = saved;
-            const fields = buildEditableFields(saved);
+            const fields = buildEditableFields(saved, savedTiers);
             baselineRef.current[saved.id] = fields;
             setRowsById((prev) => ({
               ...prev,

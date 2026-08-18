@@ -5,8 +5,10 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useReducer,
 } from "react";
+import { resolveTieredPrice, type PriceTier } from "@/lib/store/pricing";
 
 export interface CartItem {
   productId: string;
@@ -19,6 +21,49 @@ export interface CartItem {
   variantLabel?: string | null;
   variantPrice?: number | null;
   variantImageUrl?: string | null;
+  // Tramos por cantidad (design.md, Decisión 4). Viajan dentro del item porque el
+  // CartProvider solo recibe el slug, no el catálogo, y así el carrito sobrevive un
+  // reload sin perder el tramo. Que queden stale no importa: createPendingOrder
+  // recalcula todo desde la DB y nunca confía en el precio del cliente.
+  priceTiers?: PriceTier[];
+  /** Precio base del PRODUCTO en centavos — necesario para el ratio en variantes. */
+  productPriceCents?: number;
+  /** Precio regular de ESTA línea en centavos (override de variante si hay). */
+  regularPriceCents?: number;
+  /** Precio efectivo (ya con promo) de esta línea en centavos, sin tramo. */
+  effectivePriceCents?: number;
+}
+
+/** Precio unitario de una línea en centavos, resolviendo promo + tramo por cantidad. */
+export function cartLineUnitCents(item: CartItem, aggregatedQty: number): number {
+  // Items viejos en localStorage (anteriores a los tramos) no traen los campos en
+  // centavos: se reconstruyen desde el precio en ARS que sí guardaban.
+  const fallbackCents = Math.round((item.variantPrice ?? item.price) * 100);
+  const regularCents = item.regularPriceCents ?? fallbackCents;
+  const effectiveCents = item.effectivePriceCents ?? fallbackCents;
+  const productPriceCents = item.productPriceCents ?? regularCents;
+  const promoCents = effectiveCents < regularCents ? effectiveCents : null;
+  const isVariant = item.variantId != null;
+
+  return resolveTieredPrice(
+    {
+      price_cents: isVariant ? productPriceCents : regularCents,
+      promo_price_cents: isVariant ? null : promoCents,
+    },
+    isVariant ? { price_override: regularCents, promo_price_override: promoCents } : null,
+    aggregatedQty,
+    item.priceTiers
+  ).unitCents;
+}
+
+/** Precio de una línea del carrito ya resuelto, en ARS. */
+export interface CartLinePrice {
+  /** Unitario que se cobra (con tramo aplicado si corresponde). */
+  unitPrice: number;
+  /** Unitario sin tramo (promo o regular) — para tacharlo cuando el tramo aplica. */
+  basePrice: number;
+  /** true cuando el tramo por cantidad abarató esta línea. */
+  onTier: boolean;
 }
 
 /** Stable key used to identify a cart line (product + variant combo). */
@@ -112,6 +157,8 @@ interface CartContextValue {
   open: boolean;
   totalItems: number;
   totalPrice: number;
+  /** Precio resuelto por línea, indexado por `cartItemKey(productId, variantId)`. */
+  linePrices: Map<string, CartLinePrice>;
   appliedCoupon: AppliedCoupon | null;
   discountAmount: number;
   finalTotal: number;
@@ -203,11 +250,31 @@ export function CartProvider({
   );
 
   const totalItems = state.items.reduce((s, i) => s + i.quantity, 0);
-  // Fix: use variantPrice when set, falling back to price (aligns with handleWhatsApp)
-  const totalPrice = state.items.reduce(
-    (s, i) => s + (i.variantPrice ?? i.price) * i.quantity,
-    0
-  );
+
+  // Tramos por cantidad: la cantidad que activa el tramo se agrega POR PRODUCTO,
+  // sumando todas sus variantes (mismo criterio que min_quantity y que el cálculo
+  // server-side en createPendingOrder).
+  const linePrices = useMemo(() => {
+    const qtyByProduct = new Map<string, number>();
+    for (const i of state.items) {
+      qtyByProduct.set(i.productId, (qtyByProduct.get(i.productId) ?? 0) + i.quantity);
+    }
+
+    const prices = new Map<string, CartLinePrice>();
+    for (const i of state.items) {
+      const key = cartItemKey(i.productId, i.variantId);
+      const aggregatedQty = qtyByProduct.get(i.productId) ?? i.quantity;
+      const unitPrice = cartLineUnitCents(i, aggregatedQty) / 100;
+      const basePrice = i.variantPrice ?? i.price;
+      prices.set(key, { unitPrice, basePrice, onTier: unitPrice < basePrice });
+    }
+    return prices;
+  }, [state.items]);
+
+  const totalPrice = state.items.reduce((s, i) => {
+    const line = linePrices.get(cartItemKey(i.productId, i.variantId));
+    return s + (line?.unitPrice ?? i.variantPrice ?? i.price) * i.quantity;
+  }, 0);
 
   // Derive discount and finalTotal from appliedCoupon + totalPrice
   let discountAmount = 0;
@@ -227,6 +294,7 @@ export function CartProvider({
         open: state.open,
         totalItems,
         totalPrice,
+        linePrices,
         appliedCoupon: state.appliedCoupon,
         discountAmount,
         finalTotal,

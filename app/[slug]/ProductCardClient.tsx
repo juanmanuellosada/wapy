@@ -4,7 +4,15 @@ import React, { useState, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { Plus } from "lucide-react";
 import type { StorefrontOptionType, StorefrontVariant } from "@/lib/storefront/resolve";
-import { resolveEffectivePrice } from "@/lib/store/pricing";
+import {
+  resolveEffectivePrice,
+  sortTiers,
+  tierUnitCentsFor,
+  tierSavingsPercent,
+  type PriceTier,
+  type PriceableProduct,
+  type PriceableVariant,
+} from "@/lib/store/pricing";
 import { useCart, cartItemKey } from "./CartContext";
 
 // Inline placeholder SVG — matches StoreClient's PLACEHOLDER_IMAGE
@@ -21,6 +29,124 @@ function formatARS(amount: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
+}
+
+/**
+ * Igual que formatARS pero mostrando los centavos cuando existen. Los precios de
+ * tramo casi nunca son redondos (un "3 x $2800" da $933,33 c/u) y redondearlos en
+ * pantalla haría que el total no cierre con lo que se cobra.
+ */
+export function formatARSCents(cents: number): string {
+  const digits = cents % 100 === 0 ? 0 : 2;
+  return (cents / 100).toLocaleString("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+// ─── Tramos de precio por cantidad ───────────────────────────────────────────
+
+interface TierRow {
+  minQuantity: number;
+  unitCents: number;
+  savings: number;
+}
+
+/** Traduce los tramos del producto a filas mostrables para la variante activa. */
+function buildTierRows(
+  tiers: PriceTier[] | undefined,
+  product: PriceableProduct,
+  variant: PriceableVariant | null
+): TierRow[] {
+  if (!tiers || tiers.length === 0) return [];
+  const baseCents = resolveEffectivePrice(product, variant).effectiveCents;
+  return sortTiers(tiers)
+    .map((t) => {
+      const unitCents = tierUnitCentsFor(product, variant, t);
+      return {
+        minQuantity: t.min_quantity,
+        unitCents,
+        savings: tierSavingsPercent(unitCents, baseCents),
+      };
+    })
+    // Un tramo que no abarata (porque la promo vigente ya es más barata) no se
+    // anuncia: prometería un descuento que el carrito no va a aplicar.
+    .filter((row) => row.unitCents < baseCents);
+}
+
+/**
+ * Anuncio de tramos por cantidad.
+ * layout="card"  — una línea compacta con el primer tramo.
+ * layout="modal" — la tabla completa, resaltando el tramo ya alcanzado.
+ */
+export function PriceTierHint({
+  tiers,
+  product,
+  variant = null,
+  accentColor,
+  layout = "card",
+  currentQty = 0,
+}: {
+  tiers?: PriceTier[];
+  product: PriceableProduct;
+  variant?: PriceableVariant | null;
+  accentColor: string;
+  layout?: "card" | "modal";
+  currentQty?: number;
+}) {
+  const rows = buildTierRows(tiers, product, variant);
+  if (rows.length === 0) return null;
+
+  if (layout === "card") {
+    const first = rows[0];
+    return (
+      <p className="text-xs font-medium" style={{ color: accentColor }}>
+        Llevando {first.minQuantity}: {formatARSCents(first.unitCents)} c/u
+        {rows.length > 1 ? " y más tramos" : ""}
+      </p>
+    );
+  }
+
+  const reachedMin = rows.reduce<number | null>(
+    (acc, r) => (currentQty >= r.minQuantity ? r.minQuantity : acc),
+    null
+  );
+
+  return (
+    <div
+      className="rounded-xl px-3 py-2.5 flex flex-col gap-1.5"
+      style={{ background: "var(--store-surface-alt, var(--store-surface))", border: "1px solid var(--store-border)" }}
+    >
+      <span className="text-xs font-semibold" style={{ color: "var(--store-ink-secondary)" }}>
+        Cuanto más llevás, más barato
+      </span>
+      <ul className="flex flex-col gap-1">
+        {rows.map((row) => {
+          const reached = reachedMin === row.minQuantity;
+          return (
+            <li
+              key={row.minQuantity}
+              className="flex items-baseline justify-between gap-3 text-xs"
+              style={{ color: reached ? accentColor : "var(--store-ink)", fontWeight: reached ? 600 : 400 }}
+            >
+              <span>
+                Desde {row.minQuantity} unidades
+                {reached ? " · aplicado" : ""}
+              </span>
+              <span className="whitespace-nowrap">
+                {formatARSCents(row.unitCents)} c/u
+                {row.savings > 0 && (
+                  <span style={{ color: "var(--store-ink-muted)" }}> · {row.savings}% off</span>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 // ─── Variant selection hook ───────────────────────────────────────────────────
@@ -137,6 +263,7 @@ export interface SimpleProduct {
   description: string;
   min_quantity: number; // default 1
   qty_step: number; // default 1
+  priceTiers?: PriceTier[]; // tramos por cantidad; vacío/ausente = sin tramos
 }
 
 interface Props<T extends SimpleProduct> {
@@ -204,6 +331,10 @@ function SimpleProductCard<T extends SimpleProduct>({
         name: product.name,
         price: effectivePrice,
         image: product.image,
+        priceTiers: product.priceTiers,
+        productPriceCents: priceCents,
+        regularPriceCents: regularCents,
+        effectivePriceCents: effectiveCents,
       });
       if (toAdd > 1) {
         // addItem sets quantity to 1; correct it via setQty after a tick
@@ -282,6 +413,12 @@ function SimpleProductCard<T extends SimpleProduct>({
             {minStepLabel}
           </p>
         )}
+        <PriceTierHint
+          tiers={product.priceTiers}
+          product={{ price_cents: priceCents, promo_price_cents: product.promoPriceCents }}
+          accentColor={accentColor}
+          layout="card"
+        />
         <div className="flex items-center justify-between gap-2 mt-auto">
           <div className="flex items-baseline gap-1.5 flex-wrap">
             {onPromo && (
@@ -318,6 +455,7 @@ export interface VariantSelectorProduct {
   image: string;
   min_quantity: number;
   qty_step: number;
+  priceTiers?: PriceTier[];
 }
 
 /**
@@ -363,7 +501,9 @@ export function VariantSelector({
     activeVariant,
     isSelectionComplete,
     regularPrice,
+    regularPriceCents,
     effectivePrice,
+    effectivePriceCents,
     onPromo,
     effectiveImage,
     isOutOfStock,
@@ -396,6 +536,10 @@ export function VariantSelector({
         variantLabel,
         variantPrice: effectivePrice,
         variantImageUrl: activeVariant.image_url,
+        priceTiers: product.priceTiers,
+        productPriceCents: priceCents,
+        regularPriceCents: regularPriceCents,
+        effectivePriceCents: effectivePriceCents,
       });
       if (toAdd > 1) {
         const key = cartItemKey(product.id, activeVariant.id);
@@ -494,6 +638,16 @@ export function VariantSelector({
             </div>
           </div>
         ))}
+
+      {layout === "card" && (
+        <PriceTierHint
+          tiers={product.priceTiers}
+          product={{ price_cents: priceCents, promo_price_cents: promoPriceCents }}
+          variant={activeVariant}
+          accentColor={accentColor}
+          layout="card"
+        />
+      )}
 
       {/* Price + Add button row (card layout) or full-width button (modal layout) */}
       {layout === "card" ? (

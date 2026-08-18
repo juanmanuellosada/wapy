@@ -4,7 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
-import { resolveEffectivePrice } from '@/lib/store/pricing';
+import { resolveTieredPrice, type PriceTier } from '@/lib/store/pricing';
 
 // 3.1 Each cart item may carry an optional variantId.
 type CreateOrderInput = {
@@ -167,6 +167,20 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
 
   const productsWithVariants = new Set((optionTypeRows ?? []).map((r) => r.product_id));
 
+  // Tramos de precio por cantidad. Se agrupan por producto; los productos sin
+  // tramos simplemente no aparecen en el mapa y se cobran como hasta ahora.
+  const { data: tierRows } = await admin
+    .from('product_price_tiers')
+    .select('product_id, min_quantity, unit_price_cents')
+    .in('product_id', productIds);
+
+  const tiersByProduct = new Map<string, PriceTier[]>();
+  for (const t of tierRows ?? []) {
+    const list = tiersByProduct.get(t.product_id) ?? [];
+    list.push({ min_quantity: t.min_quantity, unit_price_cents: t.unit_price_cents });
+    tiersByProduct.set(t.product_id, list);
+  }
+
   // Validate variant_id presence rules per item
   for (const item of rawValidItems) {
     const hasVariants = productsWithVariants.has(item.product_id);
@@ -237,8 +251,10 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     }
   }
 
-  // 3.4 Compute effective price per item (variant.price_override ?? product.price_cents)
-  // and build variant_label for items with variants.
+  // 3.4 Compute effective price per item (promo + tramo por cantidad) and build
+  // variant_label for items with variants. La cantidad que activa el tramo es la
+  // agregada por producto (`qtyByProduct`, ya calculada arriba para min_quantity),
+  // no la de esta línea sola: 2 talles M + 1 L son 3 unidades del mismo producto.
   type EnrichedItem = typeof validItems[number] & {
     effectivePrice: number;
     variantLabel: string | null;
@@ -247,9 +263,12 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   const enrichedItems: EnrichedItem[] = validItems.map((item) => {
     const product = productMap.get(item.product_id)!;
 
+    const aggregatedQty = qtyByProduct.get(item.product_id) ?? item.quantity;
+    const tiers = tiersByProduct.get(item.product_id);
+
     if (item.variant_id) {
       const variant = variantMap.get(item.variant_id)!;
-      const { effectiveCents } = resolveEffectivePrice(product, variant);
+      const { unitCents } = resolveTieredPrice(product, variant, aggregatedQty, tiers);
 
       // Build label: values sorted by option type position, joined with " / "
       const valueEntries = (variant.product_variant_option_values ?? [])
@@ -260,10 +279,10 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
         .sort((a, b) => a.position - b.position);
       const variantLabel = valueEntries.map((e) => e.value).join(' / ') || null;
 
-      return { ...item, effectivePrice: effectiveCents, variantLabel };
+      return { ...item, effectivePrice: unitCents, variantLabel };
     } else {
-      const { effectiveCents } = resolveEffectivePrice(product);
-      return { ...item, effectivePrice: effectiveCents, variantLabel: null };
+      const { unitCents } = resolveTieredPrice(product, null, aggregatedQty, tiers);
+      return { ...item, effectivePrice: unitCents, variantLabel: null };
     }
   });
 

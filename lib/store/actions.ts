@@ -15,7 +15,8 @@ import { getPlanLimits, isUnlimited } from '@/lib/plans/limits';
 import type { PlanId } from '@/lib/plans/limits';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 import { getSubscriptionState } from '@/lib/subscription/state';
-import { validateProductFields, checkBatchFits } from '@/lib/store/product-validation';
+import { validateProductFields, checkBatchFits, validatePriceTiers } from '@/lib/store/product-validation';
+import type { PriceTier } from '@/lib/store/pricing';
 import { MAX_PHOTOS_PER_ZIP } from '@/lib/store/bulk-import/zip';
 
 // Section item schema (without the min-1 array constraint — dashboard can have 0)
@@ -337,6 +338,9 @@ type ProductInput = {
   // undefined = not touched by this call (preserves the existing value on update);
   // null = explicitly "sin promo".
   promo_price_cents?: number | null;
+  // undefined = not touched by this call (preserves the existing tiers on update);
+  // [] = explicitly "sin tramos".
+  price_tiers?: PriceTier[];
 };
 
 /** Validates a product-level promo price against its regular price. Server is the source of truth (design Decisión 4). */
@@ -349,6 +353,61 @@ function validatePromoPrice(
     return { error: 'El precio promocional debe ser mayor o igual a 0 y menor al precio regular.', ok: false };
   }
   return { ok: true, value: promo };
+}
+
+/**
+ * Reemplaza los tramos de precio por cantidad de un producto (delete + insert).
+ * Se llama SOLO cuando el caller mandó `price_tiers` explícitamente, para que los
+ * call-sites parciales (toggle activo, reorder) no borren los tramos existentes.
+ */
+async function syncProductPriceTiers(
+  admin: ReturnType<typeof createAdminClient>,
+  productId: string,
+  tiers: PriceTier[]
+): Promise<{ ok: true } | { error: string }> {
+  const { error: deleteError } = await admin
+    .from('product_price_tiers')
+    .delete()
+    .eq('product_id', productId);
+  if (deleteError) return { error: 'No se pudieron actualizar los tramos por cantidad.' };
+
+  if (tiers.length === 0) return { ok: true };
+
+  const { error: insertError } = await admin.from('product_price_tiers').insert(
+    tiers.map((t) => ({
+      product_id: productId,
+      min_quantity: t.min_quantity,
+      unit_price_cents: t.unit_price_cents,
+    }))
+  );
+  if (insertError) return { error: 'No se pudieron guardar los tramos por cantidad.' };
+
+  return { ok: true };
+}
+
+/**
+ * Lee los tramos de una lista de productos, agrupados por product_id.
+ * Los productos sin tramos no aparecen en el mapa.
+ */
+export async function getProductPriceTiers(
+  productIds: string[]
+): Promise<Record<string, PriceTier[]>> {
+  if (productIds.length === 0) return {};
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from('product_price_tiers')
+    .select('product_id, min_quantity, unit_price_cents')
+    .in('product_id', productIds)
+    .order('min_quantity');
+
+  const byProduct: Record<string, PriceTier[]> = {};
+  for (const row of data ?? []) {
+    (byProduct[row.product_id] ??= []).push({
+      min_quantity: row.min_quantity,
+      unit_price_cents: row.unit_price_cents,
+    });
+  }
+  return byProduct;
 }
 
 export async function saveStoreProduct(
@@ -379,6 +438,11 @@ export async function saveStoreProduct(
       promoUpdate.promo_price_cents = promoResult.value;
     }
 
+    if (product.price_tiers !== undefined) {
+      const tierIssues = validatePriceTiers(product.price_tiers, product.price_cents);
+      if (tierIssues.length > 0) return { error: tierIssues[0].message };
+    }
+
     const { error } = await admin
       .from('products')
       .update({
@@ -400,6 +464,11 @@ export async function saveStoreProduct(
 
     if (error) return { error: 'No se pudo actualizar el producto.' };
 
+    if (product.price_tiers !== undefined) {
+      const tierResult = await syncProductPriceTiers(admin, product.id, product.price_tiers);
+      if ('error' in tierResult) return { error: tierResult.error };
+    }
+
     revalidatePath('/dashboard', 'layout');
     return { ok: true, productId: product.id };
   }
@@ -418,6 +487,11 @@ export async function saveStoreProduct(
 
   const promoResult = validatePromoPrice(product.promo_price_cents, product.price_cents);
   if (!promoResult.ok) return { error: promoResult.error };
+
+  if (product.price_tiers !== undefined) {
+    const tierIssues = validatePriceTiers(product.price_tiers, product.price_cents);
+    if (tierIssues.length > 0) return { error: tierIssues[0].message };
+  }
 
   const { data: newProduct, error: insertError } = await admin
     .from('products')
@@ -441,6 +515,11 @@ export async function saveStoreProduct(
 
   if (insertError || !newProduct) {
     return { error: 'No se pudo crear el producto.' };
+  }
+
+  if (product.price_tiers !== undefined && product.price_tiers.length > 0) {
+    const tierResult = await syncProductPriceTiers(admin, newProduct.id, product.price_tiers);
+    if ('error' in tierResult) return { error: tierResult.error };
   }
 
   revalidatePath('/dashboard', 'layout');
@@ -557,6 +636,8 @@ type BulkUpdateRow = {
   section_id: string | null;
   stock: number | null;
   is_active: boolean;
+  // undefined = esta fila no tocó los tramos; [] = "sin tramos".
+  price_tiers?: PriceTier[];
 };
 
 export async function bulkUpdateProducts(
@@ -594,6 +675,7 @@ export async function bulkUpdateProducts(
       price_cents: row.price_cents,
       promo_price_cents: row.promo_price_cents,
       stock: row.stock,
+      price_tiers: row.price_tiers,
     });
     if (issues.length > 0) return { error: issues[0].message };
   }
@@ -617,6 +699,37 @@ export async function bulkUpdateProducts(
   if (error) {
     console.warn('[bulkUpdateProducts] upsert failed:', error);
     return { error: 'No se pudieron guardar los cambios. Intentá de nuevo.' };
+  }
+
+  // Tramos por cantidad: solo se tocan las filas que los mandaron explícitamente.
+  // Delete + insert en lote (una query cada uno) para no hacer N round-trips.
+  const rowsWithTiers = rows.filter((r) => r.price_tiers !== undefined);
+  if (rowsWithTiers.length > 0) {
+    const { error: deleteError } = await admin
+      .from('product_price_tiers')
+      .delete()
+      .in('product_id', rowsWithTiers.map((r) => r.id));
+
+    if (deleteError) {
+      console.warn('[bulkUpdateProducts] tier delete failed:', deleteError);
+      return { error: 'Se guardaron los precios pero no se pudieron actualizar los tramos por cantidad.' };
+    }
+
+    const tierRows = rowsWithTiers.flatMap((r) =>
+      (r.price_tiers ?? []).map((t) => ({
+        product_id: r.id,
+        min_quantity: t.min_quantity,
+        unit_price_cents: t.unit_price_cents,
+      }))
+    );
+
+    if (tierRows.length > 0) {
+      const { error: insertError } = await admin.from('product_price_tiers').insert(tierRows);
+      if (insertError) {
+        console.warn('[bulkUpdateProducts] tier insert failed:', insertError);
+        return { error: 'Se guardaron los precios pero no se pudieron guardar los tramos por cantidad.' };
+      }
+    }
   }
 
   revalidatePath('/dashboard', 'layout');

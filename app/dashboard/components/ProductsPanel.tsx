@@ -10,6 +10,7 @@ import { BulkEditGrid } from './BulkEditGrid';
 import { saveStoreProduct, deleteStoreProduct, duplicateProduct } from '@/lib/store/actions';
 import { exportProductsCsv } from '@/lib/store/exports/products';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
+import type { PriceTier } from '@/lib/store/pricing';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
 import { toast } from '@/lib/toast';
 
@@ -18,6 +19,9 @@ const NO_SECTION_KEY = '__no_section__';
 type Props = {
   store: Store;
   initialProducts: Product[];
+  /** Tramos por cantidad ya guardados, por product_id (los sin tramos no aparecen).
+   *  Requerido: si faltara, el guardado desde la grilla borraría los tramos existentes. */
+  priceTiersByProduct: Record<string, PriceTier[]>;
   sections: Section[];
   productsCount: number;
   productsLimit: number;
@@ -35,7 +39,7 @@ function formatPrice(cents: number): string {
   }).format(cents / 100);
 }
 
-export function ProductsPanel({ store, initialProducts, sections, productsCount, productsLimit, limitIsUnlimited, maxImagesPerProduct, allowVariants, allowBulkProducts }: Props) {
+export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sections, productsCount, productsLimit, limitIsUnlimited, maxImagesPerProduct, allowVariants, allowBulkProducts }: Props) {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>(initialProducts);
   // Mantiene la lista sincronizada tras el refresh automático que dispara
@@ -44,6 +48,10 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
   useEffect(() => {
     setProducts(initialProducts);
   }, [initialProducts]);
+  const [tiersByProduct, setTiersByProduct] = useState<Record<string, PriceTier[]>>(priceTiersByProduct);
+  useEffect(() => {
+    setTiersByProduct(priceTiersByProduct);
+  }, [priceTiersByProduct]);
   const atProductsLimit = products.length >= productsLimit;
   const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -99,7 +107,7 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
     groups.push({ key: NO_SECTION_KEY, label: 'Sin sección', items: unsectioned });
   }
 
-  const handleProductSaved = (product: Product) => {
+  const handleProductSaved = (product: Product, savedTiers: PriceTier[]) => {
     setProducts((prev) => {
       const idx = prev.findIndex((p) => p.id === product.id);
       if (idx === -1) return [...prev, product];
@@ -107,6 +115,7 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
       next[idx] = product;
       return next;
     });
+    setTiersByProduct((prev) => ({ ...prev, [product.id]: savedTiers }));
     setModalProduct(undefined);
   };
 
@@ -292,6 +301,7 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
           storeId={store.id}
           sections={sections}
           product={modalProduct}
+          priceTiers={modalProduct ? tiersByProduct[modalProduct.id] ?? [] : []}
           nextPosition={products.length}
           maxImagesPerProduct={maxImagesPerProduct}
           allowVariants={allowVariants}
@@ -317,6 +327,7 @@ export function ProductsPanel({ store, initialProducts, sections, productsCount,
         <BulkEditGrid
           storeId={store.id}
           products={bulkEditProducts}
+          priceTiersByProduct={tiersByProduct}
           sections={sections}
           maxImagesPerProduct={maxImagesPerProduct}
           allowVariants={allowVariants}

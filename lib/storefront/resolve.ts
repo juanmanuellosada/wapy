@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import type { Database } from '@/lib/supabase/types';
 import type { Tables } from '@/lib/supabase/types';
 import { isPubliclyAvailable } from '@/lib/subscription/state';
+import type { PriceTier } from '@/lib/store/pricing';
 
 export type StoreRow = Tables<'stores'>;
 export type SectionRow = Tables<'sections'>;
@@ -43,7 +44,15 @@ export interface ProductVariantData {
 }
 
 export type Resolution =
-  | { kind: 'render'; store: StoreRow; sections: SectionRow[]; products: ProductRow[]; variantsByProduct: Record<string, ProductVariantData> }
+  | {
+      kind: 'render';
+      store: StoreRow;
+      sections: SectionRow[];
+      products: ProductRow[];
+      variantsByProduct: Record<string, ProductVariantData>;
+      /** Tramos de precio por cantidad por producto. Los productos sin tramos no aparecen. */
+      priceTiersByProduct: Record<string, PriceTier[]>;
+    }
   | { kind: 'redirect'; toSlug: string }
   | { kind: 'maintenance'; store: Pick<StoreRow, 'name' | 'logo_url' | 'theme'> }
   | { kind: 'not_found' };
@@ -94,9 +103,24 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
     // Fetch variants for all active products in one query set.
     // RLS on the new tables ensures anon can only read public store data.
     const variantsByProduct: Record<string, ProductVariantData> = {};
+    const priceTiersByProduct: Record<string, PriceTier[]> = {};
 
     if (products.length > 0) {
       const productIds = products.map((p) => p.id);
+
+      // Tramos de precio por cantidad (RLS anon: solo productos activos de tiendas publicadas)
+      const { data: tierRows } = await anon
+        .from('product_price_tiers')
+        .select('product_id, min_quantity, unit_price_cents')
+        .in('product_id', productIds)
+        .order('min_quantity');
+
+      for (const t of tierRows ?? []) {
+        (priceTiersByProduct[t.product_id] ??= []).push({
+          min_quantity: t.min_quantity,
+          unit_price_cents: t.unit_price_cents,
+        });
+      }
 
       // Fetch option types + values
       const { data: optionTypeRows } = await anon
@@ -193,6 +217,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
       sections: sectionsResult.data ?? [],
       products,
       variantsByProduct,
+      priceTiersByProduct,
     };
   }
 

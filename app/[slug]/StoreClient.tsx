@@ -21,7 +21,7 @@ import { extractSocialHandle } from "@/lib/store/social-links";
 import type { StoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
 import { parseBanner } from "@/lib/store/theme";
 import { useCart, cartItemKey } from "./CartContext";
-import ProductCardClient, { VariantSelector, useVariantSelection } from "./ProductCardClient";
+import ProductCardClient, { VariantSelector, useVariantSelection, PriceTierHint, formatARSCents } from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
 import { buildOrderWhatsappMessage } from "@/lib/store/whatsapp/buildMessage";
@@ -38,6 +38,7 @@ import {
   applyFilters,
 } from "./filters";
 import type { UIProduct } from "./types";
+import type { PriceTier } from "@/lib/store/pricing";
 import TopSellers from "./TopSellers";
 import RelatedProducts from "./RelatedProducts";
 import ShareCartButton from "./ShareCartButton";
@@ -753,12 +754,16 @@ function ProductModal({
     product.image,
     product.promoPriceCents
   );
-  const { regularPrice, effectivePrice, onPromo } = variantSelection;
+  const { regularPrice, regularPriceCents, effectivePrice, effectivePriceCents, onPromo } = variantSelection;
 
   // For modal: simple product (no variant), key is just the productId
   const itemKey = cartItemKey(product.id, null);
   const existingItem = items.find((i) => cartItemKey(i.productId, i.variantId) === itemKey);
   const existingQty = existingItem?.quantity ?? 0;
+  // Para los tramos la cantidad se agrega por producto, sumando todas las variantes.
+  const cartQtyForProduct = items
+    .filter((i) => i.productId === product.id)
+    .reduce((sum, i) => sum + i.quantity, 0);
 
   // Initial qty: min_quantity when cart is empty for this product, qty_step otherwise (D5)
   const [qty, setLocalQty] = useState(() => existingQty === 0 ? minQty : step);
@@ -826,6 +831,10 @@ function ProductModal({
         name: product.name,
         price: effectivePrice,
         image: product.image,
+        priceTiers: product.priceTiers,
+        productPriceCents: product.priceCents,
+        regularPriceCents,
+        effectivePriceCents,
       });
       if (qty > 1) {
         setQty(itemKey, qty);
@@ -924,6 +933,21 @@ function ProductModal({
             </p>
           )}
 
+          {/* Tramos de precio por cantidad — refleja la variante activa y resalta
+              el tramo que ya alcanzaría la cantidad elegida + lo que hay en el carrito. */}
+          <PriceTierHint
+            tiers={product.priceTiers}
+            product={{ price_cents: product.priceCents, promo_price_cents: product.promoPriceCents }}
+            variant={variantSelection.activeVariant}
+            accentColor={accentColor}
+            layout="modal"
+            currentQty={
+              variantData && variantData.optionTypes.length > 0
+                ? cartQtyForProduct
+                : existingQty + qty
+            }
+          />
+
           {/* Quantity selector — hidden when out of stock or when product has variants */}
           {!isOutOfStock && !(variantData && variantData.optionTypes.length > 0) && (
             <div className="flex items-center gap-4">
@@ -977,6 +1001,7 @@ function ProductModal({
                 image: product.image,
                 min_quantity: product.min_quantity ?? 1,
                 qty_step: product.qty_step ?? 1,
+                priceTiers: product.priceTiers,
               }}
               accentColor={accentColor}
               optionTypes={variantData.optionTypes}
@@ -1043,7 +1068,7 @@ function CartDrawer({
   checkoutMode: "whatsapp" | "mercadopago";
   mpConnected: boolean;
 }) {
-  const { items, open, totalPrice, appliedCoupon, discountAmount, finalTotal, removeItem, setQty, closeCart, applyCoupon, removeCoupon } = useCart();
+  const { items, open, totalPrice, linePrices, appliedCoupon, discountAmount, finalTotal, removeItem, setQty, closeCart, applyCoupon, removeCoupon } = useCart();
   const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
@@ -1103,9 +1128,13 @@ function CartDrawer({
     }
 
     const lines = items.map((i) => {
-      const displayPrice = i.variantPrice ?? i.price;
+      const line = linePrices.get(cartItemKey(i.productId, i.variantId));
+      const unitPrice = line?.unitPrice ?? i.variantPrice ?? i.price;
       const label = i.variantLabel ? ` (${i.variantLabel})` : "";
-      return `• ${i.quantity}x ${i.name}${label} — ${formatARS(displayPrice * i.quantity)}`;
+      // Con tramo por cantidad se explicita el unitario, si no el mensaje no cierra
+      // contra el precio de lista que el comprador vio en la ficha.
+      const tierNote = line?.onTier ? ` (${formatARSCents(Math.round(unitPrice * 100))} c/u)` : "";
+      return `• ${i.quantity}x ${i.name}${label}${tierNote} — ${formatARS(unitPrice * i.quantity)}`;
     });
 
     let orderRef: string | null = null;
@@ -1321,8 +1350,11 @@ function CartDrawer({
                 const stockKey = item.variantId ? `${item.productId}::${item.variantId}` : item.productId;
                 const itemStock = productStockMap.get(stockKey) ?? productStockMap.get(item.productId);
                 const isOverStock = itemStock !== undefined && itemStock !== null && item.quantity > itemStock;
-                // For display: use variantPrice if set, else item.price
-                const displayPrice = item.variantPrice ?? item.price;
+                // Precio de la línea ya resuelto (promo + tramo por cantidad).
+                const linePrice = linePrices.get(key);
+                const displayPrice = linePrice?.unitPrice ?? item.variantPrice ?? item.price;
+                const basePrice = linePrice?.basePrice ?? displayPrice;
+                const onTier = linePrice?.onTier ?? false;
                 // For image: use variantImageUrl if set, else item.image
                 const displayImage = item.variantImageUrl ?? item.image;
 
@@ -1368,7 +1400,13 @@ function CartDrawer({
                         </p>
                       )}
                       <p className="text-xs" style={{ color: "var(--store-ink-muted)" }}>
-                        {formatARS(displayPrice)} / u
+                        {onTier && (
+                          <span className="line-through mr-1">{formatARS(basePrice)}</span>
+                        )}
+                        <span style={onTier ? { color: accentColor, fontWeight: 600 } : undefined}>
+                          {formatARSCents(Math.round(displayPrice * 100))}
+                        </span>{" "}
+                        / u
                       </p>
                       {isOverStock && (
                         <p className="text-xs font-medium text-red-400">
@@ -1927,6 +1965,7 @@ export default function StoreClient({
   sections: sectionRows,
   products: productRows,
   variantsByProduct,
+  priceTiersByProduct = {},
   initialFilters = DEFAULT_FILTERS,
   initialProductId = null,
   topSellerProducts = [],
@@ -1938,6 +1977,8 @@ export default function StoreClient({
   sections: SectionRow[];
   products: ProductRow[];
   variantsByProduct: Record<string, ProductVariantData>;
+  /** Tramos de precio por cantidad por producto (los sin tramos no aparecen). */
+  priceTiersByProduct?: Record<string, PriceTier[]>;
   initialFilters?: CatalogFilters;
   initialProductId?: string | null;
   /** Pre-fetched top seller UIProducts (SSR). Shown when length >= 3. */
@@ -1993,8 +2034,9 @@ export default function StoreClient({
         stock: p.stock ?? null,
         min_quantity: (p as unknown as { min_quantity?: number }).min_quantity ?? 1,
         qty_step: (p as unknown as { qty_step?: number }).qty_step ?? 1,
+        priceTiers: priceTiersByProduct[p.id] ?? [],
       })),
-    [productRows]
+    [productRows, priceTiersByProduct]
   );
 
   const productMap = useMemo(

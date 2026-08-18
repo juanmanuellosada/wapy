@@ -91,6 +91,7 @@ export default async function SlugPage({ params, searchParams }: Props) {
             stock: p.stock ?? null,
             min_quantity: p.min_quantity ?? 1,
             qty_step: p.qty_step ?? 1,
+            priceTiers: resolution.priceTiersByProduct[p.id] ?? [],
           },
         ])
       );
@@ -127,6 +128,7 @@ export default async function SlugPage({ params, searchParams }: Props) {
           sections={resolution.sections}
           products={resolution.products}
           variantsByProduct={resolution.variantsByProduct}
+          priceTiersByProduct={resolution.priceTiersByProduct}
           initialFilters={initialFilters}
           initialProductId={initialProductId}
           topSellerProducts={topSellerProducts}
