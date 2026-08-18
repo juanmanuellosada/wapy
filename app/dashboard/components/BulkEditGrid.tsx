@@ -443,10 +443,14 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [showClearSectionConfirm, setShowClearSectionConfirm] = useState(false);
+  const [showUnlimitedStockConfirm, setShowUnlimitedStockConfirm] = useState(false);
 
   const [bulkPrice, setBulkPrice] = useState('');
   const [bulkStock, setBulkStock] = useState('');
-  const [bulkSectionId, setBulkSectionId] = useState('');
+  // null = el dueño todavía no eligió nada (el botón queda deshabilitado).
+  // '' = eligió "Sin sección" explícitamente, que es destructivo y pide confirmación.
+  const [bulkSectionId, setBulkSectionId] = useState<string | null>(null);
   const [bulkTierQty, setBulkTierQty] = useState('3');
   const [bulkTierMode, setBulkTierMode] = useState<BulkTierMode>('percent');
   const [bulkTierValue, setBulkTierValue] = useState('');
@@ -821,7 +825,15 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
             </div>
             <button
               type="button"
-              onClick={() => applyToSelected({ stock_display: bulkStock })}
+              onClick={() => {
+                // Vacío = stock ilimitado, que borra el control de stock de todo el
+                // lote. Es un destino válido pero merece confirmarse.
+                if (bulkStock.trim() === '') {
+                  setShowUnlimitedStockConfirm(true);
+                  return;
+                }
+                applyToSelected({ stock_display: bulkStock });
+              }}
               className="h-9 px-3 rounded-lg text-xs font-semibold text-[#16222E] bg-[#F5C84B] hover:bg-[#FAE08A] transition-colors cursor-pointer"
             >
               Aplicar stock
@@ -833,12 +845,21 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
               <label htmlFor="bulk-section" className="block text-[10px] font-semibold uppercase tracking-wide text-white/40 mb-1">
                 Sección
               </label>
-              <Select id="bulk-section" value={bulkSectionId || null} onChange={(v) => setBulkSectionId(v)} options={sectionOptions} placeholder="Sin sección" ariaLabel="Sección para aplicar en lote" />
+              <Select id="bulk-section" value={bulkSectionId} onChange={(v) => setBulkSectionId(v)} options={sectionOptions} placeholder="Elegí una sección" ariaLabel="Sección para aplicar en lote" />
             </div>
             <button
               type="button"
-              onClick={() => applyToSelected({ section_id: bulkSectionId })}
-              className="h-9 px-3 rounded-lg text-xs font-semibold text-[#16222E] bg-[#F5C84B] hover:bg-[#FAE08A] transition-colors cursor-pointer"
+              onClick={() => {
+                // Quitar la sección de un lote entero es destructivo y no se puede
+                // deshacer desde la grilla: pide confirmación explícita.
+                if (bulkSectionId === '') {
+                  setShowClearSectionConfirm(true);
+                  return;
+                }
+                applyToSelected({ section_id: bulkSectionId ?? '' });
+              }}
+              disabled={bulkSectionId === null}
+              className="h-9 px-3 rounded-lg text-xs font-semibold text-[#16222E] bg-[#F5C84B] hover:bg-[#FAE08A] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               Aplicar sección
             </button>
@@ -1087,6 +1108,32 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
         title="Eliminar productos"
         message={`Vas a eliminar ${selectedIds.size} producto${selectedIds.size === 1 ? '' : 's'}. Esta acción no se puede deshacer.`}
         confirmLabel="Sí, eliminar"
+        variant="destructive"
+      />
+
+      <ConfirmModal
+        open={showClearSectionConfirm}
+        onClose={() => setShowClearSectionConfirm(false)}
+        onConfirm={() => {
+          applyToSelected({ section_id: '' });
+          setShowClearSectionConfirm(false);
+        }}
+        title="Quitar la sección"
+        message={`Vas a dejar ${selectedIds.size} producto${selectedIds.size === 1 ? '' : 's'} sin sección. Van a seguir publicados, pero fuera de toda categoría de la tienda. Se aplica al guardar.`}
+        confirmLabel="Sí, quitar la sección"
+        variant="destructive"
+      />
+
+      <ConfirmModal
+        open={showUnlimitedStockConfirm}
+        onClose={() => setShowUnlimitedStockConfirm(false)}
+        onConfirm={() => {
+          applyToSelected({ stock_display: '' });
+          setShowUnlimitedStockConfirm(false);
+        }}
+        title="Dejar el stock ilimitado"
+        message={`Dejaste el campo vacío, así que ${selectedIds.size} producto${selectedIds.size === 1 ? '' : 's'} van a quedar con stock ilimitado y se pierde la cuenta de unidades que tenían cargada. Se aplica al guardar.`}
+        confirmLabel="Sí, dejarlo ilimitado"
         variant="destructive"
       />
     </div>
