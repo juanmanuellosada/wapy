@@ -88,6 +88,7 @@ export function PriceTierHint({
   accentColor,
   layout = "card",
   currentQty = 0,
+  combinable = false,
 }: {
   tiers?: PriceTier[];
   product: PriceableProduct;
@@ -95,6 +96,8 @@ export function PriceTierHint({
   accentColor: string;
   layout?: "card" | "modal";
   currentQty?: number;
+  /** Hay otros productos con la misma escalera: las cantidades se suman entre ellos. */
+  combinable?: boolean;
 }) {
   const rows = buildTierRows(tiers, product, variant);
   if (rows.length === 0) return null;
@@ -105,6 +108,7 @@ export function PriceTierHint({
       <p className="text-xs font-medium" style={{ color: accentColor }}>
         Llevando {first.minQuantity}: {formatARSCents(first.unitCents)} c/u
         {rows.length > 1 ? " y más tramos" : ""}
+        {combinable ? " · combinable" : ""}
       </p>
     );
   }
@@ -145,6 +149,11 @@ export function PriceTierHint({
           );
         })}
       </ul>
+      {combinable && (
+        <span className="text-[11px]" style={{ color: "var(--store-ink-muted)" }}>
+          Combinable con los demás productos de esta promo: las unidades se suman.
+        </span>
+      )}
     </div>
   );
 }
@@ -264,6 +273,7 @@ export interface SimpleProduct {
   min_quantity: number; // default 1
   qty_step: number; // default 1
   priceTiers?: PriceTier[]; // tramos por cantidad; vacío/ausente = sin tramos
+  tiersCombinable?: boolean; // hay otros productos con la misma escalera
 }
 
 interface Props<T extends SimpleProduct> {
@@ -418,6 +428,7 @@ function SimpleProductCard<T extends SimpleProduct>({
           product={{ price_cents: priceCents, promo_price_cents: product.promoPriceCents }}
           accentColor={accentColor}
           layout="card"
+          combinable={product.tiersCombinable}
         />
         <div className="flex items-center justify-between gap-2 mt-auto">
           <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -456,6 +467,7 @@ export interface VariantSelectorProduct {
   min_quantity: number;
   qty_step: number;
   priceTiers?: PriceTier[];
+  tiersCombinable?: boolean;
 }
 
 /**
@@ -646,6 +658,7 @@ export function VariantSelector({
           variant={activeVariant}
           accentColor={accentColor}
           layout="card"
+          combinable={product.tiersCombinable}
         />
       )}
 

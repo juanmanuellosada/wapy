@@ -86,3 +86,25 @@ aplicación, así que una escalera incoherente se marca en rojo en la grilla ant
 
 Ni el precio promocional ni `min_quantity` están gateados por plan; los tramos siguen el mismo criterio.
 La parte de edición masiva ya está detrás de `allowBulkProducts` (Pro) por ser parte de esa pantalla.
+
+## Decisión 7 — Los productos con la misma escalera combinan cantidades
+
+"Llevá 3 alfajores" se tiene que poder cumplir con 1 de cada sabor, no solo con 3 del mismo. La
+cantidad que dispara el tramo se agrega por **grupo de escalera**: todos los productos cuyos tramos
+son idénticos (mismas cantidades mínimas y mismos precios unitarios) suman entre sí.
+
+El grupo es **implícito**, derivado de los tramos vía `tierGroupKey()`: no hay tabla ni columna nueva
+y no hay nada que el dueño tenga que configurar. Se descartó el grupo explícito con nombre por el
+costo de migración + UI, sabiendo que trae dos corolarios que hay que asumir:
+
+- Dos líneas de producto no relacionadas que casualmente tengan la misma escalera se combinan.
+- Editar un tramo de un producto lo saca del grupo. Es visible en la grilla (la columna Tramos deja
+  de coincidir) pero no hay un aviso explícito.
+
+`qtyByProduct` sigue existiendo aparte para `min_quantity` / `qty_step`: esas reglas se validan **por
+producto**, solo el precio se agrupa. Mezclarlas haría que un mínimo de 12 empanadas se cumpliera con
+1 empanada y 11 medialunas.
+
+El aviso "combinable con los demás productos de esta promo" solo aparece cuando el grupo tiene más de
+un producto activo (`buildTierGroupSizes`), si no sería mentira. El carrito suma un contador por grupo
+("sumá 2 unidades más y pagás $933,33 c/u") usando `nextTier()`, que es donde el comprador puede actuar.

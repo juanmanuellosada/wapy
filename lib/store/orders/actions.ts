@@ -4,7 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
-import { resolveTieredPrice, type PriceTier } from '@/lib/store/pricing';
+import { resolveTieredPrice, tierGroupKey, type PriceTier } from '@/lib/store/pricing';
 
 // 3.1 Each cart item may carry an optional variantId.
 type CreateOrderInput = {
@@ -251,10 +251,21 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     }
   }
 
+  // Cantidad agregada por GRUPO de tramos: los productos que comparten la misma
+  // escalera suman entre sí (3 alfajores de sabores distintos cumplen "llevá 3").
+  // Es un mapa aparte de `qtyByProduct` a propósito: min_quantity y qty_step se
+  // siguen validando por producto, solo el precio se agrupa.
+  const qtyByTierGroup = new Map<string, number>();
+  for (const item of validItems) {
+    const groupKey = tierGroupKey(tiersByProduct.get(item.product_id));
+    if (!groupKey) continue;
+    qtyByTierGroup.set(groupKey, (qtyByTierGroup.get(groupKey) ?? 0) + item.quantity);
+  }
+
   // 3.4 Compute effective price per item (promo + tramo por cantidad) and build
-  // variant_label for items with variants. La cantidad que activa el tramo es la
-  // agregada por producto (`qtyByProduct`, ya calculada arriba para min_quantity),
-  // no la de esta línea sola: 2 talles M + 1 L son 3 unidades del mismo producto.
+  // variant_label for items with variants. La cantidad que activa el tramo sale del
+  // grupo, no de esta línea sola: 2 talles M + 1 L son 3 unidades, y 1 alfajor de
+  // cada sabor con la misma escalera también.
   type EnrichedItem = typeof validItems[number] & {
     effectivePrice: number;
     variantLabel: string | null;
@@ -263,8 +274,9 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   const enrichedItems: EnrichedItem[] = validItems.map((item) => {
     const product = productMap.get(item.product_id)!;
 
-    const aggregatedQty = qtyByProduct.get(item.product_id) ?? item.quantity;
     const tiers = tiersByProduct.get(item.product_id);
+    const groupKey = tierGroupKey(tiers);
+    const aggregatedQty = groupKey ? qtyByTierGroup.get(groupKey) ?? item.quantity : item.quantity;
 
     if (item.variant_id) {
       const variant = variantMap.get(item.variant_id)!;

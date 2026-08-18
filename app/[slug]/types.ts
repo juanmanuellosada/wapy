@@ -17,4 +17,5 @@ export interface UIProduct {
   min_quantity: number; // minimum units per order (default 1)
   qty_step: number; // increment step (default 1)
   priceTiers: PriceTier[]; // tramos por cantidad, ordenados asc; [] = sin tramos
+  tiersCombinable: boolean; // hay otro producto activo con la misma escalera
 }

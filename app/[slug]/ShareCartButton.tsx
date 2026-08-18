@@ -3,7 +3,8 @@
 import React from "react";
 import { Share2 } from "lucide-react";
 import type { CartItem } from "./CartContext";
-import { cartLineUnitCents } from "./CartContext";
+import { computeCartLinePrices } from "./CartContext";
+import { cartItemKey } from "./CartContext";
 import { toast } from "@/lib/toast";
 
 function formatARS(amount: number): string {
@@ -21,15 +22,13 @@ function buildShareText(
   items: CartItem[],
   total: number
 ): string {
-  // Mismo criterio que el carrito: la cantidad que activa el tramo se agrega por
-  // producto, así el detalle de líneas cierra con el total que se comparte.
-  const qtyByProduct = new Map<string, number>();
-  for (const i of items) {
-    qtyByProduct.set(i.productId, (qtyByProduct.get(i.productId) ?? 0) + i.quantity);
-  }
+  // Mismo cálculo que el carrito (incluye tramos y grupos combinables), así el
+  // detalle de líneas cierra con el total que se comparte.
+  const linePrices = computeCartLinePrices(items);
 
   const lines = items.map((i) => {
-    const displayPrice = cartLineUnitCents(i, qtyByProduct.get(i.productId) ?? i.quantity) / 100;
+    const displayPrice =
+      linePrices.get(cartItemKey(i.productId, i.variantId))?.unitPrice ?? i.variantPrice ?? i.price;
     const label = i.variantLabel ? ` (${i.variantLabel})` : "";
     return `• ${i.quantity}x ${i.name}${label} — ${formatARS(displayPrice * i.quantity)}`;
   });

@@ -38,7 +38,7 @@ import {
   applyFilters,
 } from "./filters";
 import type { UIProduct } from "./types";
-import type { PriceTier } from "@/lib/store/pricing";
+import { buildTierGroupSizes, type PriceTier } from "@/lib/store/pricing";
 import TopSellers from "./TopSellers";
 import RelatedProducts from "./RelatedProducts";
 import ShareCartButton from "./ShareCartButton";
@@ -946,6 +946,7 @@ function ProductModal({
                 ? cartQtyForProduct
                 : existingQty + qty
             }
+            combinable={product.tiersCombinable}
           />
 
           {/* Quantity selector — hidden when out of stock or when product has variants */}
@@ -1002,6 +1003,7 @@ function ProductModal({
                 min_quantity: product.min_quantity ?? 1,
                 qty_step: product.qty_step ?? 1,
                 priceTiers: product.priceTiers,
+                tiersCombinable: product.tiersCombinable,
               }}
               accentColor={accentColor}
               optionTypes={variantData.optionTypes}
@@ -1068,7 +1070,7 @@ function CartDrawer({
   checkoutMode: "whatsapp" | "mercadopago";
   mpConnected: boolean;
 }) {
-  const { items, open, totalPrice, linePrices, appliedCoupon, discountAmount, finalTotal, removeItem, setQty, closeCart, applyCoupon, removeCoupon } = useCart();
+  const { items, open, totalPrice, linePrices, tierProgress, appliedCoupon, discountAmount, finalTotal, removeItem, setQty, closeCart, applyCoupon, removeCoupon } = useCart();
   const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
@@ -1478,6 +1480,29 @@ function CartDrawer({
                 );
               })}
             </ul>
+          )}
+
+          {/* Contador de tramos: cuánto falta para el próximo escalón de cada promo.
+              Se muestra uno por grupo de escalera, no por línea, para no repetir el
+              mismo aviso en cada sabor de la misma promo. */}
+          {tierProgress.length > 0 && (
+            <div className="flex flex-col gap-2 mt-4">
+              {tierProgress.map((p) => (
+                <p
+                  key={p.groupKey}
+                  className="rounded-xl px-3 py-2 text-xs font-medium"
+                  style={{
+                    color: accentColor,
+                    background: `color-mix(in srgb, ${accentColor} 10%, transparent)`,
+                    border: `1px solid color-mix(in srgb, ${accentColor} 25%, transparent)`,
+                  }}
+                >
+                  Sumá {p.missing} {p.missing === 1 ? "unidad" : "unidades"} más
+                  {p.multiProduct ? " de esta promo" : ""} y pagás{" "}
+                  {formatARSCents(p.nextUnitCents)} c/u.
+                </p>
+              ))}
+            </div>
           )}
         </div>
 
@@ -2019,6 +2044,14 @@ export default function StoreClient({
     return map;
   }, [sections]);
 
+  const tierGroupSizes = useMemo(
+    () =>
+      buildTierGroupSizes(
+        productRows.map((p) => ({ id: p.id, tiers: priceTiersByProduct[p.id] ?? [] }))
+      ),
+    [productRows, priceTiersByProduct]
+  );
+
   const products: UIProduct[] = useMemo(
     () =>
       productRows.map((p) => ({
@@ -2035,8 +2068,9 @@ export default function StoreClient({
         min_quantity: (p as unknown as { min_quantity?: number }).min_quantity ?? 1,
         qty_step: (p as unknown as { qty_step?: number }).qty_step ?? 1,
         priceTiers: priceTiersByProduct[p.id] ?? [],
+        tiersCombinable: (tierGroupSizes.get(p.id) ?? 0) > 1,
       })),
-    [productRows, priceTiersByProduct]
+    [productRows, priceTiersByProduct, tierGroupSizes]
   );
 
   const productMap = useMemo(

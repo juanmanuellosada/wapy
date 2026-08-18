@@ -7,6 +7,9 @@ import {
   resolveTieredPrice,
   pickTier,
   tierSavingsPercent,
+  tierGroupKey,
+  buildTierGroupSizes,
+  nextTier,
   type PriceableProduct,
   type PriceableVariant,
   type PriceTier,
@@ -179,5 +182,108 @@ describe('tierSavingsPercent', () => {
   it('devuelve 0 cuando el tramo no abarata o la base es inválida', () => {
     expect(tierSavingsPercent(10000, 10000)).toBe(0);
     expect(tierSavingsPercent(5000, 0)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Grupos de tramos combinables
+// ---------------------------------------------------------------------------
+
+describe('tierGroupKey', () => {
+  it('sin tramos devuelve cadena vacía (no pertenece a ningún grupo)', () => {
+    expect(tierGroupKey([])).toBe('');
+    expect(tierGroupKey(null)).toBe('');
+    expect(tierGroupKey(undefined)).toBe('');
+  });
+
+  it('la misma escalera da la misma clave sin importar el orden', () => {
+    expect(tierGroupKey(TIERS)).toBe(tierGroupKey([TIERS[1], TIERS[0]]));
+  });
+
+  it('un centavo de diferencia parte el grupo', () => {
+    const other: PriceTier[] = [
+      { min_quantity: 3, unit_price_cents: 9334 },
+      { min_quantity: 6, unit_price_cents: 8800 },
+    ];
+    expect(tierGroupKey(other)).not.toBe(tierGroupKey(TIERS));
+  });
+
+  it('una cantidad mínima distinta parte el grupo', () => {
+    const other: PriceTier[] = [
+      { min_quantity: 4, unit_price_cents: 9333 },
+      { min_quantity: 6, unit_price_cents: 8800 },
+    ];
+    expect(tierGroupKey(other)).not.toBe(tierGroupKey(TIERS));
+  });
+});
+
+describe('buildTierGroupSizes', () => {
+  const OTHER: PriceTier[] = [{ min_quantity: 3, unit_price_cents: 2100000 }];
+
+  it('cuenta cuántos productos comparten cada escalera', () => {
+    const sizes = buildTierGroupSizes([
+      { id: 'choco', tiers: TIERS },
+      { id: 'dulce', tiers: TIERS },
+      { id: 'coco', tiers: TIERS },
+      { id: 'remera-negra', tiers: OTHER },
+      { id: 'remera-blanca', tiers: OTHER },
+    ]);
+    expect(sizes.get('choco')).toBe(3);
+    expect(sizes.get('dulce')).toBe(3);
+    expect(sizes.get('coco')).toBe(3);
+    expect(sizes.get('remera-negra')).toBe(2);
+  });
+
+  it('un producto solo en su grupo cuenta 1 (no se anuncia como combinable)', () => {
+    const sizes = buildTierGroupSizes([
+      { id: 'unico', tiers: TIERS },
+      { id: 'otro', tiers: OTHER },
+    ]);
+    expect(sizes.get('unico')).toBe(1);
+  });
+
+  it('los productos sin tramos no entran en ningún grupo', () => {
+    const sizes = buildTierGroupSizes([
+      { id: 'sin-tramos', tiers: [] },
+      { id: 'tambien-sin', tiers: null },
+    ]);
+    expect(sizes.has('sin-tramos')).toBe(false);
+    expect(sizes.has('tambien-sin')).toBe(false);
+  });
+});
+
+describe('nextTier', () => {
+  it('devuelve el escalón inmediatamente superior', () => {
+    expect(nextTier(TIERS, 0)?.min_quantity).toBe(3);
+    expect(nextTier(TIERS, 2)?.min_quantity).toBe(3);
+    expect(nextTier(TIERS, 3)?.min_quantity).toBe(6);
+    expect(nextTier(TIERS, 5)?.min_quantity).toBe(6);
+  });
+
+  it('devuelve null cuando ya se alcanzó el tramo más alto', () => {
+    expect(nextTier(TIERS, 6)).toBeNull();
+    expect(nextTier(TIERS, 99)).toBeNull();
+  });
+
+  it('sin tramos devuelve null', () => {
+    expect(nextTier([], 1)).toBeNull();
+  });
+});
+
+describe('combinación de productos con la misma escalera', () => {
+  // 3 sabores distintos, $100 cada uno, misma escalera: 1 de cada uno = 3 unidades.
+  it('la cantidad agregada del grupo dispara el tramo en cada línea', () => {
+    const aggregated = 1 + 1 + 1;
+    for (const _sabor of ['choco', 'dulce', 'coco']) {
+      const result = resolveTieredPrice(product(), null, aggregated, TIERS);
+      expect(result.unitCents).toBe(9333);
+      expect(result.onTier).toBe(true);
+    }
+  });
+
+  it('sin combinar, 1 unidad de cada uno no alcanza ningún tramo', () => {
+    const result = resolveTieredPrice(product(), null, 1, TIERS);
+    expect(result.unitCents).toBe(10000);
+    expect(result.onTier).toBe(false);
   });
 });

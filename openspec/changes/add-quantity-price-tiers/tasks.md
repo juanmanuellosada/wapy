@@ -55,3 +55,13 @@
 - [x] 9.3 `npm run build` compila
 - [x] 9.4 Migración aplicada y verificada contra el esquema de prod.
 - [ ] 9.5 **PENDIENTE — prueba en navegador**: cargar un tramo en un producto real, verlo en la ficha pública y confirmar que el carrito y el total de WhatsApp/MP bajan al cruzar el umbral.
+
+## 10. Combinación entre productos con la misma escalera
+
+- [x] 10.1 `tierGroupKey()`, `buildTierGroupSizes()` y `nextTier()` en `lib/store/pricing.ts`
+- [x] 10.2 `createPendingOrder`: agregar por grupo de escalera (`qtyByTierGroup`), dejando `qtyByProduct` intacto para min_quantity/qty_step
+- [x] 10.3 `CartContext`: `computeCartLinePrices()` y `computeTierProgress()` puras y exportadas, agrupando por escalera; `ShareCartButton` reusa la primera
+- [x] 10.4 `UIProduct.tiersCombinable` calculado en `page.tsx` y `StoreClient.tsx`
+- [x] 10.5 Ficha: aviso "combinable con los demás productos de esta promo" (solo si el grupo tiene más de un producto)
+- [x] 10.6 Carrito: contador por grupo "sumá N unidades más y pagás $X c/u"
+- [x] 10.7 Tests: `tierGroupKey`, `buildTierGroupSizes`, `nextTier` y el caso de 3 sabores combinados — 55 tests en verde

@@ -7,6 +7,7 @@ import { parseFiltersFromSearchParams } from "./filters";
 import { getTopSellers, getRelatedProductIds } from "@/lib/storefront/insights";
 import type { UIProduct } from "./types";
 import { getStoreMpConnectionStatus } from "@/lib/store/checkout/oauth";
+import { buildTierGroupSizes } from "@/lib/store/pricing";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -68,6 +69,15 @@ export default async function SlugPage({ params, searchParams }: Props) {
           ? pRaw
           : null;
 
+      // Productos que comparten escalera combinan cantidades entre sí; solo se
+      // anuncia "combinable" cuando hay al menos otro producto en el grupo.
+      const tierGroupSizes = buildTierGroupSizes(
+        resolution.products.map((p) => ({
+          id: p.id,
+          tiers: resolution.priceTiersByProduct[p.id] ?? [],
+        }))
+      );
+
       // Build a local UIProduct map for mapping RPC ids → UIProduct
       const productMap = new Map<string, UIProduct>(
         resolution.products.map((p) => [
@@ -92,6 +102,7 @@ export default async function SlugPage({ params, searchParams }: Props) {
             min_quantity: p.min_quantity ?? 1,
             qty_step: p.qty_step ?? 1,
             priceTiers: resolution.priceTiersByProduct[p.id] ?? [],
+            tiersCombinable: (tierGroupSizes.get(p.id) ?? 0) > 1,
           },
         ])
       );

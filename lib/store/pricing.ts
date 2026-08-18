@@ -133,3 +133,64 @@ export function tierUnitCentsFor(
 ): number {
   return resolveTieredPrice(product, variant, tier.min_quantity, [tier]).unitCents;
 }
+
+// ---------------------------------------------------------------------------
+// Grupos de tramos combinables
+//
+// Dos productos con la MISMA escalera (mismas cantidades y mismos precios
+// unitarios) forman un grupo: las cantidades del carrito se suman entre ellos
+// para decidir qué tramo aplica. Así "llevá 3 alfajores" se cumple con 1 de
+// cada sabor y no solo con 3 del mismo.
+//
+// El grupo es implícito, derivado de los tramos: no hay tabla ni columna nueva.
+// El corolario es que cambiar un tramo de un producto lo saca del grupo.
+// ---------------------------------------------------------------------------
+
+/**
+ * Clave de agrupación de una escalera. Los productos que la comparten combinan
+ * cantidades. Un producto sin tramos devuelve '' y no pertenece a ningún grupo.
+ */
+export function tierGroupKey(tiers: readonly PriceTier[] | null | undefined): string {
+  if (!tiers || tiers.length === 0) return '';
+  return sortTiers(tiers)
+    .map((t) => `${t.min_quantity}:${t.unit_price_cents}`)
+    .join('|');
+}
+
+/**
+ * Cuántos productos comparten la escalera de cada uno. Sirve para decidir si
+ * anunciar "combinable con otros productos": con 1 solo el aviso sería mentira.
+ */
+export function buildTierGroupSizes(
+  entries: ReadonlyArray<{ id: string; tiers: readonly PriceTier[] | null | undefined }>
+): Map<string, number> {
+  const countByKey = new Map<string, number>();
+  for (const entry of entries) {
+    const key = tierGroupKey(entry.tiers);
+    if (!key) continue;
+    countByKey.set(key, (countByKey.get(key) ?? 0) + 1);
+  }
+
+  const sizeByProduct = new Map<string, number>();
+  for (const entry of entries) {
+    const key = tierGroupKey(entry.tiers);
+    if (!key) continue;
+    sizeByProduct.set(entry.id, countByKey.get(key) ?? 1);
+  }
+  return sizeByProduct;
+}
+
+/** Tramo inmediatamente superior al que la cantidad ya alcanzó, o null si no hay. */
+export function nextTier(
+  tiers: readonly PriceTier[] | null | undefined,
+  quantity: number
+): PriceTier | null {
+  if (!tiers || tiers.length === 0) return null;
+  let best: PriceTier | null = null;
+  for (const t of tiers) {
+    if (t.min_quantity > quantity && (best === null || t.min_quantity < best.min_quantity)) {
+      best = t;
+    }
+  }
+  return best;
+}

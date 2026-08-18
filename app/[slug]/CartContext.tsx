@@ -8,7 +8,12 @@ import {
   useMemo,
   useReducer,
 } from "react";
-import { resolveTieredPrice, type PriceTier } from "@/lib/store/pricing";
+import {
+  resolveTieredPrice,
+  tierGroupKey,
+  nextTier,
+  type PriceTier,
+} from "@/lib/store/pricing";
 
 export interface CartItem {
   productId: string;
@@ -34,6 +39,27 @@ export interface CartItem {
   effectivePriceCents?: number;
 }
 
+/**
+ * Suma las cantidades del carrito por grupo de tramos. Los productos que comparten
+ * la misma escalera combinan: 1 alfajor de cada sabor cuenta como 3 unidades.
+ * Los items sin tramos no entran en ningún grupo.
+ */
+function aggregateQtyByGroup(items: CartItem[]): Map<string, number> {
+  const byGroup = new Map<string, number>();
+  for (const i of items) {
+    const key = tierGroupKey(i.priceTiers);
+    if (!key) continue;
+    byGroup.set(key, (byGroup.get(key) ?? 0) + i.quantity);
+  }
+  return byGroup;
+}
+
+/** Cantidad que decide el tramo de una línea: la de su grupo, o la suya si no tiene tramos. */
+function tierQtyForItem(item: CartItem, byGroup: Map<string, number>): number {
+  const key = tierGroupKey(item.priceTiers);
+  return key ? byGroup.get(key) ?? item.quantity : item.quantity;
+}
+
 /** Precio unitario de una línea en centavos, resolviendo promo + tramo por cantidad. */
 export function cartLineUnitCents(item: CartItem, aggregatedQty: number): number {
   // Items viejos en localStorage (anteriores a los tramos) no traen los campos en
@@ -56,6 +82,22 @@ export function cartLineUnitCents(item: CartItem, aggregatedQty: number): number
   ).unitCents;
 }
 
+/**
+ * Cuánto le falta a un grupo de tramos para llegar al siguiente escalón. Se usa
+ * para el aviso del carrito ("sumá 2 unidades más y pagás $933,33 c/u").
+ */
+export interface TierProgress {
+  groupKey: string;
+  /** Unidades que faltan para alcanzar el próximo tramo. */
+  missing: number;
+  /** Precio por unidad al que quedaría ese próximo tramo. */
+  nextUnitCents: number;
+  /** Cantidad que ya hay en el carrito de ese grupo. */
+  currentQty: number;
+  /** true si el grupo abarca más de un producto del carrito. */
+  multiProduct: boolean;
+}
+
 /** Precio de una línea del carrito ya resuelto, en ARS. */
 export interface CartLinePrice {
   /** Unitario que se cobra (con tramo aplicado si corresponde). */
@@ -64,6 +106,44 @@ export interface CartLinePrice {
   basePrice: number;
   /** true cuando el tramo por cantidad abarató esta línea. */
   onTier: boolean;
+}
+
+/**
+ * Precio resuelto de cada línea del carrito, indexado por `cartItemKey`.
+ * Pura: la usan el provider y el compartir-carrito para no divergir.
+ */
+export function computeCartLinePrices(items: CartItem[]): Map<string, CartLinePrice> {
+  const byGroup = aggregateQtyByGroup(items);
+  const prices = new Map<string, CartLinePrice>();
+  for (const i of items) {
+    const key = cartItemKey(i.productId, i.variantId);
+    const unitPrice = cartLineUnitCents(i, tierQtyForItem(i, byGroup)) / 100;
+    const basePrice = i.variantPrice ?? i.price;
+    prices.set(key, { unitPrice, basePrice, onTier: unitPrice < basePrice });
+  }
+  return prices;
+}
+
+/** Un aviso por grupo de tramos que todavía tiene un escalón por encima. */
+export function computeTierProgress(items: CartItem[]): TierProgress[] {
+  const byGroup = aggregateQtyByGroup(items);
+  const progress: TierProgress[] = [];
+
+  for (const [groupKey, currentQty] of byGroup) {
+    const inGroup = items.filter((i) => tierGroupKey(i.priceTiers) === groupKey);
+    const tiers = inGroup[0]?.priceTiers;
+    const next = nextTier(tiers, currentQty);
+    if (!next) continue;
+    progress.push({
+      groupKey,
+      missing: next.min_quantity - currentQty,
+      nextUnitCents: next.unit_price_cents,
+      currentQty,
+      multiProduct: new Set(inGroup.map((i) => i.productId)).size > 1,
+    });
+  }
+
+  return progress;
 }
 
 /** Stable key used to identify a cart line (product + variant combo). */
@@ -159,6 +239,8 @@ interface CartContextValue {
   totalPrice: number;
   /** Precio resuelto por línea, indexado por `cartItemKey(productId, variantId)`. */
   linePrices: Map<string, CartLinePrice>;
+  /** Grupos de tramos a los que les falta poco para el próximo escalón. */
+  tierProgress: TierProgress[];
   appliedCoupon: AppliedCoupon | null;
   discountAmount: number;
   finalTotal: number;
@@ -251,25 +333,11 @@ export function CartProvider({
 
   const totalItems = state.items.reduce((s, i) => s + i.quantity, 0);
 
-  // Tramos por cantidad: la cantidad que activa el tramo se agrega POR PRODUCTO,
-  // sumando todas sus variantes (mismo criterio que min_quantity y que el cálculo
-  // server-side en createPendingOrder).
-  const linePrices = useMemo(() => {
-    const qtyByProduct = new Map<string, number>();
-    for (const i of state.items) {
-      qtyByProduct.set(i.productId, (qtyByProduct.get(i.productId) ?? 0) + i.quantity);
-    }
-
-    const prices = new Map<string, CartLinePrice>();
-    for (const i of state.items) {
-      const key = cartItemKey(i.productId, i.variantId);
-      const aggregatedQty = qtyByProduct.get(i.productId) ?? i.quantity;
-      const unitPrice = cartLineUnitCents(i, aggregatedQty) / 100;
-      const basePrice = i.variantPrice ?? i.price;
-      prices.set(key, { unitPrice, basePrice, onTier: unitPrice < basePrice });
-    }
-    return prices;
-  }, [state.items]);
+  // Tramos por cantidad: la cantidad que activa el tramo se agrega por GRUPO de
+  // escalera (productos con los mismos tramos combinan entre sí), igual que el
+  // cálculo server-side en createPendingOrder.
+  const linePrices = useMemo(() => computeCartLinePrices(state.items), [state.items]);
+  const tierProgress = useMemo(() => computeTierProgress(state.items), [state.items]);
 
   const totalPrice = state.items.reduce((s, i) => {
     const line = linePrices.get(cartItemKey(i.productId, i.variantId));
@@ -295,6 +363,7 @@ export function CartProvider({
         totalItems,
         totalPrice,
         linePrices,
+        tierProgress,
         appliedCoupon: state.appliedCoupon,
         discountAmount,
         finalTotal,
