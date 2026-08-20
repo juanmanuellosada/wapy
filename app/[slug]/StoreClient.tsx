@@ -26,6 +26,7 @@ import ProductCardClient, { VariantSelector, useVariantSelection, PriceTierHint,
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
 import { buildOrderWhatsappMessage } from "@/lib/store/whatsapp/buildMessage";
+import { customerPhoneSchema } from "@/lib/store/whatsapp/customerPhone";
 import { startCheckout } from "@/lib/store/checkout/actions";
 import { validateCoupon } from "@/lib/store/coupons/actions";
 import { toast } from "@/lib/toast";
@@ -239,6 +240,36 @@ function useCheckoutIdempotencyKey(slug: string, signature: string) {
   }, [signature, persist]);
 
   return { key, regenerate };
+}
+
+// ─── Buyer WhatsApp phone persistence ────────────────────────────────────────
+// Igual convención que el carrito (wapy-cart-${slug} en CartContext): se guarda
+// por tienda para precargarlo en el próximo pedido y no volver a tipearlo.
+
+function useCustomerPhone(slug: string) {
+  const storageKey = `wapy-phone-${slug}`;
+  const [phone, setPhoneState] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return localStorage.getItem(storageKey) ?? "";
+    } catch {
+      return "";
+    }
+  });
+
+  const setPhone = useCallback(
+    (value: string) => {
+      setPhoneState(value);
+      try {
+        localStorage.setItem(storageKey, value);
+      } catch {
+        // Ignore storage errors
+      }
+    },
+    [storageKey]
+  );
+
+  return [phone, setPhone] as const;
 }
 
 // ─── Local types used in cart/UI ─────────────────────────────────────────────
@@ -1081,6 +1112,10 @@ function CartDrawer({
     storeSlug,
     cartSignature(items)
   );
+  // Teléfono de la compradora, obligatorio para pedir por WhatsApp (precargado
+  // desde localStorage si ya pidió antes en esta tienda).
+  const [customerPhone, setCustomerPhone] = useCustomerPhone(storeSlug);
+  const isPhoneValid = customerPhoneSchema.safeParse(customerPhone).success;
   // task 5.4, 5.5: MP checkout step state
   const isMpMode = checkoutMode === "mercadopago" && mpConnected;
   const [checkoutStep, setCheckoutStep] = useState<"cart" | "form">("cart");
@@ -1101,6 +1136,15 @@ function CartDrawer({
 
   async function handleWhatsApp() {
     if (!whatsappNumber) return;
+
+    // El teléfono es obligatorio: el botón ya queda deshabilitado sin uno válido,
+    // esto es la red de seguridad server-side-adjacent por si igual se dispara.
+    const phoneResult = customerPhoneSchema.safeParse(customerPhone);
+    if (!phoneResult.success) {
+      toast.error("Ingresá tu WhatsApp para continuar.");
+      return;
+    }
+    const normalizedPhone = phoneResult.data;
 
     // B3: block checkout if any cart item exceeds available stock
     if (hasStockIssues) {
@@ -1149,12 +1193,16 @@ function CartDrawer({
         coupon_code: appliedCoupon?.code ?? null,
         discount_amount: appliedCoupon ? discountAmount : null,
         idempotency_key: idempotencyKey,
+        customer_phone: normalizedPhone,
       });
       if ('order_id' in result) {
         orderId = result.order_id;
         storeOrderNumber = result.store_order_number;
         // Fresh key for a possible next order with the same cart contents.
         regenerateIdempotencyKey();
+      } else if ('error' in result && result.error === 'invalid_phone') {
+        toast.error("Ingresá tu WhatsApp para continuar.");
+        return;
       } else if ('error' in result && result.error === 'stock_insufficient') {
         toast.error("Algunos productos ya no tienen stock suficiente. Revisá tu carrito.");
         return;
@@ -1189,6 +1237,7 @@ function CartDrawer({
       total: appliedCoupon && discountAmount > 0 ? finalTotal : totalPrice,
       orderId,
       storeOrderNumber,
+      customerPhone: normalizedPhone,
     });
 
     const normalized = whatsappNumber.replace(/\D/g, "");
@@ -1751,6 +1800,32 @@ function CartDrawer({
                   productMinStepMap={productMinStepMap}
                 />
 
+                {/* Teléfono de la compradora — obligatorio para pedir por WhatsApp,
+                    en línea acá para no agregar un paso al flujo. Se precarga desde
+                    localStorage si ya pidió antes en esta tienda. */}
+                {!isMpMode && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-medium" style={{ color: "var(--store-ink-secondary)" }}>
+                      Tu WhatsApp <span aria-hidden>*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      inputMode="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="11 1234-5678"
+                      maxLength={30}
+                      className="rounded-xl px-3 py-2 text-sm focus:outline-none"
+                      style={{
+                        background: "var(--store-border)",
+                        color: "var(--store-ink)",
+                        border: "1px solid var(--store-border-strong)",
+                      }}
+                      aria-label="Tu número de WhatsApp"
+                    />
+                  </div>
+                )}
+
                 {/* task 5.5: CTA branch — MP mode shows payment button; WhatsApp mode shows WA */}
                 {isMpMode ? (
                   <button
@@ -1767,14 +1842,14 @@ function CartDrawer({
                 ) : whatsappNumber ? (
                   <button
                     onClick={handleWhatsApp}
-                    disabled={hasStockIssues}
-                    className={`w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 transition-opacity${hasStockIssues ? " opacity-50 cursor-not-allowed" : " cursor-pointer hover:opacity-90"}`}
+                    disabled={hasStockIssues || !isPhoneValid}
+                    className={`w-full rounded-full py-4 text-sm font-semibold flex items-center justify-center gap-2.5 transition-opacity${hasStockIssues || !isPhoneValid ? " opacity-50 cursor-not-allowed" : " cursor-pointer hover:opacity-90"}`}
                     style={{ background: "#25D366", color: "#ffffff" }}
-                    aria-label={hasStockIssues ? "Corregí el stock para continuar" : "Enviar pedido por WhatsApp"}
-                    title={hasStockIssues ? "Reducí la cantidad de los productos marcados para continuar" : undefined}
+                    aria-label={hasStockIssues ? "Corregí el stock para continuar" : !isPhoneValid ? "Ingresá tu WhatsApp para continuar" : "Enviar pedido por WhatsApp"}
+                    title={hasStockIssues ? "Reducí la cantidad de los productos marcados para continuar" : !isPhoneValid ? "Ingresá tu WhatsApp para continuar" : undefined}
                   >
                     <WhatsAppIcon className="h-5 w-5" />
-                    {hasStockIssues ? "Corregí el stock" : "Pedir por WhatsApp"}
+                    {hasStockIssues ? "Corregí el stock" : !isPhoneValid ? "Ingresá tu WhatsApp" : "Pedir por WhatsApp"}
                   </button>
                 ) : (
                   <div className="flex flex-col gap-1">

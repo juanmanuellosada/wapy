@@ -28,6 +28,8 @@ export type WhatsAppPayment = {
  * @param input.orderId    - Order UUID, used to build the deep link to the order in the owner's panel.
  * @param input.storeOrderNumber - Correlative order number for the store (task 2.1). When absent,
  *   falls back to a short UUID reference so older callers keep working.
+ * @param input.customerPhone - Teléfono (E.164) de la compradora, ya normalizado. Viaja en el
+ *   mensaje para que la tienda tenga el contacto aunque el pedido no se abra desde ese número.
  * @param input.payment    - Payment info for paid MP orders; adds a "Pagado" block at the end.
  */
 export function buildOrderWhatsappMessage(input: {
@@ -38,6 +40,7 @@ export function buildOrderWhatsappMessage(input: {
   total: number;
   orderId: string;
   storeOrderNumber?: number | null;
+  customerPhone?: string | null;
   payment?: WhatsAppPayment | null;
 }): string {
   const parts: string[] = [
@@ -51,6 +54,10 @@ export function buildOrderWhatsappMessage(input: {
     parts.push(`Cupón *${input.couponCode}*: -${formatARS(input.discountAmount)}`);
   }
   parts.push(`*Total: ${formatARS(input.total)}*`);
+
+  if (input.customerPhone) {
+    parts.push(`📱 ${input.customerPhone}`);
+  }
 
   const ref = input.storeOrderNumber != null ? input.storeOrderNumber : input.orderId.slice(0, 8);
   parts.push('', `Pedido #${ref}`, buildOrderDashboardUrl(input.orderId));

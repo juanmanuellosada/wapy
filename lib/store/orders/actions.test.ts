@@ -398,6 +398,42 @@ describe('batchUpdateOrderStatus', () => {
     expect(o1.status).toBe('confirmed');
     expect(o3.status).toBe('cancelled'); // no se tocó
   });
+
+  // 7.6: "seleccionar todos los que coinciden con el filtro" no manda ids —
+  // manda los filtros, y acá se resuelven server-side reusando
+  // fetchFilteredOrders (la misma lógica de filtrado que listOrders).
+  it('selección por filtro resuelve y aplica sobre TODO el conjunto filtrado, no solo una página', async () => {
+    const pendingOrders = Array.from({ length: 25 }, (_, i) => pendingOrder(`p${i + 1}`));
+    const admin = setup(pendingOrders);
+
+    const result = await batchUpdateOrderStatus({ filters: { status: 'pending' } }, 'confirmed');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.updated).toHaveLength(25);
+    expect(result.failed).toEqual([]);
+    expect(admin.__state.orders.every((o) => o.status === 'confirmed')).toBe(true);
+  });
+
+  it('40 seleccionados con 11 en estado terminal: reporta 29 exitosos y 11 fallidos', async () => {
+    const pendingOrders = Array.from({ length: 29 }, (_, i) => pendingOrder(`p${i + 1}`));
+    const cancelledOrders = Array.from({ length: 11 }, (_, i) => ({
+      id: `c${i + 1}`,
+      store_id: 's1',
+      status: 'cancelled',
+      cancelled_by: 'owner',
+      coupon_code: null,
+      coupon_counted: false,
+      order_items: [],
+    }));
+    const admin = setup([...pendingOrders, ...cancelledOrders]);
+
+    const result = await batchUpdateOrderStatus({ filters: {} }, 'confirmed');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.updated).toHaveLength(29);
+    expect(result.failed).toHaveLength(11);
+    expect(result.failed.every((f) => f.reason === 'invalid_transition')).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -155,8 +155,9 @@ export async function sendPendingOrdersDigestEmail({
 }
 
 // ---------------------------------------------------------------------------
-// Anuncio del cambio de ciclo de vida de pedidos de WhatsApp (envío puntual,
-// una sola vez, antes de aplicar la migración 036)
+// Anuncio del cambio de ciclo de vida de pedidos de WhatsApp (envío puntual;
+// la migración 036 y el deploy ya están en producción y el anuncio ya se
+// envió a las tiendas activas)
 // ---------------------------------------------------------------------------
 
 export async function sendWhatsAppLifecycleAnnouncementEmail({

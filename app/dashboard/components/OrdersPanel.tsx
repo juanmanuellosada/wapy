@@ -9,7 +9,13 @@ import {
   batchUpdateOrderStatus,
   getBacklogPendingCount,
 } from '@/lib/store/orders/actions';
-import type { OrderWithItems, OrderStatus, OrderChannel, OrderPaymentStatus } from '@/lib/store/orders/actions';
+import type {
+  OrderWithItems,
+  OrderStatus,
+  OrderChannel,
+  OrderPaymentStatus,
+  BatchUpdateOrderStatusResult,
+} from '@/lib/store/orders/actions';
 import { toast } from '@/lib/toast';
 import type { Store, Section } from '@/lib/onboarding/state';
 import { Select } from '@/app/components/Select';
@@ -157,6 +163,30 @@ const DEFAULT_FILTERS: Filters = {
   date_to: '',
   section_id: '',
   created_before: '',
+};
+
+// 7.6: motivos de fallo del lote agrupados por tipo, no listados por id — con
+// selecciones grandes ("29 confirmados, 11 no...") es lo único legible.
+const BATCH_FAILURE_REASON_LABELS: Record<
+  BatchUpdateOrderStatusResult['failed'][number]['reason'],
+  string
+> = {
+  invalid_transition: 'ya estaban en un estado que no permite este cambio',
+  not_found: 'no se encontraron',
+  stock_insufficient: 'no tenían stock suficiente',
+};
+
+function summarizeBatchFailures(failed: BatchUpdateOrderStatusResult['failed']): string {
+  const counts = new Map<string, number>();
+  for (const f of failed) counts.set(f.reason, (counts.get(f.reason) ?? 0) + 1);
+  return Array.from(counts.entries())
+    .map(([reason, count]) => `${count} ${BATCH_FAILURE_REASON_LABELS[reason as keyof typeof BATCH_FAILURE_REASON_LABELS]}`)
+    .join('; ');
+}
+
+const BATCH_ACTION_WORDS: Record<'confirmed' | 'cancelled', { noun: string; verb: string }> = {
+  confirmed: { noun: 'confirmado', verb: 'confirmarse' },
+  cancelled: { noun: 'cancelado', verb: 'cancelarse' },
 };
 
 function hasActiveFilters(f: Filters): boolean {
@@ -383,10 +413,16 @@ export function OrdersPanel({
   const [selectedOrder, setSelectedOrder] = useState<OrderWithItems | null>(initialDeepLinkOrder);
   const [exporting, setExporting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // 7.6: cuando está en true, la selección lógica es "todos los pedidos que
+  // coinciden con los filtros vigentes" (no una lista de ids) — `selectedIds`
+  // sigue reflejando la página actual, se usa solo para el estado visual del
+  // checkbox de cabecera y para poder volver a "solo esta página".
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
   const [batchLoading, setBatchLoading] = useState<OrderStatus | null>(null);
   const [backlogCount, setBacklogCount] = useState(initialBacklogCount);
 
   const isFirstRender = useRef(true);
+  const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   const fetchOrders = useCallback(async (f: Filters, p: number) => {
     setLoading(true);
@@ -408,7 +444,10 @@ export function OrdersPanel({
     setOrders(result.orders);
     setTotal(result.total);
     setPageSize(result.pageSize);
+    // 7.6: cambiar de página o de filtro invalida cualquier selección previa
+    // (dejar pedidos seleccionados que ya no se ven es el bug que se evita).
     setSelectedIds(new Set());
+    setSelectAllMatching(false);
   }, []);
 
   // 12.1/12.2/12.3: los filtros viven en la consulta, no en memoria — cada
@@ -466,6 +505,10 @@ export function OrdersPanel({
   };
 
   const toggleSelected = (orderId: string) => {
+    // Tocar un pedido puntual siempre vuelve a selección "por id": ya no es
+    // exacto decir "todos los que coinciden con el filtro" si la dueña acaba
+    // de excluir uno a mano.
+    setSelectAllMatching(false);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(orderId)) next.delete(orderId);
@@ -474,22 +517,60 @@ export function OrdersPanel({
     });
   };
 
+  const allPageSelected = orders.length > 0 && orders.every((o) => selectedIds.has(o.id));
+  const somePageSelected = orders.some((o) => selectedIds.has(o.id));
+  // Toda la página está seleccionada y el filtro tiene coincidencias fuera de
+  // ella: ahí (y solo ahí) tiene sentido ofrecer "seleccionar todos".
+  const canOfferSelectAllMatching = allPageSelected && total > orders.length;
+
+  useEffect(() => {
+    if (headerCheckboxRef.current) {
+      headerCheckboxRef.current.indeterminate = !allPageSelected && somePageSelected;
+    }
+  }, [allPageSelected, somePageSelected]);
+
+  const toggleSelectAllPage = () => {
+    if (allPageSelected) {
+      setSelectedIds(new Set());
+      setSelectAllMatching(false);
+    } else {
+      setSelectedIds(new Set(orders.map((o) => o.id)));
+    }
+  };
+
   const handleBatchAction = async (nextStatus: 'confirmed' | 'cancelled') => {
     if (selectedIds.size === 0) return;
     setBatchLoading(nextStatus);
-    const result = await batchUpdateOrderStatus(Array.from(selectedIds), nextStatus);
+    const selection = selectAllMatching
+      ? {
+          filters: {
+            status: filters.status,
+            channel: filters.channel,
+            date_from: filters.date_from || undefined,
+            date_to: filters.date_to || undefined,
+            section_id: filters.section_id || undefined,
+            search: filters.search || undefined,
+            created_before: filters.created_before || undefined,
+          },
+        }
+      : Array.from(selectedIds);
+    const result = await batchUpdateOrderStatus(selection, nextStatus);
     setBatchLoading(null);
     if ('error' in result) {
       toast.error('No tenés permisos para esta acción.');
       return;
     }
     const { updated, failed } = result;
+    const { noun, verb } = BATCH_ACTION_WORDS[nextStatus];
     if (failed.length === 0) {
-      toast.success(`${updated.length} pedido${updated.length === 1 ? '' : 's'} actualizado${updated.length === 1 ? '' : 's'}.`);
+      toast.success(`${updated.length} pedido${updated.length === 1 ? '' : 's'} ${noun}${updated.length === 1 ? '' : 's'}.`);
     } else {
-      toast.info(`${updated.length} actualizado${updated.length === 1 ? '' : 's'}, ${failed.length} no se pudo${failed.length === 1 ? '' : 'ieron'} cambiar.`);
+      toast.info(
+        `${updated.length} ${noun}${updated.length === 1 ? '' : 's'}, ${failed.length} no ${failed.length === 1 ? 'pudo' : 'pudieron'} ${verb} (${summarizeBatchFailures(failed)}).`
+      );
     }
     setSelectedIds(new Set());
+    setSelectAllMatching(false);
     fetchOrders(filters, page);
     refreshBacklogCount();
   };
@@ -659,10 +740,33 @@ export function OrdersPanel({
         </div>
       </div>
 
-      {/* Batch action bar (7.4) */}
+      {/* Batch action bar (7.4/7.6) */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2.5 mb-3 rounded-xl bg-white/8 border border-white/15">
-          <p className="text-xs text-white/60 flex-1">{selectedIds.size} seleccionado{selectedIds.size === 1 ? '' : 's'}</p>
+        <div className="flex items-center gap-3 px-4 py-2.5 mb-3 rounded-xl bg-white/8 border border-white/15 flex-wrap">
+          <div className="flex-1 min-w-[220px]">
+            <p className="text-xs text-white/60">
+              {selectAllMatching
+                ? `Los ${total} pedidos que coinciden con el filtro están seleccionados.`
+                : `${selectedIds.size} seleccionado${selectedIds.size === 1 ? '' : 's'}`}
+            </p>
+            {selectAllMatching ? (
+              <button
+                type="button"
+                onClick={() => setSelectAllMatching(false)}
+                className="text-xs text-[#F5C84B] hover:underline cursor-pointer mt-0.5"
+              >
+                Solo esta página
+              </button>
+            ) : canOfferSelectAllMatching ? (
+              <button
+                type="button"
+                onClick={() => setSelectAllMatching(true)}
+                className="text-xs text-[#F5C84B] hover:underline cursor-pointer mt-0.5"
+              >
+                Seleccionar los {total} pedidos que coinciden con el filtro
+              </button>
+            ) : null}
+          </div>
           <button
             type="button"
             disabled={batchLoading !== null}
@@ -698,6 +802,19 @@ export function OrdersPanel({
 
       {orders.length > 0 && (
         <div className={`space-y-2 ${loading ? 'opacity-50' : ''}`}>
+          {/* 7.6: checkbox de cabecera — selecciona/deselecciona toda la página
+              visible; queda indeterminado cuando la selección es parcial. */}
+          <div className="flex items-center gap-3 px-4 py-1">
+            <input
+              ref={headerCheckboxRef}
+              type="checkbox"
+              checked={allPageSelected}
+              onChange={toggleSelectAllPage}
+              className="flex-shrink-0 w-4 h-4 cursor-pointer accent-[#F5C84B]"
+              aria-label="Seleccionar todos los pedidos de esta página"
+            />
+            <p className="text-xs text-white/40">Seleccionar todos</p>
+          </div>
           {orders.map((order) => (
             <div
               key={order.id}

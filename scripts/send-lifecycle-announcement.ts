@@ -1,14 +1,20 @@
 // One-off script: sends the WhatsApp order lifecycle announcement
-// (emails/WhatsAppLifecycleAnnouncement.tsx) to every registered store owner,
-// before the 036_whatsapp_order_lifecycle migration goes live.
+// (emails/WhatsAppLifecycleAnnouncement.tsx) to every registered store owner.
+// The 036_whatsapp_order_lifecycle migration and its deploy are already live in
+// production; this announcement goes out after the fact.
 //
 // Usage:
-//   npx tsx scripts/send-lifecycle-announcement.ts --dry-run   # list recipients, sends nothing
-//   npx tsx scripts/send-lifecycle-announcement.ts             # sends for real, asks to confirm first
+//   npx tsx scripts/send-lifecycle-announcement.ts --dry-run                              # list recipients, sends nothing
+//   npx tsx scripts/send-lifecycle-announcement.ts --only <email> [--store-name "Nombre"] # send a single test copy and exit
+//   npx tsx scripts/send-lifecycle-announcement.ts                                        # sends for real, asks to confirm first
 //
 // Safety:
 //   - Requires typing an exact confirmation phrase interactively before sending anything real.
 //     Never sends unattended (no TTY + no --dry-run aborts).
+//   - --only sends one email to the given address and exits immediately: no interactive
+//     confirmation, no TTY required (an explicit address on the command line is already the
+//     declaration of intent), and it is never written to the log — so it can't make the real
+//     batch skip that owner later.
 //   - A failed send for one store does not stop the batch; it's recorded and can be retried
 //     by running the script again.
 //   - Keeps a local log (send-lifecycle-announcement.log.json, gitignored) of who already
@@ -77,7 +83,20 @@ async function confirm(recipientCount: number): Promise<boolean> {
 }
 
 async function main() {
-  const dryRun = process.argv.includes('--dry-run');
+  const args = process.argv.slice(2);
+  const dryRun = args.includes('--dry-run');
+  const onlyIndex = args.indexOf('--only');
+  const only = onlyIndex !== -1 ? args[onlyIndex + 1] : null;
+  const storeNameIndex = args.indexOf('--store-name');
+  const storeName = storeNameIndex !== -1 ? args[storeNameIndex + 1] : 'Dulce Hogar';
+
+  if (only) {
+    console.log(`Enviando copia de prueba a ${only} (tienda de muestra: "${storeName}")...`);
+    await sendWhatsAppLifecycleAnnouncementEmail({ to: only, storeName });
+    console.log('Copia de prueba enviada. No se registró en el log.');
+    return;
+  }
+
   const admin = createAdminClient();
   const log = loadLog();
   const alreadySent = new Set(log.filter((e) => e.status === 'sent').map((e) => e.storeId));

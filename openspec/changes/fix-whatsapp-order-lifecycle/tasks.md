@@ -60,6 +60,7 @@
 - [x] 7.3 Aplicar las mismas reversiones de stock y cupón que el path individual
 - [x] 7.4 Selección múltiple en el listado y acción de confirmar o cancelar sobre la selección
 - [x] 7.5 Tests: lote homogéneo confirma todo; lote con un pedido ya cancelado confirma el resto e informa el fallo
+- [x] 7.6 Gap de UX detectado post-release: "seleccionar todos" de dos niveles (página visible / todos los que coinciden con el filtro), con checkbox de cabecera indeterminado, `batchUpdateOrderStatus` extendido para aceptar filtros además de ids, y resultado parcial agrupado por motivo de fallo
 
 ## 8. Métricas
 
@@ -101,7 +102,8 @@
 - [x] 13.2 Agregar el sender del anuncio en `lib/email/index.ts` usando Resend, con el mismo transporte y remitente que el resto de los emails del sistema
 - [x] 13.3 Resolver la lista de destinatarios: todos los dueños de tienda registrados
 - [x] 13.4 Script de envío puntual que recorra los destinatarios, tolere fallos individuales sin abortar la tanda y deje registro de a quién se le envió
-- [ ] 13.5 **Gate de aprobación**: mostrarle el cuerpo del email al usuario y esperar su visto bueno explícito antes de enviar nada
-- [ ] 13.6 Enviar el anuncio, ya aprobado, antes de aplicar la migración
-- [ ] 13.7 Aplicar la migración a producción
-- [ ] 13.8 Verificar en producción: numeración asignada y sin huecos inesperados, cron corriendo sobre ambos canales, deep link funcionando desde un celular sin sesión, y reactivación de un pedido cancelado por el sistema
+- [x] 13.5 **Gate de aprobación**: mostrarle el cuerpo del email al usuario y esperar su visto bueno explícito antes de enviar nada
+- [x] 13.6 Enviar el anuncio (salió después de la migración, no antes: el orden se invirtió sobre la marcha). Enviado a las 4 tiendas activas con clientas reales; se excluyeron 3 bloqueadas y 1 de prueba
+- [x] 13.7 Aplicar la migración a producción (036 y 037, más el backfill de la ventana entre migrar y deployar)
+- [x] 13.8 Verificar en producción: numeración asignada sin huecos ni duplicados, y mensaje de WhatsApp con número correlativo y enlace directo (verificado con una venta real)
+- [ ] 13.9 Pendiente de verificar en producción: deep link desde un celular sin sesión, y reactivación de un pedido cancelado por el sistema (requiere que el cron cancele algo primero)

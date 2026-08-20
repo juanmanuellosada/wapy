@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
 import { resolveTieredPrice, tierGroupKey, type PriceTier } from '@/lib/store/pricing';
+import { customerPhoneSchema } from '@/lib/store/whatsapp/customerPhone';
 import { canReactivateOrder, type OrderCancelledBy } from './expiry';
 
 // 3.1 Each cart item may carry an optional variantId.
@@ -18,6 +19,9 @@ type CreateOrderInput = {
   channel?: 'whatsapp' | 'mercadopago';
   customer_name?: string | null;
   customer_email?: string | null;
+  // Para channel='whatsapp' es obligatorio y se valida/normaliza server-side
+  // (customerPhoneSchema); para 'mercadopago' sigue siendo opcional, sin tocar
+  // ese flujo (lib/store/checkout/schemas.ts ya lo valida por su cuenta).
   customer_phone?: string | null;
   delivery_address?: string | null;
   // Idempotency (Ola 1 hardening): when provided and an order with the same
@@ -44,6 +48,7 @@ export type StockInsufficientDetail = {
 type CreateOrderResult =
   | { order_id: string; mp_items: MpOrderItem[]; store_order_number: number | null }
   | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' }
+  | { error: 'invalid_phone' }
   | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
   | { error: 'qty_violation'; productId: string; productName: string; min: number; step: number }
   | { error: 'coupon_invalid'; message: string }
@@ -59,6 +64,18 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   if (input.idempotency_key) {
     const existing = await findOrderByIdempotencyKey(admin, input.idempotency_key);
     if (existing) return existing;
+  }
+
+  // 0.5 El teléfono de la compradora es obligatorio en WhatsApp (es el único dato
+  // de contacto que persiste el pedido en ese canal); se normaliza acá aunque el
+  // input del cliente ya lo haya validado, para no confiar en un request directo.
+  let normalizedCustomerPhone: string | null = null;
+  if (channel === 'whatsapp') {
+    const phoneResult = customerPhoneSchema.safeParse(input.customer_phone ?? '');
+    if (!phoneResult.success) {
+      return { error: 'invalid_phone' };
+    }
+    normalizedCustomerPhone = phoneResult.data;
   }
 
   // 1. Validate store exists and is published
@@ -427,7 +444,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       channel,
       customer_name: input.customer_name ?? null,
       customer_email: input.customer_email ?? null,
-      customer_phone: input.customer_phone ?? null,
+      customer_phone: channel === 'whatsapp' ? normalizedCustomerPhone : (input.customer_phone ?? null),
       delivery_address: input.delivery_address ?? null,
       idempotency_key: input.idempotency_key ?? null,
     })
@@ -1589,11 +1606,33 @@ export type BatchUpdateOrderStatusResult = {
 };
 
 export async function batchUpdateOrderStatus(
-  orderIds: string[],
+  // "Seleccionar todos los que coinciden con el filtro" (UI) no manda una
+  // lista de ids de miles de pedidos: manda los mismos filtros que usa
+  // listOrders y acá se resuelven los ids server-side, reusando
+  // fetchFilteredOrders en vez de duplicar la lógica de filtrado.
+  selection: string[] | { filters: ListOrdersFilters },
   next_status: OrderStatus
 ): Promise<BatchUpdateOrderStatusResult | { error: 'unauthorized' }> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
+
+  let orderIds: string[];
+  if (Array.isArray(selection)) {
+    orderIds = selection;
+  } else {
+    const admin = createAdminClient();
+    const filterResult = await fetchFilteredOrders(admin, store.id, selection.filters, null);
+    if ('queryError' in filterResult) {
+      console.error('[batchUpdateOrderStatus] filter resolution failed:', filterResult.queryError);
+      Sentry.captureException(filterResult.queryError, {
+        tags: { feature: 'orders-dashboard' },
+        extra: { storeId: store.id },
+      });
+      orderIds = [];
+    } else {
+      orderIds = filterResult.rows.map((r) => r.id as string);
+    }
+  }
 
   const updated: OrderWithItems[] = [];
   const failed: BatchUpdateOrderStatusResult['failed'] = [];
