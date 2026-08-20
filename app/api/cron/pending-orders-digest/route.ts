@@ -46,6 +46,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     .select('id, store_id, store_order_number, customer_name, total_cents')
     .eq('channel', 'whatsapp')
     .eq('status', 'pending')
+    .is('deleted_at', null)
     .order('created_at', { ascending: true });
 
   if (selectError) {

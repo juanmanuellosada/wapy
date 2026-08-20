@@ -1049,6 +1049,7 @@ async function fetchFilteredOrders(
     .from('orders')
     .select('*, order_items(*)', { count: 'exact' })
     .eq('store_id', storeId)
+    .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
   if (filters.status && filters.status !== 'all') {
@@ -1143,6 +1144,7 @@ export async function getOrderById(
     .select('*, order_items(*)')
     .eq('id', orderId)
     .eq('store_id', store.id)
+    .is('deleted_at', null)
     .maybeSingle();
 
   if (error || !data) return { error: 'not_found' };
@@ -1175,6 +1177,7 @@ export async function getBacklogPendingCount(): Promise<
     .eq('store_id', store.id)
     .eq('status', 'pending')
     .eq('channel', 'whatsapp')
+    .is('deleted_at', null)
     .lt('created_at', effectiveFrom);
 
   return { count: count ?? 0, effectiveFrom };
@@ -1242,6 +1245,7 @@ export async function getOrderStats(
     .from('orders')
     .select('id, status, total_cents, discount_cents, created_at')
     .eq('store_id', store.id)
+    .is('deleted_at', null)
     .gte('created_at', rangeStart.toISOString());
 
   const allOrders = orders ?? [];
@@ -1653,4 +1657,148 @@ export async function batchUpdateOrderStatus(
   }
 
   return { updated, failed };
+}
+
+// ---------------------------------------------------------------------------
+// deleteOrder / batchDeleteOrders / getOrderDeleteImpact (grupo 3 y 4 de
+// add-order-soft-delete): borrado con marca, no DELETE — ver
+// openspec/changes/add-order-soft-delete/design.md, Decisión 1.
+// ---------------------------------------------------------------------------
+
+export type DeleteOrderResult = { ok: true } | { error: 'unauthorized' | 'not_found' };
+
+/**
+ * Marca un pedido como borrado (deleted_at). Reusa replenishOrderStock y
+ * revertCouponUse tal como hace la cancelación (Decisión 2): ambas son
+ * idempotentes, así que llamarlas sobre un pedido ya cancelado no repone ni
+ * devuelve una segunda vez.
+ *
+ * Excepción: un pedido `delivered` es una venta concretada — el stock ya
+ * salió físicamente del catálogo y el cupón ya se usó de verdad. Reponer eso
+ * al borrar el registro sería el mismo stock fantasma que este proyecto ya
+ * arregló, solo que por la puerta de al lado. Por eso, para `delivered`, no
+ * se llama a ninguna de las dos reversiones (Decisión 3: borrar un entregado
+ * solo afecta el historial de ingresos, no el inventario ni los cupones).
+ */
+export async function deleteOrder(order_id: string): Promise<DeleteOrderResult> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+
+  const { data: existing } = await admin
+    .from('orders')
+    .select('id, status, deleted_at')
+    .eq('id', order_id)
+    .eq('store_id', store.id)
+    .maybeSingle();
+
+  if (!existing) return { error: 'not_found' };
+  if (existing.deleted_at) return { ok: true }; // ya borrado — idempotente
+
+  if (existing.status !== 'delivered') {
+    await replenishOrderStock(order_id);
+    await revertCouponUse(order_id);
+  }
+
+  const { error } = await admin
+    .from('orders')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', order_id);
+
+  if (error) {
+    console.error('[deleteOrder] update failed:', error);
+    Sentry.captureException(error, { tags: { feature: 'orders-dashboard' }, extra: { orderId: order_id } });
+    return { error: 'not_found' };
+  }
+
+  return { ok: true };
+}
+
+export type BatchDeleteOrdersResult = {
+  deletedCount: number;
+  failed: Array<{ order_id: string; reason: 'not_found' }>;
+};
+
+/**
+ * Borrado en lote con el mismo contrato de resultado parcial que
+ * batchUpdateOrderStatus (grupo 7 de fix-whatsapp-order-lifecycle): un
+ * pedido que falla no aborta el resto. Soporta el mismo modo "todos los que
+ * coinciden con el filtro" (selection.filters), resuelto server-side
+ * reusando fetchFilteredOrders en vez de duplicar la lógica de filtrado.
+ */
+export async function batchDeleteOrders(
+  selection: string[] | { filters: ListOrdersFilters }
+): Promise<BatchDeleteOrdersResult | { error: 'unauthorized' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  let orderIds: string[];
+  if (Array.isArray(selection)) {
+    orderIds = selection;
+  } else {
+    const admin = createAdminClient();
+    const filterResult = await fetchFilteredOrders(admin, store.id, selection.filters, null);
+    if ('queryError' in filterResult) {
+      console.error('[batchDeleteOrders] filter resolution failed:', filterResult.queryError);
+      Sentry.captureException(filterResult.queryError, {
+        tags: { feature: 'orders-dashboard' },
+        extra: { storeId: store.id },
+      });
+      orderIds = [];
+    } else {
+      orderIds = filterResult.rows.map((r) => r.id as string);
+    }
+  }
+
+  let deletedCount = 0;
+  const failed: BatchDeleteOrdersResult['failed'] = [];
+
+  for (const orderId of orderIds) {
+    const result = await deleteOrder(orderId);
+    if ('ok' in result) {
+      deletedCount += 1;
+    } else {
+      failed.push({ order_id: orderId, reason: 'not_found' });
+    }
+  }
+
+  return { deletedCount, failed };
+}
+
+export type OrderDeleteImpact = { total: number; deliveredCount: number };
+
+/**
+ * Cantidad exacta y desglose por "entregado" de una selección de borrado,
+ * ANTES de ejecutarlo — lo que necesita la confirmación (4.2/4.3): la
+ * cantidad real incluso en modo "todos los que coinciden con el filtro"
+ * (donde supera lo visible en pantalla), y si hay que mostrar el aviso
+ * distinto de ingresos históricos.
+ */
+export async function getOrderDeleteImpact(
+  selection: string[] | { filters: ListOrdersFilters }
+): Promise<OrderDeleteImpact | { error: 'unauthorized' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+  let rows: Array<{ status: string }>;
+
+  if (Array.isArray(selection)) {
+    const { data } = await admin
+      .from('orders')
+      .select('status')
+      .in('id', selection)
+      .eq('store_id', store.id)
+      .is('deleted_at', null);
+    rows = data ?? [];
+  } else {
+    const filterResult = await fetchFilteredOrders(admin, store.id, selection.filters, null);
+    rows = 'queryError' in filterResult ? [] : (filterResult.rows as unknown as Array<{ status: string }>);
+  }
+
+  return {
+    total: rows.length,
+    deliveredCount: rows.filter((r) => r.status === 'delivered').length,
+  };
 }

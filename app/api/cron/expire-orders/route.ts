@@ -55,6 +55,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     .select('id')
     .eq('channel', 'mercadopago')
     .eq('status', 'pending')
+    .is('deleted_at', null)
     .in('payment_status', ['pending', 'in_process'])
     .lt('created_at', mpCutoff);
 
@@ -87,7 +88,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     .from('orders')
     .select('id, created_at, stores(wa_pending_ttl_days, wa_auto_confirm, wa_lifecycle_effective_from)')
     .eq('channel', 'whatsapp')
-    .eq('status', 'pending');
+    .eq('status', 'pending')
+    .is('deleted_at', null);
 
   if (waSelectError) {
     console.error('[cron/expire-orders] WhatsApp select failed', { waSelectError });

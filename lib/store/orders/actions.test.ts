@@ -27,6 +27,10 @@ const {
   listOrders,
   batchUpdateOrderStatus,
   exportOrdersCsv,
+  getOrderById,
+  getBacklogPendingCount,
+  deleteOrder,
+  batchDeleteOrders,
 } = await import('./actions');
 
 // Espejo del tamaño de página interno de actions.ts (no se exporta: el archivo
@@ -41,16 +45,25 @@ const ORDERS_PAGE_SIZE = 20;
 type Row = Record<string, unknown>;
 
 function makeFakeAdmin(
-  tables: { orders?: Row[]; coupons?: Row[]; stores?: Row[]; order_items?: Row[] } = {}
+  tables: {
+    orders?: Row[];
+    coupons?: Row[];
+    stores?: Row[];
+    order_items?: Row[];
+    products?: Row[];
+    product_variants?: Row[];
+  } = {}
 ) {
   const state = {
     orders: tables.orders ?? [],
     coupons: tables.coupons ?? [],
     stores: tables.stores ?? [],
     order_items: tables.order_items ?? [],
+    products: tables.products ?? [],
+    product_variants: tables.product_variants ?? [],
   };
 
-  function from(table: 'orders' | 'coupons' | 'stores' | 'order_items') {
+  function from(table: 'orders' | 'coupons' | 'stores' | 'order_items' | 'products' | 'product_variants') {
     const filters: Array<(r: Row) => boolean> = [];
     let patch: Row | null = null;
     let countRequested = false;
@@ -91,6 +104,10 @@ function makeFakeAdmin(
       },
       in(col: string, vals: unknown[]) {
         filters.push((r) => (vals as unknown[]).includes(r[col]));
+        return builder;
+      },
+      is(col: string, val: unknown) {
+        filters.push((r) => (val === null ? r[col] == null : r[col] === val));
         return builder;
       },
       order(col: string, opts?: { ascending?: boolean }) {
@@ -612,5 +629,213 @@ describe('exportOrdersCsv', () => {
 
     const rowCols = row.split(',');
     expect(rowCols[headerCols.indexOf('store_order_number')]).toBe('42');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2.5 — un pedido borrado no aparece en listado, búsqueda, exportación,
+// backlog ni métricas (add-order-soft-delete, grupo 2).
+// ---------------------------------------------------------------------------
+
+describe('deleted_at — un pedido borrado no aparece en ningún lado (2.5)', () => {
+  function baseOrder(id: string, storeOrderNumber: number, deletedAt: string | null): Row {
+    return {
+      id,
+      store_id: 's1',
+      status: 'confirmed',
+      channel: 'whatsapp',
+      customer_name: null,
+      total_cents: 100_000,
+      discount_cents: 0,
+      currency: 'ARS',
+      notes: null,
+      created_at: new Date().toISOString(),
+      confirmed_at: null,
+      cancelled_at: null,
+      delivered_at: null,
+      cancelled_by: null,
+      payment_status: 'pending',
+      store_order_number: storeOrderNumber,
+      deleted_at: deletedAt,
+      order_items: [],
+    };
+  }
+
+  function setup(extra: { orders?: Row[]; order_items?: Row[] } = {}) {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1', wa_lifecycle_effective_from: '2099-01-01T00:00:00Z' }],
+      orders: extra.orders ?? [
+        baseOrder('o1', 1, new Date().toISOString()), // borrado
+        baseOrder('o2', 2, null), // vigente
+      ],
+      order_items: extra.order_items,
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+    return admin;
+  }
+
+  it('listOrders excluye el pedido borrado', async () => {
+    setup();
+    const result = await listOrders({});
+    if ('error' in result) throw new Error('unexpected error');
+    expect(result.orders.map((o) => o.id)).toEqual(['o2']);
+    expect(result.total).toBe(1);
+  });
+
+  it('la búsqueda por número de pedido no encuentra un borrado', async () => {
+    setup();
+    const result = await listOrders({ search: '1' });
+    if ('error' in result) throw new Error('unexpected error');
+    expect(result.orders).toEqual([]);
+  });
+
+  it('getOrderById no encuentra un pedido borrado', async () => {
+    setup();
+    const result = await getOrderById('o1');
+    expect(result).toEqual({ error: 'not_found' });
+  });
+
+  it('exportOrdersCsv excluye el pedido borrado', async () => {
+    setup();
+    const result = await exportOrdersCsv({});
+    if ('error' in result) throw new Error('unexpected error');
+    const rows = result.csv.replace(/^﻿/, '').split('\r\n');
+    expect(rows).toHaveLength(2); // header + o2, sin o1
+    expect(result.csv).not.toContain('o1');
+  });
+
+  it('getBacklogPendingCount no cuenta un pendiente borrado', async () => {
+    setup({
+      orders: [
+        { ...baseOrder('o1', 1, new Date().toISOString()), status: 'pending' },
+        { ...baseOrder('o2', 2, null), status: 'pending' },
+      ],
+    });
+    const result = await getBacklogPendingCount();
+    if ('error' in result) throw new Error('unexpected error');
+    expect(result.count).toBe(1);
+  });
+
+  it('getOrderStats no computa ingresos ni top_products de un pedido borrado', async () => {
+    setup({
+      orders: [
+        baseOrder('o1', 1, new Date().toISOString()),
+        baseOrder('o2', 2, null),
+      ],
+      order_items: [
+        { order_id: 'o1', product_name: 'Borrado', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa' },
+        { order_id: 'o2', product_name: 'Vigente', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa' },
+      ],
+    });
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+    expect(result.kpis.revenue_cents).toBe(100_000);
+    expect(result.top_products.map((p) => p.name)).toEqual(['Vigente']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3.4 — borrar repone stock, devuelve el cupón, no lo hace dos veces sobre un
+// pedido ya cancelado, no repone sobre un entregado (venta concretada), y se
+// rechaza sobre un pedido de otra tienda (add-order-soft-delete, grupo 3).
+// ---------------------------------------------------------------------------
+
+describe('deleteOrder (3.4)', () => {
+  function setup(tables: Parameters<typeof makeFakeAdmin>[0]) {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      ...tables,
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+    return admin;
+  }
+
+  it('borrar un pedido pendiente con stock comprometido repone las unidades', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'pending', coupon_code: null, coupon_counted: false, deleted_at: null }],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    const result = await deleteOrder('o1');
+    expect(result).toEqual({ ok: true });
+    expect(admin.__state.products[0].stock).toBe(13);
+    expect(admin.__state.orders[0].deleted_at).not.toBeNull();
+  });
+
+  it('borrar un pedido que había consumido un cupón devuelve el uso', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'confirmed', coupon_code: 'PROMO', coupon_counted: true, deleted_at: null }],
+      coupons: [{ id: 'c1', store_id: 's1', code: 'PROMO', uses_count: 1 }],
+      order_items: [],
+    });
+
+    const result = await deleteOrder('o1');
+    expect(result).toEqual({ ok: true });
+    expect(admin.__state.coupons[0].uses_count).toBe(0);
+    expect(admin.__state.orders[0].coupon_counted).toBe(false);
+  });
+
+  it('borrar un pedido ya cancelado no repone stock ni cupón una segunda vez', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'cancelled', coupon_code: 'PROMO', coupon_counted: false, deleted_at: null }],
+      coupons: [{ id: 'c1', store_id: 's1', code: 'PROMO', uses_count: 0 }],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    const result = await deleteOrder('o1');
+    expect(result).toEqual({ ok: true });
+    // replenishOrderStock no-opea porque el status ya es 'cancelled', y
+    // revertCouponUse no-opea porque coupon_counted ya está en false.
+    expect(admin.__state.products[0].stock).toBe(10);
+    expect(admin.__state.coupons[0].uses_count).toBe(0);
+  });
+
+  it('borrar un pedido entregado no repone stock ni cupón (venta concretada)', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'delivered', coupon_code: 'PROMO', coupon_counted: true, deleted_at: null }],
+      coupons: [{ id: 'c1', store_id: 's1', code: 'PROMO', uses_count: 1 }],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    const result = await deleteOrder('o1');
+    expect(result).toEqual({ ok: true });
+    expect(admin.__state.products[0].stock).toBe(10); // no se repuso: el producto ya salió del catálogo
+    expect(admin.__state.coupons[0].uses_count).toBe(1); // el cupón se usó de verdad
+    expect(admin.__state.orders[0].deleted_at).not.toBeNull(); // pero el pedido igual se borra
+  });
+
+  it('borrar un pedido de otra tienda se rechaza y no lo modifica', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 'OTHER_STORE', status: 'pending', coupon_code: null, coupon_counted: false, deleted_at: null }],
+    });
+
+    const result = await deleteOrder('o1');
+    expect(result).toEqual({ error: 'not_found' });
+    expect(admin.__state.orders[0].deleted_at).toBeNull();
+  });
+
+  it('batchDeleteOrders borra varios y reusa deleteOrder por cada uno', async () => {
+    const admin = setup({
+      orders: [
+        { id: 'o1', store_id: 's1', status: 'pending', coupon_code: null, coupon_counted: false, deleted_at: null },
+        { id: 'o2', store_id: 's1', status: 'confirmed', coupon_code: null, coupon_counted: false, deleted_at: null },
+      ],
+      order_items: [],
+    });
+
+    const result = await batchDeleteOrders(['o1', 'o2']);
+    if ('error' in result) throw new Error('unexpected error');
+    expect(result.deletedCount).toBe(2);
+    expect(result.failed).toEqual([]);
+    expect(admin.__state.orders.every((o) => o.deleted_at !== null)).toBe(true);
   });
 });

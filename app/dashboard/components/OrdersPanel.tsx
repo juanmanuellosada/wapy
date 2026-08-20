@@ -1,13 +1,16 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, X, ClipboardList, Download, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, X, ClipboardList, Download, AlertTriangle, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import {
   updateOrderStatus,
   exportOrdersCsv,
   listOrders,
   batchUpdateOrderStatus,
   getBacklogPendingCount,
+  deleteOrder,
+  batchDeleteOrders,
+  getOrderDeleteImpact,
 } from '@/lib/store/orders/actions';
 import type {
   OrderWithItems,
@@ -15,11 +18,13 @@ import type {
   OrderChannel,
   OrderPaymentStatus,
   BatchUpdateOrderStatusResult,
+  ListOrdersFilters,
 } from '@/lib/store/orders/actions';
 import { toast } from '@/lib/toast';
 import type { Store, Section } from '@/lib/onboarding/state';
 import { Select } from '@/app/components/Select';
 import { DatePicker } from '@/app/components/DatePicker';
+import { ConfirmModal } from '@/app/components/ConfirmModal';
 
 type Props = {
   store: Store;
@@ -205,11 +210,13 @@ type OrderDetailModalProps = {
   order: OrderWithItems;
   onClose: () => void;
   onStatusChange: () => void;
+  onDeleted: () => void;
 };
 
-function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalProps) {
+function OrderDetailModal({ order, onClose, onStatusChange, onDeleted }: OrderDetailModalProps) {
   const [loading, setLoading] = useState<OrderStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleTransition = async (next: OrderStatus) => {
     setLoading(next);
@@ -234,6 +241,19 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
     // 6.6: confirmar cierra el detalle y vuelve al listado ya actualizado,
     // en vez de dejar el modal abierto.
     onStatusChange();
+  };
+
+  const handleConfirmDelete = async () => {
+    setShowDeleteConfirm(false);
+    const result = await deleteOrder(order.id);
+    if ('error' in result) {
+      toast.error(
+        result.error === 'unauthorized' ? 'No tenés permisos para borrar este pedido.' : 'Pedido no encontrado.'
+      );
+      return;
+    }
+    toast.success('Pedido borrado');
+    onDeleted();
   };
 
   return (
@@ -386,8 +406,35 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
               Este pedido está en estado terminal y no puede modificarse.
             </p>
           )}
+
+          {/* 4.1: borrar está disponible para cualquier estado, por fuera de
+              las transiciones de status de arriba. */}
+          <button
+            type="button"
+            onClick={() => setShowDeleteConfirm(true)}
+            className="w-full mt-3 pt-3 border-t border-white/10 flex items-center justify-center gap-1.5 text-xs text-white/40 hover:text-red-300 transition-colors cursor-pointer"
+          >
+            <Trash2 size={12} />
+            Borrar pedido
+          </button>
         </div>
       </div>
+
+      {/* 4.3: aviso distinto para entregados — bajan los ingresos históricos,
+          no es solo "esta acción es irreversible". */}
+      <ConfirmModal
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleConfirmDelete}
+        title="Borrar pedido"
+        message={
+          order.status === 'delivered'
+            ? `Este pedido ya fue entregado. Borrarlo va a bajar tus ingresos históricos en ${formatPrice(order.total_cents)}. La dueña no puede deshacer esto desde el panel.`
+            : 'Vas a borrar este pedido. La dueña no puede deshacer esto desde el panel.'
+        }
+        confirmLabel="Sí, borrar"
+        variant="destructive"
+      />
     </div>
   );
 }
@@ -420,6 +467,11 @@ export function OrdersPanel({
   const [selectAllMatching, setSelectAllMatching] = useState(false);
   const [batchLoading, setBatchLoading] = useState<OrderStatus | null>(null);
   const [backlogCount, setBacklogCount] = useState(initialBacklogCount);
+  // 4.2/4.3: cantidad exacta + desglose de entregados de la selección vigente,
+  // resuelto server-side justo antes de mostrar la confirmación de borrado en
+  // lote (selectAllMatching puede abarcar más pedidos de los que están cargados).
+  const [batchDeleteImpact, setBatchDeleteImpact] = useState<{ total: number; deliveredCount: number } | null>(null);
+  const [batchDeleteLoading, setBatchDeleteLoading] = useState(false);
 
   const isFirstRender = useRef(true);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
@@ -538,10 +590,11 @@ export function OrdersPanel({
     }
   };
 
-  const handleBatchAction = async (nextStatus: 'confirmed' | 'cancelled') => {
-    if (selectedIds.size === 0) return;
-    setBatchLoading(nextStatus);
-    const selection = selectAllMatching
+  // 7.6/4.2: la misma selección lógica (ids puntuales o "todos los que
+  // coinciden con el filtro") la necesitan tanto el cambio de estado en lote
+  // como el borrado en lote — se arma en un solo lugar.
+  const buildBatchSelection = (): string[] | { filters: ListOrdersFilters } =>
+    selectAllMatching
       ? {
           filters: {
             status: filters.status,
@@ -554,6 +607,11 @@ export function OrdersPanel({
           },
         }
       : Array.from(selectedIds);
+
+  const handleBatchAction = async (nextStatus: 'confirmed' | 'cancelled') => {
+    if (selectedIds.size === 0) return;
+    setBatchLoading(nextStatus);
+    const selection = buildBatchSelection();
     const result = await batchUpdateOrderStatus(selection, nextStatus);
     setBatchLoading(null);
     if ('error' in result) {
@@ -568,6 +626,40 @@ export function OrdersPanel({
       toast.info(
         `${updated.length} ${noun}${updated.length === 1 ? '' : 's'}, ${failed.length} no ${failed.length === 1 ? 'pudo' : 'pudieron'} ${verb} (${summarizeBatchFailures(failed)}).`
       );
+    }
+    setSelectedIds(new Set());
+    setSelectAllMatching(false);
+    fetchOrders(filters, page);
+    refreshBacklogCount();
+  };
+
+  // 4.2/4.3: antes de mostrar la confirmación, resuelve server-side la
+  // cantidad exacta y cuántos son entregados — selectAllMatching puede
+  // abarcar pedidos que no están en la página cargada.
+  const handleOpenBatchDeleteConfirm = async () => {
+    if (selectedIds.size === 0) return;
+    setBatchDeleteLoading(true);
+    const impact = await getOrderDeleteImpact(buildBatchSelection());
+    setBatchDeleteLoading(false);
+    if ('error' in impact) {
+      toast.error('No tenés permisos para esta acción.');
+      return;
+    }
+    setBatchDeleteImpact(impact);
+  };
+
+  const handleConfirmBatchDelete = async () => {
+    const result = await batchDeleteOrders(buildBatchSelection());
+    setBatchDeleteImpact(null);
+    if ('error' in result) {
+      toast.error('No tenés permisos para esta acción.');
+      return;
+    }
+    const { deletedCount, failed } = result;
+    if (failed.length === 0) {
+      toast.success(`${deletedCount} pedido${deletedCount === 1 ? '' : 's'} borrado${deletedCount === 1 ? '' : 's'}.`);
+    } else {
+      toast.info(`${deletedCount} borrado${deletedCount === 1 ? '' : 's'}, ${failed.length} no se ${failed.length === 1 ? 'encontró' : 'encontraron'}.`);
     }
     setSelectedIds(new Set());
     setSelectAllMatching(false);
@@ -783,8 +875,34 @@ export function OrdersPanel({
           >
             {batchLoading === 'cancelled' ? 'Cancelando...' : 'Cancelar seleccionados'}
           </button>
+          <button
+            type="button"
+            disabled={batchLoading !== null || batchDeleteLoading}
+            onClick={handleOpenBatchDeleteConfirm}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/8 text-white/60 hover:text-red-300 hover:bg-red-500/10 border border-white/15 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {batchDeleteLoading ? 'Calculando...' : 'Borrar seleccionados'}
+          </button>
         </div>
       )}
+
+      {/* 4.2/4.3: cantidad exacta + aviso distinto si la selección incluye
+          pedidos entregados (bajan los ingresos históricos). */}
+      <ConfirmModal
+        open={batchDeleteImpact !== null}
+        onClose={() => setBatchDeleteImpact(null)}
+        onConfirm={handleConfirmBatchDelete}
+        title="Borrar pedidos"
+        message={
+          batchDeleteImpact
+            ? batchDeleteImpact.deliveredCount > 0
+              ? `Vas a borrar ${batchDeleteImpact.total} pedido${batchDeleteImpact.total === 1 ? '' : 's'}, de los cuales ${batchDeleteImpact.deliveredCount} ya ${batchDeleteImpact.deliveredCount === 1 ? 'fue entregado' : 'fueron entregados'}. Eso va a bajar tus ingresos históricos. La dueña no puede deshacer esto desde el panel.`
+              : `Vas a borrar ${batchDeleteImpact.total} pedido${batchDeleteImpact.total === 1 ? '' : 's'}. La dueña no puede deshacer esto desde el panel.`
+            : ''
+        }
+        confirmLabel="Sí, borrar"
+        variant="destructive"
+      />
 
       {/* List */}
       {!loading && orders.length === 0 && !hasActiveFilters(filters) && (
@@ -898,6 +1016,7 @@ export function OrdersPanel({
           order={selectedOrder}
           onClose={() => setSelectedOrder(null)}
           onStatusChange={handleStatusChange}
+          onDeleted={handleStatusChange}
         />
       )}
     </div>
