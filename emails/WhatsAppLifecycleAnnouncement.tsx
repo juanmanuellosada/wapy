@@ -15,42 +15,41 @@ export default function WhatsAppLifecycleAnnouncement({
 }: WhatsAppLifecycleAnnouncementProps) {
   return (
     <Layout previewText="Cambios en cómo Wapy maneja tus pedidos de WhatsApp">
-      <Heading style={heading}>Vamos a actualizar cómo Wapy maneja tus pedidos de WhatsApp</Heading>
-      <Text style={paragraph}>Estos cambios se activan en los próximos días en {storeName}.</Text>
+      <Heading style={heading}>Actualizamos cómo Wapy maneja tus pedidos de WhatsApp</Heading>
+      <Text style={paragraph}>Estos cambios ya están activos en {storeName}.</Text>
 
       <Text style={paragraph}>
-        Apenas se active, si un pedido que te llega por WhatsApp queda pendiente más de 7 días sin
-        que lo confirmes, Wapy lo cancela automáticamente: repone el stock y libera el cupón que
-        se haya usado, para que no queden productos reservados para siempre por pedidos que nunca
-        se concretaron.
+        Si un pedido que te llega por WhatsApp queda pendiente más de 7 días sin que lo confirmes,
+        Wapy lo cancela automáticamente: repone el stock y libera el cupón que se haya usado, para
+        que no queden productos reservados para siempre por pedidos que nunca se concretaron.
       </Text>
 
       <Text style={paragraph}>
         Esa cancelación es reversible: si la venta sí se hizo pero no llegaste a confirmarla a
-        tiempo, no se pierde, vas a poder revivir el pedido desde el panel con un clic, y vuelve a
+        tiempo, no se pierde, podés revivir el pedido desde el panel con un clic, y vuelve a
         contarse como confirmado, con su stock y su cupón descontados otra vez.
       </Text>
 
       <Text style={paragraph}>
         No tenés que hacer nada. Este cambio no toca los pedidos pendientes que ya tenías antes de
-        esta actualización: quedan exactamente como están, y vas a poder revisarlos con calma
-        desde el panel.
+        esta actualización: quedan exactamente como están, y podés revisarlos con calma desde el
+        panel.
       </Text>
 
       <Text style={paragraph}>
-        Además, el mensaje de WhatsApp que recibís con cada pedido nuevo va a incluir un enlace
-        directo para verlo y confirmarlo: confirmar un pedido queda reducido a un solo toque.
+        Además, el mensaje de WhatsApp que recibís con cada pedido nuevo incluye un enlace directo
+        para verlo y confirmarlo: confirmar un pedido queda reducido a un solo toque.
       </Text>
 
       <Text style={paragraph}>
-        También vamos a corregir un error en el cálculo de los ingresos que ves en el panel: antes
-        se sumaba el total del pedido sin descontar los cupones aplicados, así que el número podía
-        estar inflado. Vas a ver el monto correcto de acá en adelante — si te parece más bajo que
-        antes, es porque se estaba contando mal, no porque hayas vendido menos.
+        También corregimos un error en el cálculo de los ingresos que ves en el panel: antes se
+        sumaba el total del pedido sin descontar los cupones aplicados, así que el número podía
+        estar inflado. Ahora ves el monto correcto — si te parece más bajo que antes, es porque se
+        estaba contando mal, no porque hayas vendido menos.
       </Text>
 
       <Text style={paragraph}>
-        Si querés, vas a poder ajustar los 7 días o activar la confirmación automática de pedidos
+        Si querés, podés ajustar los 7 días o activar la confirmación automática de pedidos
         pendientes desde la{' '}
         <Link href={settingsUrl} style={inlineLink}>
           configuración de tu tienda
