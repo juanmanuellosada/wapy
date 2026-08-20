@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
 import { resolveTieredPrice, tierGroupKey, type PriceTier } from '@/lib/store/pricing';
+import { canReactivateOrder, type OrderCancelledBy } from './expiry';
 
 // 3.1 Each cart item may carry an optional variantId.
 type CreateOrderInput = {
@@ -33,7 +34,7 @@ export type MpOrderItem = {
   currency_id: 'ARS';
 };
 
-type StockInsufficientDetail = {
+export type StockInsufficientDetail = {
   productId: string;
   productName: string;
   requested: number;
@@ -41,7 +42,7 @@ type StockInsufficientDetail = {
 };
 
 type CreateOrderResult =
-  | { order_id: string; mp_items: MpOrderItem[] }
+  | { order_id: string; mp_items: MpOrderItem[]; store_order_number: number | null }
   | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' }
   | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
   | { error: 'qty_violation'; productId: string; productName: string; min: number; step: number }
@@ -405,6 +406,13 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     }));
   }
 
+  // 5.2 Numeración correlativa (Decisión 2): atómica en una sola sentencia vía
+  // RPC, para que dos creaciones simultáneas de la misma tienda nunca choquen.
+  const orderNumber = await assignOrderNumber(admin, input.store_id);
+  if (orderNumber === null) {
+    return { error: 'insert_failed' };
+  }
+
   const { data: order, error: orderError } = await admin
     .from('orders')
     .insert({
@@ -414,6 +422,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       status: 'pending',
       coupon_code: input.coupon_code ?? null,
       discount_cents: discountCents,
+      store_order_number: orderNumber,
       // task 5.2: MP checkout fields (null for whatsapp orders)
       channel,
       customer_name: input.customer_name ?? null,
@@ -422,7 +431,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       delivery_address: input.delivery_address ?? null,
       idempotency_key: input.idempotency_key ?? null,
     })
-    .select('id')
+    .select('id, store_order_number')
     .single();
 
   if (orderError || !order) {
@@ -537,7 +546,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   }
 
   // 8. Return order reference + the MP-ready items computed in step 5.1.
-  return { order_id: order.id, mp_items };
+  return { order_id: order.id, mp_items, store_order_number: order.store_order_number };
 }
 
 // ---------------------------------------------------------------------------
@@ -546,6 +555,27 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
+/**
+ * Asigna el número correlativo de un pedido (Decisión 2). Delegar todo a la
+ * RPC `next_order_number` es lo que hace esto atómico bajo concurrencia: es
+ * una sola sentencia `UPDATE stores SET order_seq = order_seq + 1 RETURNING
+ * order_seq` del lado de Postgres. NO se implementa acá como
+ * lectura+escritura (SELECT order_seq, luego UPDATE) porque eso sí tiene
+ * carrera entre dos pedidos simultáneos de la misma tienda.
+ */
+export async function assignOrderNumber(admin: AdminClient, storeId: string): Promise<number | null> {
+  const { data, error } = await admin.rpc('next_order_number', { p_store_id: storeId });
+  if (error || data == null) {
+    console.error('[assignOrderNumber] rpc failed:', error);
+    Sentry.captureException(error ?? new Error('next_order_number returned no data'), {
+      tags: { feature: 'checkout-persist' },
+      extra: { storeId },
+    });
+    return null;
+  }
+  return data;
+}
+
 /** Idempotency lookup: reconstructs the CreateOrderResult for an order that already exists. */
 async function findOrderByIdempotencyKey(
   admin: AdminClient,
@@ -553,7 +583,7 @@ async function findOrderByIdempotencyKey(
 ): Promise<CreateOrderResult | null> {
   const { data } = await admin
     .from('orders')
-    .select('id, order_items(product_name, unit_price_cents, quantity)')
+    .select('id, store_order_number, order_items(product_name, unit_price_cents, quantity)')
     .eq('idempotency_key', idempotencyKey)
     .maybeSingle();
 
@@ -561,6 +591,7 @@ async function findOrderByIdempotencyKey(
 
   return {
     order_id: data.id,
+    store_order_number: data.store_order_number,
     mp_items: (data.order_items ?? []).map((i) => ({
       title: i.product_name,
       quantity: i.quantity,
@@ -639,9 +670,12 @@ export async function replenishOrderStock(
 }
 
 /**
- * Increments the applied coupon's uses_count for an order. Idempotent: only
- * acts while the order's status is still 'pending' (i.e. not yet counted).
- * Must be called BEFORE the caller flips the order's status to 'confirmed'.
+ * Increments the applied coupon's uses_count for an order. Idempotent via
+ * `orders.coupon_counted` (Decisión 3): only acts while that flag is still
+ * false, regardless of channel or current status — so this also works when
+ * re-counting a reactivated order (cancelled → confirmed, see
+ * updateOrderStatus), where status is 'cancelled' at call time, not 'pending'.
+ * Must be called BEFORE the caller flips the order's status forward.
  */
 export async function incrementCouponUse(
   orderId: string
@@ -650,11 +684,11 @@ export async function incrementCouponUse(
 
   const { data: order } = await admin
     .from('orders')
-    .select('id, status, store_id, coupon_code')
+    .select('id, store_id, coupon_code, coupon_counted')
     .eq('id', orderId)
     .maybeSingle();
   if (!order) return { error: 'not_found' };
-  if (!order.coupon_code || order.status !== 'pending') {
+  if (!order.coupon_code || order.coupon_counted) {
     return { ok: true, incremented: false };
   }
 
@@ -670,14 +704,18 @@ export async function incrementCouponUse(
     .from('coupons')
     .update({ uses_count: (couponRow.uses_count ?? 0) + 1 })
     .eq('id', couponRow.id);
+  await admin.from('orders').update({ coupon_counted: true }).eq('id', orderId);
 
   return { ok: true, incremented: true };
 }
 
 /**
- * Reverts a previously-counted coupon use for an order. Idempotent: only acts
- * while the order's status is still 'confirmed' (i.e. was counted and not yet
- * reverted). Must be called BEFORE the caller flips the order's status to 'cancelled'.
+ * Reverts a previously-counted coupon use for an order. Idempotent via
+ * `orders.coupon_counted` (Decisión 3): decides by that flag instead of by
+ * `status`, because *cuándo* se cuenta el uso depende del canal (WhatsApp al
+ * crear, Mercado Pago al aprobar) mientras que el status no. Agnóstico de
+ * canal y de status. Must be called BEFORE the caller flips the order's
+ * status to 'cancelled'.
  */
 export async function revertCouponUse(
   orderId: string
@@ -686,11 +724,11 @@ export async function revertCouponUse(
 
   const { data: order } = await admin
     .from('orders')
-    .select('id, status, store_id, coupon_code')
+    .select('id, store_id, coupon_code, coupon_counted')
     .eq('id', orderId)
     .maybeSingle();
   if (!order) return { error: 'not_found' };
-  if (!order.coupon_code || order.status !== 'confirmed') {
+  if (!order.coupon_code || !order.coupon_counted) {
     return { ok: true, reverted: false };
   }
 
@@ -706,6 +744,7 @@ export async function revertCouponUse(
     .from('coupons')
     .update({ uses_count: Math.max(0, (couponRow.uses_count ?? 0) - 1) })
     .eq('id', couponRow.id);
+  await admin.from('orders').update({ coupon_counted: false }).eq('id', orderId);
 
   return { ok: true, reverted: true };
 }
@@ -776,6 +815,15 @@ export async function revertOrderOnRefund(
 }
 
 /**
+ * Net amount in cents — total minus the applied discount. Shared by
+ * getOrderNetAmount (reconciliation contra Mercado Pago) y getOrderStats
+ * (ingresos del panel), para que ambos usen la misma fórmula.
+ */
+function computeNetCents(totalCents: number, discountCents: number | null | undefined): number {
+  return totalCents - (discountCents ?? 0);
+}
+
+/**
  * Returns the net amount (ARS) expected to have been charged for an order —
  * total minus the applied discount — so the webhook can reconcile it against
  * payment.transaction_amount from Mercado Pago. Returns null if not found.
@@ -790,8 +838,7 @@ export async function getOrderNetAmount(orderId: string): Promise<number | null>
     .maybeSingle();
   if (!order) return null;
 
-  const netCents = order.total_cents - (order.discount_cents ?? 0);
-  return netCents / 100;
+  return computeNetCents(order.total_cents, order.discount_cents) / 100;
 }
 
 // ---------------------------------------------------------------------------
@@ -829,6 +876,8 @@ export type OrderPaymentStatus =
   | 'in_mediation'
   | 'in_process';
 
+export type { OrderCancelledBy };
+
 export type OrderWithItems = {
   id: string;
   status: OrderStatus;
@@ -840,8 +889,10 @@ export type OrderWithItems = {
   confirmed_at: string | null;
   cancelled_at: string | null;
   delivered_at: string | null;
+  cancelled_by: OrderCancelledBy | null;
   channel: OrderChannel;
   payment_status: OrderPaymentStatus;
+  store_order_number: number | null;
   items: Array<{
     id: string;
     product_id: string | null;
@@ -861,29 +912,133 @@ export type ListOrdersFilters = {
   date_to?: string;
   section_id?: string;
   search?: string;
+  channel?: OrderChannel | 'all';
+  /** 10.4: cutoff del banner de backlog — pedidos creados ANTES de esta fecha ISO. */
+  created_before?: string;
+  /** 1-based; default 1. */
+  page?: number;
 };
 
+export type ListOrdersResult = {
+  orders: OrderWithItems[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+// Tamaño de página fijo (12.2/12.3): el panel pagina sobre esto. No se exporta
+// porque este archivo es 'use server' — solo puede exportar funciones async —
+// así que listOrders devuelve `pageSize` en su resultado para que el cliente
+// lo conozca sin importar la constante.
+const ORDERS_PAGE_SIZE = 20;
+
+function mapOrderRow(row: {
+  id: string;
+  status: string;
+  customer_name: string | null;
+  total_cents: number;
+  currency: string;
+  notes: string | null;
+  created_at: string;
+  confirmed_at: string | null;
+  cancelled_at: string | null;
+  delivered_at: string | null;
+  cancelled_by: string | null;
+  channel: string | null;
+  payment_status: string | null;
+  store_order_number: number | null;
+  order_items: unknown;
+}): OrderWithItems {
+  return {
+    id: row.id,
+    status: row.status as OrderStatus,
+    customer_name: row.customer_name,
+    total_cents: row.total_cents,
+    currency: row.currency,
+    notes: row.notes,
+    created_at: row.created_at,
+    confirmed_at: row.confirmed_at,
+    cancelled_at: row.cancelled_at,
+    delivered_at: row.delivered_at,
+    cancelled_by: row.cancelled_by as OrderCancelledBy | null,
+    channel: (row.channel ?? 'whatsapp') as OrderChannel,
+    payment_status: (row.payment_status ?? 'pending') as OrderPaymentStatus,
+    store_order_number: row.store_order_number,
+    items: (row.order_items ?? []) as OrderWithItems['items'],
+  };
+}
+
 // ---------------------------------------------------------------------------
-// listOrders
+// Consulta filtrada compartida por listOrders y exportOrdersCsv (Decisión 10:
+// paginar obliga a mover TODOS los filtros a la consulta — sección, búsqueda,
+// canal, estado y rango de fechas — para no filtrar la página en vez del
+// conjunto). `page: null` trae el conjunto filtrado completo sin recortar,
+// que es lo que necesita la exportación a CSV (12.4).
 // ---------------------------------------------------------------------------
 
-export async function listOrders(
-  filters: ListOrdersFilters
-): Promise<{ orders: OrderWithItems[] } | { error: 'unauthorized' }> {
-  const { store } = await requireOwnerStore();
-  if (!store) return { error: 'unauthorized' };
+async function fetchFilteredOrders(
+  admin: AdminClient,
+  storeId: string,
+  filters: ListOrdersFilters,
+  page: number | null
+): Promise<{ rows: Parameters<typeof mapOrderRow>[0][]; count: number } | { queryError: unknown }> {
+  // La sección vive en order_items, no en orders: se resuelve aparte para no
+  // depender de un inner-join embebido que recortaría los items devueltos.
+  let sectionOrderIds: string[] | null = null;
+  if (filters.section_id) {
+    const { data: sectionItems, error: sectionErr } = await admin
+      .from('order_items')
+      .select('order_id')
+      .eq('section_id', filters.section_id);
+    if (sectionErr) return { queryError: sectionErr };
+    sectionOrderIds = Array.from(
+      new Set((sectionItems ?? []).map((r) => r.order_id).filter((id): id is string => !!id))
+    );
+    if (sectionOrderIds.length === 0) {
+      return { rows: [], count: 0 };
+    }
+  }
 
-  const admin = createAdminClient();
+  // 6.3/6.4: acepta el número correlativo (match exacto) o la referencia
+  // corta de UUID (prefijo) con la que circularon en chats los pedidos
+  // anteriores a este change. PostgREST no permite castear una columna
+  // dentro de un filtro (uuid no tiene ilike nativo), así que se resuelve
+  // en JS sobre id + store_order_number de TODA la tienda (sin paginar,
+  // sin traer items) y se aplica como .in(), igual que el filtro de sección.
+  let searchOrderIds: string[] | null = null;
+  if (filters.search && filters.search.trim() !== '') {
+    const cleaned = filters.search.trim().toLowerCase().replace(/^#/, '').replace(/[^a-z0-9]/g, '');
+    if (cleaned) {
+      const { data: candidateRows, error: candidateErr } = await admin
+        .from('orders')
+        .select('id, store_order_number')
+        .eq('store_id', storeId);
+      if (candidateErr) return { queryError: candidateErr };
+      const numeric = /^\d+$/.test(cleaned) ? cleaned : null;
+      searchOrderIds = (candidateRows ?? [])
+        .filter(
+          (r) =>
+            (numeric !== null && String(r.store_order_number) === numeric) ||
+            (r.id as string).toLowerCase().startsWith(cleaned)
+        )
+        .map((r) => r.id as string);
+      if (searchOrderIds.length === 0) {
+        return { rows: [], count: 0 };
+      }
+    }
+  }
 
   let query = admin
     .from('orders')
-    .select('*, order_items(*)')
-    .eq('store_id', store.id)
-    .order('created_at', { ascending: false })
-    .limit(100);
+    .select('*, order_items(*)', { count: 'exact' })
+    .eq('store_id', storeId)
+    .order('created_at', { ascending: false });
 
   if (filters.status && filters.status !== 'all') {
     query = query.eq('status', filters.status);
+  }
+  if (filters.channel && filters.channel !== 'all') {
+    query = query.eq('channel', filters.channel);
   }
   if (filters.date_from) {
     query = query.gte('created_at', filters.date_from);
@@ -891,49 +1046,121 @@ export async function listOrders(
   if (filters.date_to) {
     query = query.lte('created_at', filters.date_to + ' 23:59:59');
   }
+  if (filters.created_before) {
+    query = query.lt('created_at', filters.created_before);
+  }
+  // Antes se encadenaban dos `.in('id', ...)` sobre la misma columna asumiendo
+  // que PostgREST los combina con AND — eso nunca se verificó contra un
+  // PostgREST real (solo contra el fake de los tests, que sí los ANDea). Acá
+  // se calcula la intersección explícitamente en JS y se emite un solo `.in()`.
+  let filterOrderIds: string[] | null = null;
+  if (sectionOrderIds && searchOrderIds) {
+    const searchSet = new Set(searchOrderIds);
+    filterOrderIds = sectionOrderIds.filter((id) => searchSet.has(id));
+    if (filterOrderIds.length === 0) {
+      return { rows: [], count: 0 };
+    }
+  } else if (sectionOrderIds) {
+    filterOrderIds = sectionOrderIds;
+  } else if (searchOrderIds) {
+    filterOrderIds = searchOrderIds;
+  }
+  if (filterOrderIds) {
+    query = query.in('id', filterOrderIds);
+  }
 
-  const { data, error } = await query;
+  if (page !== null) {
+    query = query.range((page - 1) * ORDERS_PAGE_SIZE, page * ORDERS_PAGE_SIZE - 1);
+  }
 
-  if (error) {
-    console.error('[listOrders] query failed:', error);
-    Sentry.captureException(error, {
+  const { data, error, count } = await query;
+  if (error) return { queryError: error };
+  return { rows: (data ?? []) as Parameters<typeof mapOrderRow>[0][], count: count ?? 0 };
+}
+
+// ---------------------------------------------------------------------------
+// listOrders
+// ---------------------------------------------------------------------------
+
+export async function listOrders(filters: ListOrdersFilters): Promise<ListOrdersResult | { error: 'unauthorized' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+  const page = Math.max(1, filters.page ?? 1);
+
+  const result = await fetchFilteredOrders(admin, store.id, filters, page);
+
+  if ('queryError' in result) {
+    console.error('[listOrders] query failed:', result.queryError);
+    Sentry.captureException(result.queryError, {
       tags: { feature: 'orders-dashboard' },
       extra: { storeId: store.id },
     });
     // TODO: surface error to caller — currently returns empty list silently
-    return { orders: [] };
+    return { orders: [], total: 0, page, pageSize: ORDERS_PAGE_SIZE };
   }
 
-  let orders = (data ?? []).map((row) => {
-    return {
-      id: row.id,
-      status: row.status as OrderStatus,
-      customer_name: row.customer_name,
-      total_cents: row.total_cents,
-      currency: row.currency,
-      notes: row.notes,
-      created_at: row.created_at,
-      confirmed_at: row.confirmed_at,
-      cancelled_at: row.cancelled_at,
-      delivered_at: row.delivered_at,
-      channel: (row.channel ?? 'whatsapp') as OrderChannel,
-      payment_status: (row.payment_status ?? 'pending') as OrderPaymentStatus,
-      items: (row.order_items ?? []) as OrderWithItems['items'],
-    };
-  });
+  return {
+    orders: result.rows.map(mapOrderRow),
+    total: result.count,
+    page,
+    pageSize: ORDERS_PAGE_SIZE,
+  };
+}
 
-  // Client-side filters that PostgREST embeds make complex server-side
-  if (filters.section_id) {
-    orders = orders.filter((o) =>
-      o.items.some((item) => item.section_id === filters.section_id)
-    );
-  }
-  if (filters.search && filters.search.trim() !== '') {
-    const s = filters.search.trim().toLowerCase().replace(/^#/, '');
-    orders = orders.filter((o) => o.id.toLowerCase().startsWith(s));
-  }
+// ---------------------------------------------------------------------------
+// getOrderById (12.x deep link: un pedido viejo abierto por enlace directo se
+// tiene que poder encontrar aunque no esté en la página actual del listado)
+// ---------------------------------------------------------------------------
 
-  return { orders };
+export async function getOrderById(
+  orderId: string
+): Promise<{ order: OrderWithItems } | { error: 'unauthorized' | 'not_found' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from('orders')
+    .select('*, order_items(*)')
+    .eq('id', orderId)
+    .eq('store_id', store.id)
+    .maybeSingle();
+
+  if (error || !data) return { error: 'not_found' };
+  return { order: mapOrderRow(data as Parameters<typeof mapOrderRow>[0]) };
+}
+
+// ---------------------------------------------------------------------------
+// getBacklogPendingCount (10.4/10.5): pendientes de WhatsApp anteriores a la
+// fecha de vigencia de la política de la tienda.
+// ---------------------------------------------------------------------------
+
+export async function getBacklogPendingCount(): Promise<
+  { count: number; effectiveFrom: string } | { error: 'unauthorized' }
+> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+  const { data: storeRow } = await admin
+    .from('stores')
+    .select('wa_lifecycle_effective_from')
+    .eq('id', store.id)
+    .maybeSingle();
+
+  const effectiveFrom = storeRow?.wa_lifecycle_effective_from ?? new Date().toISOString();
+
+  const { count } = await admin
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('store_id', store.id)
+    .eq('status', 'pending')
+    .eq('channel', 'whatsapp')
+    .lt('created_at', effectiveFrom);
+
+  return { count: count ?? 0, effectiveFrom };
 }
 
 // ---------------------------------------------------------------------------
@@ -996,20 +1223,11 @@ export async function getOrderStats(
 
   const { data: orders } = await admin
     .from('orders')
-    .select('id, status, total_cents, created_at')
+    .select('id, status, total_cents, discount_cents, created_at')
     .eq('store_id', store.id)
     .gte('created_at', rangeStart.toISOString());
 
-  const { data: items } = await admin
-    .from('order_items')
-    .select('order_id, product_name, unit_price_cents, quantity, section_name')
-    .in(
-      'order_id',
-      (orders ?? []).map((o) => o.id)
-    );
-
   const allOrders = orders ?? [];
-  const allItems = items ?? [];
 
   const totalOrders = allOrders.length;
 
@@ -1017,7 +1235,19 @@ export async function getOrderStats(
     (o) => o.status === 'confirmed' || o.status === 'delivered'
   );
 
-  const revenueCents = confirmedOrders.reduce((s, o) => s + (o.total_cents ?? 0), 0);
+  // top_products y orders_by_section deben contar solo lo que también cuenta
+  // como venta en los KPIs: items de pedidos confirmados o entregados.
+  const { data: items } = await admin
+    .from('order_items')
+    .select('order_id, product_name, unit_price_cents, quantity, section_name')
+    .in('order_id', confirmedOrders.map((o) => o.id));
+
+  const allItems = items ?? [];
+
+  const revenueCents = confirmedOrders.reduce(
+    (s, o) => s + computeNetCents(o.total_cents, o.discount_cents),
+    0
+  );
   const confirmationRate = totalOrders > 0 ? confirmedOrders.length / totalOrders : 0;
   const avgTicketCents = confirmedOrders.length > 0
     ? Math.round(revenueCents / confirmedOrders.length)
@@ -1040,7 +1270,7 @@ export async function getOrderStats(
   for (const o of confirmedOrders) {
     const dateKey = toArgentinaDateStr(o.created_at);
     if (dayMap.has(dateKey)) {
-      dayMap.set(dateKey, (dayMap.get(dateKey) ?? 0) + (o.total_cents ?? 0));
+      dayMap.set(dateKey, (dayMap.get(dateKey) ?? 0) + computeNetCents(o.total_cents, o.discount_cents));
     }
   }
   const revenue_by_day = Array.from(dayMap.entries()).map(([date, cents]) => ({ date, cents }));
@@ -1124,13 +1354,23 @@ export async function exportOrdersCsv(
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
 
-  const result = await listOrders(filters);
-  if ('error' in result) return { error: 'unauthorized' };
+  const admin = createAdminClient();
+  // 12.4: exporta el conjunto filtrado COMPLETO, no la página visible —
+  // por eso pasa page=null en vez de reusar listOrders (que sí pagina).
+  const result = await fetchFilteredOrders(admin, store.id, filters, null);
+  if ('queryError' in result) {
+    console.error('[exportOrdersCsv] query failed:', result.queryError);
+    Sentry.captureException(result.queryError, {
+      tags: { feature: 'orders-dashboard' },
+      extra: { storeId: store.id },
+    });
+    return { error: 'empty' };
+  }
 
-  const { orders } = result;
+  const orders = result.rows.map(mapOrderRow);
   if (orders.length === 0) return { error: 'empty' };
 
-  const header = ['id', 'created_at', 'status', 'customer_name', 'total', 'currency', 'items_count', 'items_summary', 'notes'].join(',');
+  const header = ['id', 'store_order_number', 'created_at', 'status', 'customer_name', 'total', 'currency', 'items_count', 'items_summary', 'notes'].join(',');
 
   const rows = orders.map((order) => {
     const itemsSummary = order.items
@@ -1139,6 +1379,7 @@ export async function exportOrdersCsv(
 
     return [
       csvEscape(order.id),
+      csvEscape(order.store_order_number != null ? String(order.store_order_number) : ''),
       csvEscape(formatCsvDate(order.created_at)),
       csvEscape(order.status),
       csvEscape(order.customer_name),
@@ -1166,12 +1407,72 @@ const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   cancelled: [],
 };
 
+/**
+ * Vuelve a comprometer stock para cada ítem de un pedido (Decisión 9: revivir
+ * un pedido cancelado por el sistema). Si algún ítem no tiene stock
+ * suficiente, no deduce nada de ese pedido: repone lo que sí llegó a deducir
+ * en este mismo intento y rechaza, dejando el pedido como estaba (4.7).
+ */
+async function deductOrderStock(
+  admin: AdminClient,
+  orderId: string
+): Promise<{ ok: true } | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }> {
+  const { data: items } = await admin
+    .from('order_items')
+    .select('product_id, product_name, variant_id, quantity')
+    .eq('order_id', orderId);
+
+  const deducted: Array<{ product_id: string | null; variant_id: string | null; quantity: number }> = [];
+
+  for (const item of items ?? []) {
+    const id = item.variant_id ?? item.product_id;
+    if (!id) continue;
+
+    const table: 'products' | 'product_variants' = item.variant_id ? 'product_variants' : 'products';
+    const { data: current } = await admin.from(table).select('stock').eq('id', id).maybeSingle();
+    const stock = current?.stock ?? null;
+    if (stock === null) continue; // sin tracking de stock (infinito) — nada que deducir
+
+    if (item.quantity > stock) {
+      await replenishStockItems(admin, deducted);
+      return {
+        error: 'stock_insufficient',
+        details: [{ productId: item.product_id ?? id, productName: item.product_name, requested: item.quantity, available: stock }],
+      };
+    }
+
+    const { data: updatedRow } = await admin
+      .from(table)
+      .update({ stock: stock - item.quantity })
+      .eq('id', id)
+      .gte('stock', item.quantity) // guard: otro proceso pudo consumir stock mientras tanto
+      .select('stock');
+
+    if (!updatedRow || updatedRow.length === 0) {
+      await replenishStockItems(admin, deducted);
+      return {
+        error: 'stock_insufficient',
+        details: [{ productId: item.product_id ?? id, productName: item.product_name, requested: item.quantity, available: 0 }],
+      };
+    }
+
+    deducted.push({
+      product_id: item.variant_id ? null : id,
+      variant_id: item.variant_id ?? null,
+      quantity: item.quantity,
+    });
+  }
+
+  return { ok: true };
+}
+
 export async function updateOrderStatus(
   order_id: string,
   next_status: OrderStatus
 ): Promise<
   | { ok: true; order: OrderWithItems }
   | { error: 'unauthorized' | 'invalid_transition' | 'not_found' }
+  | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
 > {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
@@ -1180,7 +1481,7 @@ export async function updateOrderStatus(
 
   const { data: existing } = await admin
     .from('orders')
-    .select('id, status, store_id')
+    .select('id, status, store_id, cancelled_by')
     .eq('id', order_id)
     .eq('store_id', store.id)
     .maybeSingle();
@@ -1188,15 +1489,36 @@ export async function updateOrderStatus(
   if (!existing) return { error: 'not_found' };
 
   const current = existing.status as OrderStatus;
-  if (!ALLOWED_TRANSITIONS[current].includes(next_status)) {
+
+  // Decisión 9: cancelled → confirmed es la única excepción a ALLOWED_TRANSITIONS,
+  // y solo cuando la cancelación fue del sistema (cron por vencimiento). Una
+  // cancelación de la dueña sigue siendo terminal.
+  const isReactivation = current === 'cancelled' && next_status === 'confirmed';
+  if (isReactivation) {
+    if (!canReactivateOrder(existing.cancelled_by as OrderCancelledBy | null)) {
+      return { error: 'invalid_transition' };
+    }
+  } else if (!ALLOWED_TRANSITIONS[current].includes(next_status)) {
     return { error: 'invalid_transition' };
+  }
+
+  if (isReactivation) {
+    // 4.6/4.7: revivir vuelve a comprometer stock y a contabilizar el cupón.
+    // Si ya no alcanza el stock, se rechaza acá y el pedido queda como estaba.
+    const stockResult = await deductOrderStock(admin, order_id);
+    if ('error' in stockResult) {
+      return stockResult;
+    }
+    await incrementCouponUse(order_id);
   }
 
   // Replenish stock BEFORE flipping the status to 'cancelled' — replenishOrderStock
   // checks the order's current status to stay idempotent, so it must run while
-  // the order is still 'pending'/'confirmed' in the DB.
+  // the order is still 'pending'/'confirmed' in the DB. revertCouponUse ya no
+  // depende del status (Decisión 3), pero se agrupa acá con la misma reversión.
   if (next_status === 'cancelled') {
     await replenishOrderStock(order_id);
+    await revertCouponUse(order_id);
   }
 
   const now = new Date().toISOString();
@@ -1209,9 +1531,13 @@ export async function updateOrderStatus(
           ? { delivered_at: now }
           : {};
 
+  // 4.5: toda cancelación disparada desde el panel es de origen 'owner'. Las
+  // automáticas ('system') las marca el cron (app/api/cron/expire-orders).
+  const cancelledByField = next_status === 'cancelled' ? { cancelled_by: 'owner' as const } : {};
+
   const { data: updated, error: updateError } = await admin
     .from('orders')
-    .update({ status: next_status, ...timestampField })
+    .update({ status: next_status, ...timestampField, ...cancelledByField })
     .eq('id', order_id)
     .select('*, order_items(*)')
     .single();
@@ -1238,9 +1564,54 @@ export async function updateOrderStatus(
       confirmed_at: updated.confirmed_at,
       cancelled_at: updated.cancelled_at,
       delivered_at: updated.delivered_at,
+      cancelled_by: updated.cancelled_by as OrderCancelledBy | null,
       channel: (updated.channel ?? 'whatsapp') as OrderChannel,
       payment_status: (updated.payment_status ?? 'pending') as OrderPaymentStatus,
+      store_order_number: updated.store_order_number,
       items: (updated.order_items ?? []) as OrderWithItems['items'],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// batchUpdateOrderStatus (grupo 7): confirmación/cancelación en lote con
+// resultado parcial. Reusa updateOrderStatus por pedido en vez de reimplementar
+// la validación contra ALLOWED_TRANSITIONS ni las reversiones de stock/cupón:
+// eso ya vive ahí (Decisión 7 del design).
+// ---------------------------------------------------------------------------
+
+export type BatchUpdateOrderStatusResult = {
+  updated: OrderWithItems[];
+  failed: Array<
+    | { order_id: string; reason: 'invalid_transition' | 'not_found' }
+    | { order_id: string; reason: 'stock_insufficient'; details: StockInsufficientDetail[] }
+  >;
+};
+
+export async function batchUpdateOrderStatus(
+  orderIds: string[],
+  next_status: OrderStatus
+): Promise<BatchUpdateOrderStatusResult | { error: 'unauthorized' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const updated: OrderWithItems[] = [];
+  const failed: BatchUpdateOrderStatusResult['failed'] = [];
+
+  for (const orderId of orderIds) {
+    const result = await updateOrderStatus(orderId, next_status);
+    if ('ok' in result) {
+      updated.push(result.order);
+    } else if (result.error === 'stock_insufficient') {
+      failed.push({ order_id: orderId, reason: 'stock_insufficient', details: result.details });
+    } else if (result.error === 'unauthorized') {
+      // No debería pasar dentro de un lote ya autorizado arriba; se agrupa
+      // con 'not_found' para no inventar un motivo fuera del vocabulario del lote.
+      failed.push({ order_id: orderId, reason: 'not_found' });
+    } else {
+      failed.push({ order_id: orderId, reason: result.error });
+    }
+  }
+
+  return { updated, failed };
 }

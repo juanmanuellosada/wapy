@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
-import { renameSlug, toggleStoreStatus, deleteStore } from '@/lib/dashboard/actions';
+import { renameSlug, toggleStoreStatus, deleteStore, saveWaLifecycleConfig } from '@/lib/dashboard/actions';
 import { checkSlugAvailable } from '@/lib/onboarding/actions';
 import { RenameSlugModal } from './RenameSlugModal';
 import { DeleteStoreModal } from './DeleteStoreModal';
@@ -114,6 +114,32 @@ export function SettingsPanel({ store, mpStatus, checkoutMode, mpConnectResult, 
     }
     // Redirect to onboarding after delete
     router.push('/onboarding');
+  };
+
+  // --------------------------------------------------------------------------
+  // WhatsApp pending order lifecycle
+  // --------------------------------------------------------------------------
+  const [waTtlDays, setWaTtlDays] = useState(store.wa_pending_ttl_days ?? 7);
+  const [waAutoConfirm, setWaAutoConfirm] = useState(store.wa_auto_confirm ?? false);
+  const [waSaving, setWaSaving] = useState(false);
+  const [waError, setWaError] = useState<string | null>(null);
+  const [waSuccess, setWaSuccess] = useState(false);
+
+  const handleSaveWaLifecycle = async () => {
+    setWaSaving(true);
+    setWaError(null);
+    setWaSuccess(false);
+    const result = await saveWaLifecycleConfig({
+      wa_pending_ttl_days: waTtlDays,
+      wa_auto_confirm: waAutoConfirm,
+    });
+    setWaSaving(false);
+    if ('error' in result) {
+      setWaError(result.error);
+      return;
+    }
+    setWaSuccess(true);
+    setTimeout(() => setWaSuccess(false), 4000);
   };
 
   // --------------------------------------------------------------------------
@@ -292,6 +318,93 @@ export function SettingsPanel({ store, mpStatus, checkoutMode, mpConnectResult, 
             </div>
           </div>
         )}
+      </section>
+
+      <hr className="border-white/10" />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* WhatsApp pending order lifecycle */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="space-y-4">
+        <h2 className="text-base font-semibold text-[#FBF7EC]">Pedidos de WhatsApp sin confirmar</h2>
+        <p className="text-xs text-white/50">
+          Wapy no tiene forma de saber si un pedido de WhatsApp se cobró: el pago se arregla por fuera del sistema.
+          Por eso, si un pedido queda pendiente sin que lo confirmes, el sistema aplica una política al vencer el plazo.
+        </p>
+
+        {waError && (
+          <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-300">
+            {waError}
+          </div>
+        )}
+        {waSuccess && (
+          <div role="status" className="bg-green-500/10 border border-green-500/30 rounded-xl px-4 py-3 text-sm text-green-300 flex items-center gap-2">
+            <CheckCircle size={14} />
+            Configuración guardada.
+          </div>
+        )}
+
+        <div>
+          <label htmlFor="wa-ttl-days" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
+            Días antes de aplicar la política
+          </label>
+          <input
+            id="wa-ttl-days"
+            type="number"
+            min={1}
+            max={30}
+            step={1}
+            value={waTtlDays}
+            onChange={(e) => setWaTtlDays(Number(e.target.value))}
+            className="w-24 rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] px-4 py-3 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+          />
+          <p className="text-xs text-white/30 mt-1">Entre 1 y 30 días. Por defecto, 7.</p>
+        </div>
+
+        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-[#FBF7EC]">Confirmar automáticamente en vez de cancelar</p>
+            <p className="text-xs text-white/50 mt-1">
+              Apagado (recomendado): al vencer el plazo, el pedido se cancela solo, repone el stock y libera el cupón
+              usado. Si después confirmás que sí se vendió, podés revertir esa cancelación a mano.
+            </p>
+            <p className="text-xs text-amber-300/80 mt-1.5 flex items-start gap-1.5">
+              <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
+              Prendido: el pedido pasa a confirmado sin que hayas verificado que se pagó. Vas a registrar como venta
+              pedidos que quizás nunca se concretaron, lo que infla tus ingresos y no repone el stock de lo que en
+              realidad no se vendió. Activalo solo si sabés que casi todos tus pedidos de WhatsApp se concretan.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setWaAutoConfirm((v) => !v)}
+            role="switch"
+            aria-checked={waAutoConfirm}
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+              waAutoConfirm ? 'bg-amber-500' : 'bg-white/20'
+            }`}
+          >
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ease-in-out ${
+                waAutoConfirm ? 'translate-x-[22px]' : 'translate-x-0.5'
+              }`}
+            />
+            <span className="sr-only">
+              {waAutoConfirm ? 'Desactivar confirmación automática' : 'Activar confirmación automática'}
+            </span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSaveWaLifecycle}
+          disabled={waSaving}
+          className="min-h-[44px] px-6 rounded-xl bg-white/10 text-[#FBF7EC] font-semibold text-sm hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2 cursor-pointer"
+        >
+          {waSaving && <Loader2 size={14} className="animate-spin" />}
+          Guardar
+        </button>
       </section>
 
       <hr className="border-white/10" />

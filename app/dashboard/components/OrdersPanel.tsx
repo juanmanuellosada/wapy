@@ -1,8 +1,14 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Search, X, ClipboardList, Download } from 'lucide-react';
-import { updateOrderStatus, exportOrdersCsv } from '@/lib/store/orders/actions';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, X, ClipboardList, Download, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  updateOrderStatus,
+  exportOrdersCsv,
+  listOrders,
+  batchUpdateOrderStatus,
+  getBacklogPendingCount,
+} from '@/lib/store/orders/actions';
 import type { OrderWithItems, OrderStatus, OrderChannel, OrderPaymentStatus } from '@/lib/store/orders/actions';
 import { toast } from '@/lib/toast';
 import type { Store, Section } from '@/lib/onboarding/state';
@@ -12,7 +18,14 @@ import { DatePicker } from '@/app/components/DatePicker';
 type Props = {
   store: Store;
   initialOrders: OrderWithItems[];
+  initialTotal: number;
+  initialPageSize: number;
   sections: Section[];
+  /** Pedido resuelto server-side desde `?order=<uuid>` (deep link de WhatsApp, grupo 5). */
+  initialDeepLinkOrder: OrderWithItems | null;
+  /** 10.4/10.5: pendientes de WhatsApp anteriores a la fecha de vigencia de la política. */
+  initialBacklogCount: number;
+  waLifecycleEffectiveFrom: string;
 };
 
 function formatPrice(cents: number): string {
@@ -40,6 +53,11 @@ function formatDateLong(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(iso));
+}
+
+/** 6.5: el número correlativo es la identificación visible del pedido; el UUID corto queda de respaldo. */
+function orderDisplayRef(order: Pick<OrderWithItems, 'id' | 'store_order_number'>): string {
+  return order.store_order_number != null ? `#${order.store_order_number}` : `#${order.id.slice(0, 8)}`;
 }
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
@@ -93,6 +111,11 @@ const CHANNEL_LABELS: Record<OrderChannel, string> = {
   mercadopago: 'Mercado Pago',
 };
 
+const CHANNEL_BADGE: Record<OrderChannel, string> = {
+  whatsapp: 'bg-[#25D366]/10 text-[#25D366] border-[#25D366]/20',
+  mercadopago: 'bg-[#009EE3]/10 text-[#009EE3]/80 border-[#009EE3]/15',
+};
+
 function PaymentStatusBadge({ paymentStatus, channel }: { paymentStatus: OrderPaymentStatus; channel: OrderChannel }) {
   // Only show payment badge for MP orders or when payment status is non-trivially pending
   if (channel === 'whatsapp' && paymentStatus === 'pending') return null;
@@ -105,10 +128,11 @@ function PaymentStatusBadge({ paymentStatus, channel }: { paymentStatus: OrderPa
   );
 }
 
+// 6.1: el canal WhatsApp también se distingue a simple vista (antes esta
+// función devolvía null y solo Mercado Pago era visible).
 function ChannelBadge({ channel }: { channel: OrderChannel }) {
-  if (channel === 'whatsapp') return null;
   return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-[#009EE3]/10 text-[#009EE3]/80 border-[#009EE3]/15">
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${CHANNEL_BADGE[channel]}`}>
       {CHANNEL_LABELS[channel]}
     </span>
   );
@@ -117,60 +141,40 @@ function ChannelBadge({ channel }: { channel: OrderChannel }) {
 type Filters = {
   search: string;
   status: OrderStatus | 'all';
+  channel: OrderChannel | 'all';
   date_from: string;
   date_to: string;
   section_id: string;
+  /** 10.4: seteado al tocar el banner de backlog; no tiene control propio en la UI. */
+  created_before: string;
 };
 
 const DEFAULT_FILTERS: Filters = {
   search: '',
   status: 'all',
+  channel: 'all',
   date_from: '',
   date_to: '',
   section_id: '',
+  created_before: '',
 };
 
 function hasActiveFilters(f: Filters): boolean {
   return (
     f.search !== '' ||
     f.status !== 'all' ||
+    f.channel !== 'all' ||
     f.date_from !== '' ||
     f.date_to !== '' ||
-    f.section_id !== ''
+    f.section_id !== '' ||
+    f.created_before !== ''
   );
-}
-
-function applyFilters(orders: OrderWithItems[], f: Filters): OrderWithItems[] {
-  let result = orders;
-
-  if (f.status !== 'all') {
-    result = result.filter((o) => o.status === f.status);
-  }
-  if (f.date_from) {
-    const from = new Date(f.date_from).getTime();
-    result = result.filter((o) => new Date(o.created_at).getTime() >= from);
-  }
-  if (f.date_to) {
-    const to = new Date(f.date_to + 'T23:59:59').getTime();
-    result = result.filter((o) => new Date(o.created_at).getTime() <= to);
-  }
-  if (f.section_id) {
-    result = result.filter((o) =>
-      o.items.some((item) => item.section_id === f.section_id)
-    );
-  }
-  if (f.search.trim()) {
-    const s = f.search.trim().toLowerCase().replace(/^#/, '');
-    result = result.filter((o) => o.id.toLowerCase().startsWith(s));
-  }
-
-  return result;
 }
 
 type OrderDetailModalProps = {
   order: OrderWithItems;
   onClose: () => void;
-  onStatusChange: (order: OrderWithItems) => void;
+  onStatusChange: () => void;
 };
 
 function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalProps) {
@@ -183,6 +187,11 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
     const result = await updateOrderStatus(order.id, next);
     setLoading(null);
     if ('error' in result) {
+      if (result.error === 'stock_insufficient') {
+        const names = result.details.map((d) => d.productName).join(', ');
+        setError(`No hay stock suficiente para revivir este pedido${names ? ` (${names})` : ''}.`);
+        return;
+      }
       const messages: Record<string, string> = {
         unauthorized: 'No tenés permisos para cambiar este pedido.',
         invalid_transition: 'Transición de estado no permitida.',
@@ -191,7 +200,10 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
       setError(messages[result.error] ?? 'Error al actualizar el estado.');
       return;
     }
-    onStatusChange(result.order);
+    toast.success('Pedido actualizado');
+    // 6.6: confirmar cierra el detalle y vuelve al listado ya actualizado,
+    // en vez de dejar el modal abierto.
+    onStatusChange();
   };
 
   return (
@@ -209,7 +221,7 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
         {/* Header */}
         <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-white/10 gap-3">
           <div className="min-w-0">
-            <p className="text-xs text-white/40 font-mono">#{order.id.slice(0, 8)}</p>
+            <p className="text-xs text-white/40 font-mono">{orderDisplayRef(order)}</p>
             <p className="text-sm text-white/60 mt-0.5">{formatDateLong(order.created_at)}</p>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
@@ -319,7 +331,27 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
               </button>
             </div>
           )}
-          {(order.status === 'delivered' || order.status === 'cancelled') && (
+          {order.status === 'cancelled' && order.cancelled_by === 'system' && (
+            <div className="space-y-2">
+              <p className="text-xs text-white/40 text-center">
+                El sistema canceló este pedido por vencimiento. Si la venta sí ocurrió, podés revivirlo.
+              </p>
+              <button
+                type="button"
+                disabled={loading !== null}
+                onClick={() => handleTransition('confirmed')}
+                className="w-full py-2 rounded-xl text-sm font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {loading === 'confirmed' ? 'Reviviendo...' : 'Revivir pedido'}
+              </button>
+            </div>
+          )}
+          {order.status === 'delivered' && (
+            <p className="text-xs text-white/40 text-center">
+              Este pedido está en estado terminal y no puede modificarse.
+            </p>
+          )}
+          {order.status === 'cancelled' && order.cancelled_by !== 'system' && (
             <p className="text-xs text-white/40 text-center">
               Este pedido está en estado terminal y no puede modificarse.
             </p>
@@ -330,27 +362,150 @@ function OrderDetailModal({ order, onClose, onStatusChange }: OrderDetailModalPr
   );
 }
 
-export function OrdersPanel({ initialOrders, sections }: Props) {
+export function OrdersPanel({
+  initialOrders,
+  initialTotal,
+  initialPageSize,
+  sections,
+  initialDeepLinkOrder,
+  initialBacklogCount,
+  waLifecycleEffectiveFrom,
+}: Props) {
   const [orders, setOrders] = useState<OrderWithItems[]>(initialOrders);
+  const [total, setTotal] = useState(initialTotal);
+  const [pageSize, setPageSize] = useState(initialPageSize);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
-  const [selectedOrder, setSelectedOrder] = useState<OrderWithItems | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  // task 5.2/5.3: si la URL trae `?order=<uuid>` (deep link de WhatsApp), ese
+  // pedido se resolvió server-side y puede no estar en la página actual.
+  const [selectedOrder, setSelectedOrder] = useState<OrderWithItems | null>(initialDeepLinkOrder);
   const [exporting, setExporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchLoading, setBatchLoading] = useState<OrderStatus | null>(null);
+  const [backlogCount, setBacklogCount] = useState(initialBacklogCount);
 
-  const filtered = useMemo(() => applyFilters(orders, filters), [orders, filters]);
+  const isFirstRender = useRef(true);
 
-  const handleStatusChange = (updated: OrderWithItems) => {
-    setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
-    setSelectedOrder(updated);
+  const fetchOrders = useCallback(async (f: Filters, p: number) => {
+    setLoading(true);
+    const result = await listOrders({
+      status: f.status,
+      channel: f.channel,
+      date_from: f.date_from || undefined,
+      date_to: f.date_to || undefined,
+      section_id: f.section_id || undefined,
+      search: f.search || undefined,
+      created_before: f.created_before || undefined,
+      page: p,
+    });
+    setLoading(false);
+    if ('error' in result) {
+      toast.error('No se pudieron cargar los pedidos');
+      return;
+    }
+    setOrders(result.orders);
+    setTotal(result.total);
+    setPageSize(result.pageSize);
+    setSelectedIds(new Set());
+  }, []);
+
+  // 12.1/12.2/12.3: los filtros viven en la consulta, no en memoria — cada
+  // cambio de filtro o de página vuelve a pedirle al servidor el conjunto
+  // ya filtrado y pagina sobre eso.
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    fetchOrders(filters, page);
+  }, [filters, page, fetchOrders]);
+
+  // Búsqueda con debounce: el texto se escribe libre en `searchInput` y recién
+  // después de una pausa entra a `filters.search`, que es lo que dispara la consulta.
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setFilters((prev) => (prev.search === searchInput ? prev : { ...prev, search: searchInput }));
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
+
+  const refreshBacklogCount = useCallback(async () => {
+    const result = await getBacklogPendingCount();
+    if ('count' in result) setBacklogCount(result.count);
+  }, []);
+
+  const updateFilters = (patch: Partial<Filters>) => {
+    setFilters((prev) => ({ ...prev, ...patch }));
+    setPage(1);
   };
 
-  const setFilter = <K extends keyof Filters>(key: K, value: Filters[K]) => {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+  const handleClearFilters = () => {
+    setSearchInput('');
+    setFilters(DEFAULT_FILTERS);
+    setPage(1);
+  };
+
+  const handleBacklogBannerClick = () => {
+    setSearchInput('');
+    setFilters({
+      ...DEFAULT_FILTERS,
+      status: 'pending',
+      channel: 'whatsapp',
+      created_before: waLifecycleEffectiveFrom,
+    });
+    setPage(1);
+  };
+
+  const handleStatusChange = () => {
+    setSelectedOrder(null);
+    fetchOrders(filters, page);
+    refreshBacklogCount();
+  };
+
+  const toggleSelected = (orderId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
+
+  const handleBatchAction = async (nextStatus: 'confirmed' | 'cancelled') => {
+    if (selectedIds.size === 0) return;
+    setBatchLoading(nextStatus);
+    const result = await batchUpdateOrderStatus(Array.from(selectedIds), nextStatus);
+    setBatchLoading(null);
+    if ('error' in result) {
+      toast.error('No tenés permisos para esta acción.');
+      return;
+    }
+    const { updated, failed } = result;
+    if (failed.length === 0) {
+      toast.success(`${updated.length} pedido${updated.length === 1 ? '' : 's'} actualizado${updated.length === 1 ? '' : 's'}.`);
+    } else {
+      toast.info(`${updated.length} actualizado${updated.length === 1 ? '' : 's'}, ${failed.length} no se pudo${failed.length === 1 ? '' : 'ieron'} cambiar.`);
+    }
+    setSelectedIds(new Set());
+    fetchOrders(filters, page);
+    refreshBacklogCount();
   };
 
   const handleExportCsv = async () => {
     setExporting(true);
     try {
-      const result = await exportOrdersCsv(filters);
+      const result = await exportOrdersCsv({
+        status: filters.status,
+        channel: filters.channel,
+        date_from: filters.date_from || undefined,
+        date_to: filters.date_to || undefined,
+        section_id: filters.section_id || undefined,
+        search: filters.search || undefined,
+        created_before: filters.created_before || undefined,
+      });
       if ('error' in result) {
         if (result.error === 'empty') {
           toast.info('No hay pedidos para exportar');
@@ -377,9 +532,26 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
     }
   };
 
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   return (
     <div>
       <h1 className="text-xl font-bold text-[#FBF7EC] mb-6">Pedidos</h1>
+
+      {/* 10.4/10.5: banner de backlog — sin botón de descarte, desaparece solo
+          cuando no quedan pendientes previos a la fecha de corte. */}
+      {backlogCount > 0 && (
+        <button
+          type="button"
+          onClick={handleBacklogBannerClick}
+          className="w-full flex items-center gap-3 px-4 py-3 mb-4 rounded-xl bg-amber-500/10 border border-amber-500/25 text-left hover:bg-amber-500/15 transition-colors cursor-pointer"
+        >
+          <AlertTriangle size={16} className="text-amber-300 flex-shrink-0" />
+          <p className="text-sm text-amber-200 flex-1">
+            Tenés {backlogCount} pedido{backlogCount === 1 ? '' : 's'} pendiente{backlogCount === 1 ? '' : 's'} de antes del nuevo sistema de vencimiento. Revisalos para confirmar o cancelar.
+          </p>
+        </button>
+      )}
 
       {/* Filters */}
       <div className="space-y-3 mb-6">
@@ -389,9 +561,9 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
             <input
               type="text"
-              value={filters.search}
-              onChange={(e) => setFilter('search', e.target.value)}
-              placeholder="Buscar por #id..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Buscar por # de pedido..."
               className="w-full pl-8 pr-3 py-2 rounded-xl bg-white/6 border border-white/10 text-sm text-[#FBF7EC] placeholder-white/30 focus:outline-none focus:border-white/30 transition-colors"
             />
           </div>
@@ -400,7 +572,7 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
           <div className="w-44">
             <Select
               value={filters.status}
-              onChange={(v) => setFilter('status', v as Filters['status'])}
+              onChange={(v) => updateFilters({ status: v as Filters['status'] })}
               options={[
                 { value: 'all', label: 'Todos los estados' },
                 { value: 'pending', label: 'Pendientes' },
@@ -412,12 +584,26 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
             />
           </div>
 
+          {/* Channel (6.2) */}
+          <div className="w-44">
+            <Select
+              value={filters.channel}
+              onChange={(v) => updateFilters({ channel: v as Filters['channel'] })}
+              options={[
+                { value: 'all', label: 'Todos los canales' },
+                { value: 'whatsapp', label: 'WhatsApp' },
+                { value: 'mercadopago', label: 'Mercado Pago' },
+              ]}
+              ariaLabel="Filtrar por canal"
+            />
+          </div>
+
           {/* Section */}
           {sections.length > 0 && (
             <div className="w-44">
               <Select
                 value={filters.section_id}
-                onChange={(v) => setFilter('section_id', v)}
+                onChange={(v) => updateFilters({ section_id: v })}
                 options={[
                   { value: '', label: 'Todas las secciones' },
                   ...sections.map((s) => ({ value: s.id, label: s.name })),
@@ -432,7 +618,7 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
           {/* Date from */}
           <DatePicker
             value={filters.date_from}
-            onChange={(v) => setFilter('date_from', v)}
+            onChange={(v) => updateFilters({ date_from: v })}
             placeholder="Desde"
             max={filters.date_to || undefined}
             ariaLabel="Fecha desde"
@@ -440,7 +626,7 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
           {/* Date to */}
           <DatePicker
             value={filters.date_to}
-            onChange={(v) => setFilter('date_to', v)}
+            onChange={(v) => updateFilters({ date_to: v })}
             placeholder="Hasta"
             min={filters.date_from || undefined}
             ariaLabel="Fecha hasta"
@@ -449,7 +635,7 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
           {hasActiveFilters(filters) && (
             <button
               type="button"
-              onClick={() => setFilters(DEFAULT_FILTERS)}
+              onClick={handleClearFilters}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-white/50 hover:text-white hover:bg-white/8 border border-white/10 transition-colors cursor-pointer"
             >
               <X size={12} />
@@ -473,31 +659,62 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
         </div>
       </div>
 
+      {/* Batch action bar (7.4) */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 mb-3 rounded-xl bg-white/8 border border-white/15">
+          <p className="text-xs text-white/60 flex-1">{selectedIds.size} seleccionado{selectedIds.size === 1 ? '' : 's'}</p>
+          <button
+            type="button"
+            disabled={batchLoading !== null}
+            onClick={() => handleBatchAction('confirmed')}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {batchLoading === 'confirmed' ? 'Confirmando...' : 'Confirmar seleccionados'}
+          </button>
+          <button
+            type="button"
+            disabled={batchLoading !== null}
+            onClick={() => handleBatchAction('cancelled')}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/15 text-red-300 border border-red-500/20 hover:bg-red-500/25 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {batchLoading === 'cancelled' ? 'Cancelando...' : 'Cancelar seleccionados'}
+          </button>
+        </div>
+      )}
+
       {/* List */}
-      {filtered.length === 0 && orders.length === 0 && (
+      {!loading && orders.length === 0 && !hasActiveFilters(filters) && (
         <div className="border-2 border-dashed border-white/15 rounded-xl px-6 py-12 text-center">
           <ClipboardList size={32} className="mx-auto text-white/20 mb-3" />
           <p className="text-sm text-white/40">Todavía no recibiste pedidos.</p>
         </div>
       )}
 
-      {filtered.length === 0 && orders.length > 0 && (
+      {!loading && orders.length === 0 && hasActiveFilters(filters) && (
         <div className="border-2 border-dashed border-white/15 rounded-xl px-6 py-8 text-center">
           <p className="text-sm text-white/40">Ningún pedido coincide con los filtros aplicados.</p>
         </div>
       )}
 
-      {filtered.length > 0 && (
-        <div className="space-y-2">
-          {filtered.map((order) => (
+      {orders.length > 0 && (
+        <div className={`space-y-2 ${loading ? 'opacity-50' : ''}`}>
+          {orders.map((order) => (
             <div
               key={order.id}
               className="flex items-center gap-3 bg-white/6 border border-white/10 rounded-xl px-4 py-3"
             >
-              {/* Date + id */}
+              <input
+                type="checkbox"
+                checked={selectedIds.has(order.id)}
+                onChange={() => toggleSelected(order.id)}
+                className="flex-shrink-0 w-4 h-4 cursor-pointer accent-[#F5C84B]"
+                aria-label={`Seleccionar pedido ${orderDisplayRef(order)}`}
+              />
+
+              {/* Date + display ref */}
               <div className="flex-shrink-0 w-28">
                 <p className="text-xs text-white/60">{formatDate(order.created_at)}</p>
-                <p className="text-xs text-white/30 font-mono mt-0.5">#{order.id.slice(0, 8)}</p>
+                <p className="text-xs text-white/30 font-mono mt-0.5">{orderDisplayRef(order)}</p>
               </div>
 
               {/* Items count */}
@@ -531,6 +748,31 @@ export function OrdersPanel({ initialOrders, sections }: Props) {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pagination controls (12.3) */}
+      {total > pageSize && (
+        <div className="flex items-center justify-center gap-3 mt-4">
+          <button
+            type="button"
+            disabled={page <= 1 || loading}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-white/60 hover:text-white hover:bg-white/8 border border-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            aria-label="Página anterior"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <p className="text-xs text-white/40">Página {page} de {totalPages}</p>
+          <button
+            type="button"
+            disabled={page >= totalPages || loading}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-white/60 hover:text-white hover:bg-white/8 border border-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            aria-label="Página siguiente"
+          >
+            <ChevronRight size={14} />
+          </button>
         </div>
       )}
 

@@ -12,7 +12,8 @@ import { OrdersPanel } from '../components/OrdersPanel';
 import { OrdersStats } from '../components/OrdersStats';
 import { SubscriptionPanel } from '../components/SubscriptionPanel';
 import { CouponsPanel } from '../components/CouponsPanel';
-import { listOrders, getOrderStats } from '@/lib/store/orders/actions';
+import { listOrders, getOrderStats, getOrderById, getBacklogPendingCount } from '@/lib/store/orders/actions';
+import type { OrderWithItems } from '@/lib/store/orders/actions';
 import { getProductPriceTiers } from '@/lib/store/actions';
 import { getPlanLimits, isUnlimited, type PlanId } from '@/lib/plans/limits';
 import { getSubscriptionState, daysLeftInTrial } from '@/lib/subscription/state';
@@ -97,11 +98,30 @@ export default async function DashboardSectionPage({
   const priceTiersByProduct =
     section === 'products' ? await getProductPriceTiers(products.map((p) => p.id)) : {};
 
-  const [ordersResult, statsResult] = section === 'orders'
-    ? await Promise.all([listOrders({}), getOrderStats('30d')])
-    : [null, null];
+  const [ordersResult, statsResult, backlogResult] = section === 'orders'
+    ? await Promise.all([listOrders({}), getOrderStats('30d'), getBacklogPendingCount()])
+    : [null, null, null];
 
   const initialOrders = ordersResult && 'orders' in ordersResult ? ordersResult.orders : [];
+  const initialOrdersTotal = ordersResult && 'orders' in ordersResult ? ordersResult.total : 0;
+  const initialOrdersPageSize = ordersResult && 'orders' in ordersResult ? ordersResult.pageSize : 20;
+
+  const initialBacklogCount = backlogResult && 'count' in backlogResult ? backlogResult.count : 0;
+  const waLifecycleEffectiveFrom =
+    backlogResult && 'effectiveFrom' in backlogResult ? backlogResult.effectiveFrom : new Date().toISOString();
+
+  // task 5.2: `?order=<uuid>` from the WhatsApp deep link opens that order directly.
+  // Fetched by id (not resolved from initialOrders) so an old order still opens
+  // even when pagination (grupo 12) puts it outside the first page.
+  let initialDeepLinkOrder: OrderWithItems | null = null;
+  if (section === 'orders' && searchParams) {
+    const sp = await searchParams;
+    const orderParam = sp['order'];
+    if (typeof orderParam === 'string') {
+      const deepLinkResult = await getOrderById(orderParam);
+      initialDeepLinkOrder = deepLinkResult && 'order' in deepLinkResult ? deepLinkResult.order : null;
+    }
+  }
   const initialStats = statsResult && !('error' in statsResult) ? statsResult : {
     kpis: { revenue_cents: 0, order_count: 0, avg_ticket_cents: 0, confirmation_rate: 0 },
     revenue_by_day: [],
@@ -183,7 +203,16 @@ export default async function DashboardSectionPage({
       {section === 'orders' && (
         <>
           <OrdersStats accentColor={accentColor} initialStats={initialStats} initialRange="30d" />
-          <OrdersPanel store={store} initialOrders={initialOrders} sections={sections} />
+          <OrdersPanel
+            store={store}
+            initialOrders={initialOrders}
+            initialTotal={initialOrdersTotal}
+            initialPageSize={initialOrdersPageSize}
+            sections={sections}
+            initialDeepLinkOrder={initialDeepLinkOrder}
+            initialBacklogCount={initialBacklogCount}
+            waLifecycleEffectiveFrom={waLifecycleEffectiveFrom}
+          />
         </>
       )}
       {section === 'coupons' && (

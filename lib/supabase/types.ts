@@ -188,9 +188,11 @@ export type Database = {
       orders: {
         Row: {
           cancelled_at: string | null
+          cancelled_by: string | null
           channel: string
           confirmed_at: string | null
           coupon_code: string | null
+          coupon_counted: boolean
           created_at: string
           currency: string
           customer_email: string | null
@@ -207,13 +209,16 @@ export type Database = {
           payment_status: string
           status: string
           store_id: string
+          store_order_number: number | null
           total_cents: number
         }
         Insert: {
           cancelled_at?: string | null
+          cancelled_by?: string | null
           channel?: string
           confirmed_at?: string | null
           coupon_code?: string | null
+          coupon_counted?: boolean
           created_at?: string
           currency?: string
           customer_email?: string | null
@@ -230,13 +235,16 @@ export type Database = {
           payment_status?: string
           status?: string
           store_id: string
+          store_order_number?: number | null
           total_cents: number
         }
         Update: {
           cancelled_at?: string | null
+          cancelled_by?: string | null
           channel?: string
           confirmed_at?: string | null
           coupon_code?: string | null
+          coupon_counted?: boolean
           created_at?: string
           currency?: string
           customer_email?: string | null
@@ -253,6 +261,7 @@ export type Database = {
           payment_status?: string
           status?: string
           store_id?: string
+          store_order_number?: number | null
           total_cents?: number
         }
         Relationships: [
@@ -661,6 +670,7 @@ export type Database = {
           mp_subscription_status: string | null
           name: string
           onboarding_step: number
+          order_seq: number
           owner_id: string
           payment_exempt: boolean
           payment_exempt_reason: string | null
@@ -673,6 +683,9 @@ export type Database = {
           theme: Json
           trial_ends_at: string | null
           updated_at: string
+          wa_auto_confirm: boolean
+          wa_lifecycle_effective_from: string
+          wa_pending_ttl_days: number
           whatsapp_number: string | null
         }
         Insert: {
@@ -686,6 +699,7 @@ export type Database = {
           mp_subscription_status?: string | null
           name: string
           onboarding_step?: number
+          order_seq?: number
           owner_id: string
           payment_exempt?: boolean
           payment_exempt_reason?: string | null
@@ -698,6 +712,9 @@ export type Database = {
           theme?: Json
           trial_ends_at?: string | null
           updated_at?: string
+          wa_auto_confirm?: boolean
+          wa_lifecycle_effective_from?: string
+          wa_pending_ttl_days?: number
           whatsapp_number?: string | null
         }
         Update: {
@@ -711,6 +728,7 @@ export type Database = {
           mp_subscription_status?: string | null
           name?: string
           onboarding_step?: number
+          order_seq?: number
           owner_id?: string
           payment_exempt?: boolean
           payment_exempt_reason?: string | null
@@ -723,6 +741,9 @@ export type Database = {
           theme?: Json
           trial_ends_at?: string | null
           updated_at?: string
+          wa_auto_confirm?: boolean
+          wa_lifecycle_effective_from?: string
+          wa_pending_ttl_days?: number
           whatsapp_number?: string | null
         }
         Relationships: [
@@ -802,6 +823,7 @@ export type Database = {
     Functions: {
       current_user_role: { Args: { uid: string }; Returns: string }
       is_superadmin: { Args: { uid: string }; Returns: boolean }
+      next_order_number: { Args: { p_store_id: string }; Returns: number }
       storefront_co_purchased: {
         Args: { p_limit?: number; p_product_id: string; p_store_id: string }
         Returns: {

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import * as Sentry from "@sentry/nextjs";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
 // Note: hover affordances are CSS-driven via .store-scope rules in globals.css
@@ -1139,7 +1140,8 @@ function CartDrawer({
       return `• ${i.quantity}x ${i.name}${label}${tierNote} — ${formatARS(unitPrice * i.quantity)}`;
     });
 
-    let orderRef: string | null = null;
+    let orderId: string | null = null;
+    let storeOrderNumber: number | null = null;
     try {
       const result = await createPendingOrder({
         store_id: storeId,
@@ -1149,7 +1151,8 @@ function CartDrawer({
         idempotency_key: idempotencyKey,
       });
       if ('order_id' in result) {
-        orderRef = result.order_id.slice(0, 8);
+        orderId = result.order_id;
+        storeOrderNumber = result.store_order_number;
         // Fresh key for a possible next order with the same cart contents.
         regenerateIdempotencyKey();
       } else if ('error' in result && result.error === 'stock_insufficient') {
@@ -1159,10 +1162,24 @@ function CartDrawer({
         const v = result as { error: 'qty_violation'; productName: string; min: number; step: number };
         toast.error(`Necesitás al menos ${v.min} unidades de '${v.productName}' para comprar.`);
         return;
+      } else if ('error' in result) {
+        // Otro motivo de fallo (tienda no disponible, cupón inválido, error de inserción, etc.):
+        // el pedido no quedó registrado, así que no se abre WhatsApp con una referencia inexistente.
+        console.error('[handleWhatsApp] createPendingOrder failed:', result.error);
+        Sentry.captureMessage(`createPendingOrder failed: ${result.error}`, { level: 'error' });
+        toast.error("No pudimos registrar tu pedido. Intentá de nuevo.");
+        return;
       }
-    } catch {
-      // silencioso, abrir wa.me igual
+    } catch (err) {
+      // No se pudo confirmar que el pedido quedó registrado: no se abre WhatsApp,
+      // para no anunciarle un pedido a la tienda que no existe en la base.
+      console.error('[handleWhatsApp] createPendingOrder threw:', err);
+      Sentry.captureException(err);
+      toast.error("No pudimos registrar tu pedido. Intentá de nuevo.");
+      return;
     }
+
+    if (!orderId) return; // unreachable: every path above either sets orderId or returns early
 
     const message = buildOrderWhatsappMessage({
       storeName,
@@ -1170,7 +1187,8 @@ function CartDrawer({
       couponCode: appliedCoupon?.code ?? null,
       discountAmount: appliedCoupon && discountAmount > 0 ? discountAmount : null,
       total: appliedCoupon && discountAmount > 0 ? finalTotal : totalPrice,
-      orderRef,
+      orderId,
+      storeOrderNumber,
     });
 
     const normalized = whatsappNumber.replace(/\D/g, "");

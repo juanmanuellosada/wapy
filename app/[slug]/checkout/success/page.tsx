@@ -31,7 +31,7 @@ export default async function CheckoutSuccessPage({ params, searchParams }: Prop
 
     const { data: order } = await admin
       .from('orders')
-      .select('id, store_id, payment_status, mp_payment_id, customer_name, total_cents, discount_cents, coupon_code')
+      .select('id, store_id, store_order_number, payment_status, mp_payment_id, customer_name, total_cents, discount_cents, coupon_code')
       .eq('id', externalReference)
       .maybeSingle();
 
@@ -67,7 +67,8 @@ export default async function CheckoutSuccessPage({ params, searchParams }: Prop
           couponCode: order.coupon_code ?? null,
           discountAmount,
           total,
-          orderRef: order.id.slice(0, 8),
+          orderId: order.id,
+          storeOrderNumber: order.store_order_number,
           payment: {
             method: 'mercadopago',
             paymentId: order.mp_payment_id ?? null,

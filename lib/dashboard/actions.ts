@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { z } from 'zod';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { checkSlugAvailable } from '@/lib/onboarding/actions';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
@@ -111,6 +112,45 @@ export async function toggleStoreStatus(): Promise<ToggleResult> {
 
   revalidatePath('/dashboard', 'layout');
   return { ok: true, status: newStatus };
+}
+
+// ---------------------------------------------------------------------------
+// saveWaLifecycleConfig — UPDATE wa_pending_ttl_days + wa_auto_confirm.
+// ---------------------------------------------------------------------------
+
+const waLifecycleSchema = z.object({
+  wa_pending_ttl_days: z
+    .number()
+    .int('Tiene que ser un número entero de días.')
+    .min(1, 'El mínimo es 1 día.')
+    .max(30, 'El máximo es 30 días.'),
+  wa_auto_confirm: z.boolean(),
+});
+
+type SaveWaLifecycleResult = { ok: true } | { error: string };
+
+export async function saveWaLifecycleConfig(formData: {
+  wa_pending_ttl_days: number;
+  wa_auto_confirm: boolean;
+}): Promise<SaveWaLifecycleResult> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const parsed = waLifecycleSchema.safeParse(formData);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const { wa_pending_ttl_days, wa_auto_confirm } = parsed.data;
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from('stores')
+    .update({ wa_pending_ttl_days, wa_auto_confirm, updated_at: new Date().toISOString() })
+    .eq('id', store.id);
+
+  if (error) return { error: 'No se pudo guardar la configuración. Intentá de nuevo.' };
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

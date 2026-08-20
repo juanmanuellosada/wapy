@@ -19,8 +19,17 @@ import { NextRequest, NextResponse } from "next/server";
 // Add new protected route prefixes here when future phases introduce them.
 const PROTECTED_PREFIXES = ["/onboarding", "/dashboard", "/admin"];
 
+/**
+ * Login redirect target that preserves the query string (e.g. `?order=<uuid>`
+ * from the WhatsApp deep link), not just the path — otherwise a deep-linked
+ * owner would land back on the bare dashboard after logging in.
+ */
+export function buildLoginRedirectTarget(pathname: string, search: string): string {
+  return `${pathname}${search}`;
+}
+
 export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
 
   // --- Auth protection for private routes ---
   const isProtected = PROTECTED_PREFIXES.some((prefix) =>
@@ -64,7 +73,7 @@ export async function proxy(request: NextRequest) {
   // No session → redirect to /login with the original path preserved.
   if (!user) {
     const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("redirect", pathname);
+    loginUrl.searchParams.set("redirect", buildLoginRedirectTarget(pathname, search));
     return NextResponse.redirect(loginUrl, { status: 307 });
   }
 
