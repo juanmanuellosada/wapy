@@ -1,6 +1,6 @@
 ---
 name: wapy-whatsapp-order-lifecycle
-description: Change fix-whatsapp-order-lifecycle implementado 2026-08-19; migraciones 036/037 aplicadas a prod, código sin deployar.
+description: Change fix-whatsapp-order-lifecycle shippeado a prod 2026-08-19/20, anuncio enviado a las 4 tiendas activas.
 metadata:
   type: project
 ---
@@ -21,3 +21,11 @@ Es prerequisito de [[wapy-loyalty-points-program]] pero tiene valor solo. Relaci
 Dato que cuantifica el problema: **40 de 59 pedidos** en prod eran pedidos de WhatsApp pendientes sin confirmar (68%). Por eso se descartó tocar el backlog en masa.
 
 Política final: TTL de 7 días por tienda (`stores.wa_pending_ttl_days`), auto-confirmar opt-in y apagado (`wa_auto_confirm`), y **la cancelación automática es reversible** (`orders.cancelled_by` distingue `owner` de `system`) — sin eso, el release habría destruido ventas reales.
+
+**Cerrado 2026-08-20.** Deployado a `main` y en producción. Anuncio enviado por Resend a las 4 tiendas activas con clientas reales (Bluma Underwear, Quinque Pastelería, Kaori Hogar, ZajiLu 3D); se excluyeron 3 bloqueadas y 1 de prueba. Dato de contexto: Bluma tenía 22 pendientes sobre 22 pedidos totales, todos anteriores al corte, así que el cron no los toca.
+
+Dos features que salieron de usarlo en producción, ya en `main`: "seleccionar todos los que coinciden con el filtro" en el panel (no solo la página), y **teléfono obligatorio en el checkout por WhatsApp** — normalizado a E.164 asumiendo Argentina, validado server-side, guardado en `orders.customer_phone` y en localStorage por tienda para no retipearlo. Es el primer dato de contacto que el canal WhatsApp persiste, y es un paso hacia la identidad de comprador que necesita [[wapy-loyalty-points-program]].
+
+Queda sin verificar en prod: deep link desde un celular sin sesión, y reactivación de un pedido cancelado por el cron (requiere esperar a que el cron cancele algo).
+
+**Gotcha operativo aprendido**: `vercel env pull` NO recupera variables marcadas como sensibles — escribe el literal `[SENSITIVE]` y pisa el `.env.local`. Dejó 24 variables inutilizables (MP, Sentry, secretos de cron/webhook). No usarlo para recuperar secretos.

@@ -10,4 +10,4 @@
 - [Supabase PKCE gotcha](wapy-supabase-pkce-gotcha.md) — @supabase/ssr fuerza PKCE hardcodeado: los links de auth por email no pueden usar el hash ni depender del code verifier. Usar token_hash + verifyOtp server-side.
 - [Tramos de precio por cantidad](wapy-quantity-price-tiers.md) — Descuento por cantidad por producto, tramos ilimitados. Implementado 2026-08-17; migración 035 aplicada a prod, sin probar en navegador.
 - [Programa de puntos](wapy-loyalty-points-program.md) — Decisiones cerradas 2026-08-19: cuenta global + saldo por tienda, canje como descuento variable, solo Pro. Aún sin change escrito.
-- [Ciclo de vida del pedido WhatsApp](wapy-whatsapp-order-lifecycle.md) — Implementado 2026-08-19. Migraciones 036/037 en prod, código sin deployar. 40 de 59 pedidos estaban pendientes sin confirmar.
+- [Ciclo de vida del pedido WhatsApp](wapy-whatsapp-order-lifecycle.md) — Shippeado y anunciado 2026-08-20. Incluye el gotcha de `vercel env pull` con variables sensibles.
