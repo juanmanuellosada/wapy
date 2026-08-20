@@ -1,6 +1,7 @@
 'use server';
 
 import * as Sentry from '@sentry/nextjs';
+import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
@@ -899,6 +900,9 @@ export type OrderWithItems = {
   id: string;
   status: OrderStatus;
   customer_name: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
+  delivery_address: string | null;
   total_cents: number;
   currency: string;
   notes: string | null;
@@ -953,6 +957,9 @@ function mapOrderRow(row: {
   id: string;
   status: string;
   customer_name: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
+  delivery_address: string | null;
   total_cents: number;
   currency: string;
   notes: string | null;
@@ -970,6 +977,9 @@ function mapOrderRow(row: {
     id: row.id,
     status: row.status as OrderStatus,
     customer_name: row.customer_name,
+    customer_phone: row.customer_phone,
+    customer_email: row.customer_email,
+    delivery_address: row.delivery_address,
     total_cents: row.total_cents,
     currency: row.currency,
     notes: row.notes,
@@ -1391,7 +1401,7 @@ export async function exportOrdersCsv(
   const orders = result.rows.map(mapOrderRow);
   if (orders.length === 0) return { error: 'empty' };
 
-  const header = ['id', 'store_order_number', 'created_at', 'status', 'customer_name', 'total', 'currency', 'items_count', 'items_summary', 'notes'].join(',');
+  const header = ['id', 'store_order_number', 'created_at', 'status', 'customer_name', 'customer_phone', 'total', 'currency', 'items_count', 'items_summary', 'notes'].join(',');
 
   const rows = orders.map((order) => {
     const itemsSummary = order.items
@@ -1404,6 +1414,7 @@ export async function exportOrdersCsv(
       csvEscape(formatCsvDate(order.created_at)),
       csvEscape(order.status),
       csvEscape(order.customer_name),
+      csvEscape(order.customer_phone),
       csvEscape(formatCsvTotal(order.total_cents)),
       csvEscape(order.currency),
       String(order.items.length),
@@ -1487,14 +1498,21 @@ async function deductOrderStock(
   return { ok: true };
 }
 
-export async function updateOrderStatus(
-  order_id: string,
-  next_status: OrderStatus
-): Promise<
+type UpdateOrderStatusResult =
   | { ok: true; order: OrderWithItems }
   | { error: 'unauthorized' | 'invalid_transition' | 'not_found' }
-  | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
-> {
+  | { error: 'stock_insufficient'; details: StockInsufficientDetail[] };
+
+/**
+ * Núcleo de updateOrderStatus, sin revalidatePath. batchUpdateOrderStatus lo
+ * usa directamente por pedido para no disparar una revalidación por cada uno
+ * del lote (con 40 seleccionados serían 40 llamadas) — revalida una sola vez
+ * al final del lote en su lugar.
+ */
+async function updateOrderStatusInternal(
+  order_id: string,
+  next_status: OrderStatus
+): Promise<UpdateOrderStatusResult> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
 
@@ -1578,6 +1596,9 @@ export async function updateOrderStatus(
       id: updated.id,
       status: updated.status as OrderStatus,
       customer_name: updated.customer_name,
+      customer_phone: updated.customer_phone,
+      customer_email: updated.customer_email,
+      delivery_address: updated.delivery_address,
       total_cents: updated.total_cents,
       currency: updated.currency,
       notes: updated.notes,
@@ -1592,6 +1613,17 @@ export async function updateOrderStatus(
       items: (updated.order_items ?? []) as OrderWithItems['items'],
     },
   };
+}
+
+export async function updateOrderStatus(
+  order_id: string,
+  next_status: OrderStatus
+): Promise<UpdateOrderStatusResult> {
+  const result = await updateOrderStatusInternal(order_id, next_status);
+  if ('ok' in result) {
+    revalidatePath('/dashboard', 'layout');
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1642,7 +1674,7 @@ export async function batchUpdateOrderStatus(
   const failed: BatchUpdateOrderStatusResult['failed'] = [];
 
   for (const orderId of orderIds) {
-    const result = await updateOrderStatus(orderId, next_status);
+    const result = await updateOrderStatusInternal(orderId, next_status);
     if ('ok' in result) {
       updated.push(result.order);
     } else if (result.error === 'stock_insufficient') {
@@ -1655,6 +1687,9 @@ export async function batchUpdateOrderStatus(
       failed.push({ order_id: orderId, reason: result.error });
     }
   }
+
+  // Una sola revalidación al final del lote, no una por pedido dentro del loop.
+  revalidatePath('/dashboard', 'layout');
 
   return { updated, failed };
 }
@@ -1679,8 +1714,12 @@ export type DeleteOrderResult = { ok: true } | { error: 'unauthorized' | 'not_fo
  * arregló, solo que por la puerta de al lado. Por eso, para `delivered`, no
  * se llama a ninguna de las dos reversiones (Decisión 3: borrar un entregado
  * solo afecta el historial de ingresos, no el inventario ni los cupones).
+ *
+ * Núcleo sin revalidatePath: batchDeleteOrders lo usa directamente por
+ * pedido para no disparar una revalidación por cada uno del lote — revalida
+ * una sola vez al final del lote en su lugar.
  */
-export async function deleteOrder(order_id: string): Promise<DeleteOrderResult> {
+async function deleteOrderInternal(order_id: string): Promise<DeleteOrderResult> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
 
@@ -1713,6 +1752,14 @@ export async function deleteOrder(order_id: string): Promise<DeleteOrderResult> 
   }
 
   return { ok: true };
+}
+
+export async function deleteOrder(order_id: string): Promise<DeleteOrderResult> {
+  const result = await deleteOrderInternal(order_id);
+  if ('ok' in result) {
+    revalidatePath('/dashboard', 'layout');
+  }
+  return result;
 }
 
 export type BatchDeleteOrdersResult = {
@@ -1755,13 +1802,16 @@ export async function batchDeleteOrders(
   const failed: BatchDeleteOrdersResult['failed'] = [];
 
   for (const orderId of orderIds) {
-    const result = await deleteOrder(orderId);
+    const result = await deleteOrderInternal(orderId);
     if ('ok' in result) {
       deletedCount += 1;
     } else {
       failed.push({ order_id: orderId, reason: 'not_found' });
     }
   }
+
+  // Una sola revalidación al final del lote, no una por pedido dentro del loop.
+  revalidatePath('/dashboard', 'layout');
 
   return { deletedCount, failed };
 }

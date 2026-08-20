@@ -25,6 +25,7 @@ import type { Store, Section } from '@/lib/onboarding/state';
 import { Select } from '@/app/components/Select';
 import { DatePicker } from '@/app/components/DatePicker';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
+import { toWaMeLink } from './orderContactLink';
 
 type Props = {
   store: Store;
@@ -256,6 +257,8 @@ function OrderDetailModal({ order, onClose, onStatusChange, onDeleted }: OrderDe
     onDeleted();
   };
 
+  const customerWaLink = order.customer_phone ? toWaMeLink(order.customer_phone) : null;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -293,6 +296,37 @@ function OrderDetailModal({ order, onClose, onStatusChange, onDeleted }: OrderDe
         <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
           {order.notes && (
             <p className="text-xs text-white/50">{order.notes}</p>
+          )}
+
+          {/* Datos de contacto de la compradora — solo los campos presentes en
+              este pedido (WhatsApp suele tener solo teléfono; Mercado Pago
+              suele tener nombre, email y a veces dirección). */}
+          {(order.customer_name || order.customer_phone || order.customer_email || order.delivery_address) && (
+            <div className="space-y-1 pb-3 border-b border-white/10">
+              {order.customer_name && (
+                <p className="text-sm text-[#FBF7EC]">{order.customer_name}</p>
+              )}
+              {order.customer_phone && (
+                customerWaLink ? (
+                  <a
+                    href={customerWaLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-sm text-[#25D366] hover:underline"
+                  >
+                    {order.customer_phone}
+                  </a>
+                ) : (
+                  <p className="text-sm text-[#FBF7EC]">{order.customer_phone}</p>
+                )
+              )}
+              {order.customer_email && (
+                <p className="text-xs text-white/50">{order.customer_email}</p>
+              )}
+              {order.delivery_address && (
+                <p className="text-xs text-white/50">{order.delivery_address}</p>
+              )}
+            </div>
           )}
 
           {/* Items */}
@@ -952,11 +986,16 @@ export function OrdersPanel({
                 <p className="text-xs text-white/30 font-mono mt-0.5">{orderDisplayRef(order)}</p>
               </div>
 
-              {/* Items count */}
+              {/* Items count + identificador de la compradora (nombre, o teléfono si no hay nombre) */}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-white/60">
                   {order.items.length} {order.items.length === 1 ? 'producto' : 'productos'}
                 </p>
+                {(order.customer_name || order.customer_phone) && (
+                  <p className="text-xs text-white/40 truncate mt-0.5">
+                    {order.customer_name || order.customer_phone}
+                  </p>
+                )}
               </div>
 
               {/* Total */}

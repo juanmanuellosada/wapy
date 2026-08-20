@@ -17,6 +17,6 @@ describe('buildOrderWhatsappMessage — teléfono de la compradora', () => {
 
   it('no agrega línea de teléfono cuando no se provee', () => {
     const message = buildOrderWhatsappMessage(BASE);
-    expect(message).not.toContain('📱');
+    expect(message).not.toContain('Tel:');
   });
 });

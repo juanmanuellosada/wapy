@@ -56,7 +56,7 @@ export function buildOrderWhatsappMessage(input: {
   parts.push(`*Total: ${formatARS(input.total)}*`);
 
   if (input.customerPhone) {
-    parts.push(`📱 ${input.customerPhone}`);
+    parts.push(`Tel: ${input.customerPhone}`);
   }
 
   const ref = input.storeOrderNumber != null ? input.storeOrderNumber : input.orderId.slice(0, 8);

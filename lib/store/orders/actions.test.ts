@@ -2,14 +2,21 @@
 //
 // Estas pruebas ejercen assignOrderNumber / incrementCouponUse / revertCouponUse
 // directamente contra un fake del admin client (no hay infraestructura de test
-// contra Postgres en este repo), mockeando '@/lib/supabase/server' y
-// '@sentry/nextjs' para que importar actions.ts no dispare I/O real.
+// contra Postgres en este repo), mockeando '@/lib/supabase/server',
+// '@sentry/nextjs' y 'next/cache' para que importar actions.ts no dispare I/O
+// real. 'next/cache' se mockea porque revalidatePath requiere un request
+// store de Next.js (static generation store) que no existe fuera de un
+// request real — sin el mock, cualquier mutación que la llame revienta acá.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@sentry/nextjs', () => ({
   captureException: vi.fn(),
   captureMessage: vi.fn(),
+}));
+
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
 }));
 
 const mockCreateAdminClient = vi.fn();
@@ -629,6 +636,130 @@ describe('exportOrdersCsv', () => {
 
     const rowCols = row.split(',');
     expect(rowCols[headerCols.indexOf('store_order_number')]).toBe('42');
+  });
+
+  it('incluye customer_phone en el header y en la fila', async () => {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      orders: [
+        {
+          id: 'o1',
+          store_id: 's1',
+          status: 'confirmed',
+          channel: 'whatsapp',
+          customer_name: 'Juan',
+          customer_phone: '+5491122334455',
+          customer_email: null,
+          delivery_address: null,
+          total_cents: 150000,
+          currency: 'ARS',
+          notes: null,
+          created_at: '2026-08-01T12:00:00Z',
+          confirmed_at: null,
+          cancelled_at: null,
+          delivered_at: null,
+          cancelled_by: null,
+          payment_status: 'pending',
+          store_order_number: 42,
+          order_items: [],
+        },
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await exportOrdersCsv({});
+    if ('error' in result) throw new Error('unexpected error');
+
+    const [header, row] = result.csv.replace(/^﻿/, '').split('\r\n');
+    const headerCols = header.split(',');
+    expect(headerCols).toContain('customer_phone');
+
+    // parseCsvRow (no naive split): la fecha viene entrecomillada porque
+    // formatCsvDate produce una coma ("01/08/2026, 12:00"), así que un split
+    // ingenuo por ',' desalinearía las columnas siguientes.
+    const rowCols = parseCsvRow(row);
+    expect(rowCols[headerCols.indexOf('customer_phone')]).toBe('+5491122334455');
+  });
+});
+
+/** Parser CSV mínimo que respeta comillas — solo para leer filas en los tests. */
+function parseCsvRow(row: string): string[] {
+  const cols: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < row.length; i++) {
+    const ch = row[i];
+    if (inQuotes) {
+      if (ch === '"' && row[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      cols.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cols.push(current);
+  return cols;
+}
+
+// ---------------------------------------------------------------------------
+// mapOrderRow expone los datos de contacto de la compradora (customer_phone,
+// customer_email, delivery_address), no solo customer_name — el panel de
+// pedidos los necesita para mostrar el bloque de contacto.
+// ---------------------------------------------------------------------------
+
+describe('mapOrderRow — datos de contacto', () => {
+  it('getOrderById expone customer_phone, customer_email y delivery_address', async () => {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      orders: [
+        {
+          id: 'o1',
+          store_id: 's1',
+          status: 'confirmed',
+          channel: 'mercadopago',
+          customer_name: 'María',
+          customer_phone: '+5491133445566',
+          customer_email: 'maria@example.com',
+          delivery_address: 'Av. Siempre Viva 742',
+          total_cents: 200000,
+          currency: 'ARS',
+          notes: null,
+          created_at: '2026-08-01T12:00:00Z',
+          confirmed_at: null,
+          cancelled_at: null,
+          delivered_at: null,
+          cancelled_by: null,
+          payment_status: 'approved',
+          store_order_number: 7,
+          deleted_at: null,
+          order_items: [],
+        },
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await getOrderById('o1');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.order.customer_phone).toBe('+5491133445566');
+    expect(result.order.customer_email).toBe('maria@example.com');
+    expect(result.order.delivery_address).toBe('Av. Siempre Viva 742');
   });
 });
 
