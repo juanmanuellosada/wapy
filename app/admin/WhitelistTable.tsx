@@ -22,8 +22,15 @@ function formatRelative(isoDate: string | null): string {
   return rtf.format(diffMins, 'minute');
 }
 
-function formatTrial(trialEndsAt: string | null): { label: string; expired: boolean } {
-  if (!trialEndsAt) return { label: '—', expired: false };
+function formatTrial(
+  trialEndsAt: string | null,
+  trialDays: number | null
+): { label: string; expired: boolean } {
+  if (!trialEndsAt) {
+    if (trialDays === null) return { label: '—', expired: false };
+    if (trialDays === 0) return { label: 'Sin prueba', expired: false };
+    return { label: `${trialDays} ${trialDays === 1 ? 'día' : 'días'} al registrarse`, expired: false };
+  }
   const diffMs = new Date(trialEndsAt).getTime() - Date.now();
   const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
   if (diffDays > 0) {
@@ -95,7 +102,7 @@ export function WhitelistTable({ rows }: Props) {
             const status = getStatus(row);
             const badge = STATUS_BADGE[status];
             const roleBadge = ROLE_BADGE[row.grant_role] ?? ROLE_BADGE['owner'];
-            const trial = formatTrial(row.trial_ends_at);
+            const trial = formatTrial(row.trial_ends_at, row.trial_days);
             const planBadge = row.plan ? (PLAN_BADGE[row.plan] ?? PLAN_BADGE['inicial']) : null;
             return (
               <tr

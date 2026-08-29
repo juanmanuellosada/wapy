@@ -3,7 +3,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
-import { TRIAL_DAYS } from '@/lib/subscription/constants';
+import { resolveTrialEndsAt } from './trial';
 import { basicsSchema } from './schemas';
 import { stepIndexFor, nextStepName } from './steps';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
@@ -135,15 +135,14 @@ export async function saveBasics(formData: {
   }
 
   const { data: whitelistRow } = await admin.from('whitelist')
-    .select('plan, trial_ends_at')
+    .select('plan, trial_ends_at, trial_days')
     .ilike('email', user.email!)
     .maybeSingle();
 
-  // If the whitelist row already carries a trial_ends_at (manually set by admin),
-  // respect it; otherwise default to TRIAL_DAYS from now for new stores post-billing.
-  const trialEndsAt =
-    whitelistRow?.trial_ends_at ??
-    new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  // Precedence: whitelist.trial_ends_at (explicit date, lead approval path)
+  // → whitelist.trial_days (duration pledged at invite time, counted from
+  // now) → TRIAL_DAYS (system default).
+  const trialEndsAt = resolveTrialEndsAt(whitelistRow, new Date());
 
   const { data: newStore, error: insertError } = await admin
     .from('stores')

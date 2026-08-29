@@ -793,6 +793,7 @@ export type Database = {
           invited_at: string
           plan: string | null
           registered_at: string | null
+          trial_days: number | null
           trial_ends_at: string | null
         }
         Insert: {
@@ -804,6 +805,7 @@ export type Database = {
           invited_at?: string
           plan?: string | null
           registered_at?: string | null
+          trial_days?: number | null
           trial_ends_at?: string | null
         }
         Update: {
@@ -815,6 +817,7 @@ export type Database = {
           invited_at?: string
           plan?: string | null
           registered_at?: string | null
+          trial_days?: number | null
           trial_ends_at?: string | null
         }
         Relationships: []
