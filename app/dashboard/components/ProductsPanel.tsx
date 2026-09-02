@@ -7,7 +7,7 @@ import { SortableList } from '@/app/components/store/SortableList';
 import { ProductModal } from '@/app/components/store/ProductModal';
 import { BulkImportModal } from './BulkImportModal';
 import { BulkEditGrid } from './BulkEditGrid';
-import { saveStoreProduct, deleteStoreProduct, duplicateProduct } from '@/lib/store/actions';
+import { saveStoreProduct, deleteStoreProduct, duplicateProduct, reorderProducts } from '@/lib/store/actions';
 import { exportProductsCsv } from '@/lib/store/exports/products';
 import type { Store, Section, Product } from '@/lib/onboarding/state';
 import type { PriceTier } from '@/lib/store/pricing';
@@ -213,22 +213,23 @@ export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sec
 
   const handleReorder = async (newOrder: Product[]) => {
     const reordered = newOrder.map((p, i) => ({ ...p, position: i }));
+    const previous = products;
+    // El grupo arrastrado es una subsecuencia de `products`, y la lista se
+    // renderiza en el orden del array (no por `position`). Hay que reubicar los
+    // ítems en sus propios huecos: mapear por id dejaba el array en el orden
+    // viejo y el producto "volvía" a su lugar al soltarlo.
     setProducts((prev) => {
-      const map = new Map(reordered.map((p) => [p.id, p]));
-      return prev.map((p) => map.get(p.id) ?? p);
+      const byId = new Map(reordered.map((p) => [p.id, p]));
+      let next = 0;
+      return prev.map((p) => (byId.has(p.id) ? reordered[next++] : p));
     });
-    for (const p of reordered) {
-      await saveStoreProduct({
-        id: p.id,
-        name: p.name,
-        description: p.description,
-        price_cents: p.price_cents,
-        stock: p.stock,
-        section_id: p.section_id,
-        image_urls: p.image_urls,
-        position: p.position,
-        is_active: p.is_active,
-      });
+
+    const result = await reorderProducts(
+      reordered.map((p) => ({ id: p.id, position: p.position }))
+    );
+    if ('error' in result) {
+      setProducts(previous);
+      setServerError(result.error);
     }
   };
 

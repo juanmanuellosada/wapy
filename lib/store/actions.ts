@@ -737,6 +737,39 @@ export async function bulkUpdateProducts(
 }
 
 // ---------------------------------------------------------------------------
+// reorderProducts — actualiza SOLO la posición de un grupo de productos.
+// Se usa al arrastrar en el dashboard: a diferencia de saveStoreProduct (que
+// reescribe la fila entera y pisaría min_quantity/qty_step) toca un único
+// campo, y revalida una sola vez en lugar de una por producto.
+// ---------------------------------------------------------------------------
+
+export async function reorderProducts(
+  order: { id: string; position: number }[]
+): Promise<{ ok: true } | { error: string }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+  if (order.length === 0) return { ok: true };
+
+  const admin = createAdminClient();
+
+  // El .eq('store_id') de cada update hace de guarda de pertenencia: un id
+  // ajeno simplemente no matchea ninguna fila.
+  const results = await Promise.all(
+    order.map(({ id, position }) =>
+      admin.from('products').update({ position }).eq('id', id).eq('store_id', store.id)
+    )
+  );
+
+  if (results.some((r) => r.error)) {
+    console.warn('[reorderProducts] update failed');
+    return { error: 'No se pudo guardar el nuevo orden.' };
+  }
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // deleteStoreProduct — DELETE row + remove image files from storage.
 // ---------------------------------------------------------------------------
 
