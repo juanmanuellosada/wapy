@@ -438,6 +438,13 @@ export async function saveStoreProduct(
       promoUpdate.promo_price_cents = promoResult.value;
     }
 
+    // Misma regla para la cantidad mínima y el paso: si el caller no los manda,
+    // no se tocan. Con `?? 1` los call-sites parciales (toggle activo, reorden
+    // del onboarding) los reseteaban a 1 sin que el dueño hiciera nada.
+    const quantityUpdate: { min_quantity?: number; qty_step?: number } = {};
+    if (product.min_quantity !== undefined) quantityUpdate.min_quantity = product.min_quantity;
+    if (product.qty_step !== undefined) quantityUpdate.qty_step = product.qty_step;
+
     if (product.price_tiers !== undefined) {
       const tierIssues = validatePriceTiers(product.price_tiers, product.price_cents);
       if (tierIssues.length > 0) return { error: tierIssues[0].message };
@@ -455,8 +462,7 @@ export async function saveStoreProduct(
         position: product.position,
         is_active: product.is_active ?? true,
         updated_at: new Date().toISOString(),
-        min_quantity: product.min_quantity ?? 1,
-        qty_step: product.qty_step ?? 1,
+        ...quantityUpdate,
         ...promoUpdate,
       })
       .eq('id', product.id)
@@ -739,8 +745,8 @@ export async function bulkUpdateProducts(
 // ---------------------------------------------------------------------------
 // reorderProducts — actualiza SOLO la posición de un grupo de productos.
 // Se usa al arrastrar en el dashboard: a diferencia de saveStoreProduct (que
-// reescribe la fila entera y pisaría min_quantity/qty_step) toca un único
-// campo, y revalida una sola vez en lugar de una por producto.
+// reescribe la fila entera) toca un único campo, y revalida una sola vez en
+// lugar de una por producto.
 // ---------------------------------------------------------------------------
 
 export async function reorderProducts(
