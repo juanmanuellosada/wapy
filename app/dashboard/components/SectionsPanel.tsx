@@ -21,6 +21,13 @@ import { useDroppable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, X, Loader2, CheckCircle, Pencil, GripVertical, ChevronRight } from 'lucide-react';
 import { saveStoreSections } from '@/lib/store/actions';
+import {
+  SORT_MODES,
+  isSortMode,
+  resolveSortMode,
+  sortModeLabel,
+  type SortMode,
+} from '@/lib/storefront/sorting';
 import type { Store, Section } from '@/lib/onboarding/state';
 
 type Props = {
@@ -37,6 +44,8 @@ type SectionDraft = {
   slug: string;
   position: number;
   parent_id: string | null;
+  /** null = heredar el orden por defecto de la tienda (distinto de 'manual'). */
+  sort_mode: SortMode | null;
   isNew?: boolean;
 };
 
@@ -66,6 +75,9 @@ function makeUniqueSlug(base: string, existing: SectionDraft[]): string {
 type SortableItemProps = {
   section: SectionDraft;
   isSubsection: boolean;
+  /** Modo que se aplica si la sección hereda, para nombrarlo en el select. */
+  inheritedMode: SortMode;
+  onSortModeChange: (id: string, mode: SortMode | null) => void;
   editingId: string | null;
   onEdit: (id: string) => void;
   onNameChange: (id: string, name: string) => void;
@@ -80,6 +92,8 @@ type SortableItemProps = {
 function SortableSectionItem({
   section,
   isSubsection,
+  inheritedMode,
+  onSortModeChange,
   editingId,
   onEdit,
   onNameChange,
@@ -106,10 +120,11 @@ function SortableSectionItem({
   return (
     <div ref={setNodeRef} style={style}>
       <div
-        className={`flex items-center gap-2 border border-white/10 rounded-xl px-3 py-2.5 ${
+        className={`border border-white/10 rounded-xl px-3 py-2.5 ${
           isSubsection ? 'bg-white/4 ml-6' : 'bg-white/6'
         }`}
       >
+      <div className="flex items-center gap-2">
         {/* Toggle (only for top-level with children) */}
         {!isSubsection && (
           <button
@@ -202,6 +217,36 @@ function SortableSectionItem({
         </button>
       </div>
 
+        {/* Orden de los productos de esta sección */}
+        <div className="flex items-center gap-2 mt-2 pl-7">
+          <label
+            htmlFor={`sort-${section.id}`}
+            className="text-xs text-white/30 flex-shrink-0"
+          >
+            Orden
+          </label>
+          <select
+            id={`sort-${section.id}`}
+            value={section.sort_mode ?? ''}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) =>
+              onSortModeChange(
+                section.id,
+                isSortMode(e.target.value) ? e.target.value : null
+              )
+            }
+            className="min-w-0 flex-1 sm:flex-none sm:w-56 bg-white/8 border border-white/10 rounded-lg px-2 py-1 text-xs text-[#FBF7EC] focus:outline-none focus:border-[#F5C84B] cursor-pointer"
+          >
+            <option value="">Como en la tienda ({sortModeLabel(inheritedMode)})</option>
+            {SORT_MODES.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       {/* Child drop zone — shown only when this top-level section is expanded */}
       {!isSubsection && expanded && (
         <SubsectionDropZone parentId={section.id} hasChildren={hasChildren} />
@@ -260,8 +305,17 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
       slug: s.slug,
       position: s.position,
       parent_id: (s as unknown as { parent_id: string | null }).parent_id ?? null,
+      sort_mode: isSortMode(s.sort_mode) ? s.sort_mode : null,
     }))
   );
+
+  // El modo que se aplica a las secciones que heredan. Se nombra en el select
+  // para que elegir "Como en la tienda" no sea elegir a ciegas.
+  const inheritedMode = resolveSortMode(null, store);
+
+  const handleSortModeChange = (id: string, mode: SortMode | null) => {
+    setSections((prev) => prev.map((s) => (s.id === id ? { ...s, sort_mode: mode } : s)));
+  };
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -334,6 +388,7 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
         slug,
         position: prev.filter((s) => s.parent_id === null).length,
         parent_id: null,
+        sort_mode: null,
         isNew: true,
       };
       return [...prev, newSection];
@@ -367,6 +422,7 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
         slug,
         position: siblings.length,
         parent_id: addingNewParentId,
+        sort_mode: null,
         isNew: true,
       };
       return [...prev, newSub];
@@ -528,6 +584,7 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
         slug: s.slug,
         position: s.position,
         parent_id: s.parent_id,
+        sort_mode: s.sort_mode,
       })),
     });
 
@@ -598,6 +655,8 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
                     <SortableSectionItem
                       section={section}
                       isSubsection={false}
+                      inheritedMode={inheritedMode}
+                      onSortModeChange={handleSortModeChange}
                       editingId={editingId}
                       onEdit={setEditingId}
                       onNameChange={handleNameChange}
@@ -621,6 +680,8 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
                               key={child.id}
                               section={child}
                               isSubsection={true}
+                              inheritedMode={inheritedMode}
+                              onSortModeChange={handleSortModeChange}
                               editingId={editingId}
                               onEdit={setEditingId}
                               onNameChange={handleNameChange}

@@ -13,6 +13,7 @@ import type { Store, Section, Product } from '@/lib/onboarding/state';
 import type { PriceTier } from '@/lib/store/pricing';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
 import { toast } from '@/lib/toast';
+import { resolveSortMode, sortModeLabel, type SortMode } from '@/lib/storefront/sorting';
 
 const NO_SECTION_KEY = '__no_section__';
 
@@ -74,8 +75,20 @@ export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sec
   // Build hierarchical groups: for each level-1 section, show its direct products
   // first, then a sub-group per child section. Flat sections without parent follow
   // the same logic (treated as level-1). Unsectioned products go last.
-  type Group = { key: string; label: string; items: Product[]; indent?: boolean };
+  type Group = {
+    key: string;
+    label: string;
+    items: Product[];
+    indent?: boolean;
+    /** Modo efectivo de la sección: solo `manual` habilita el arrastre. */
+    sortMode: SortMode;
+  };
   const groups: Group[] = [];
+
+  // El arrastre guarda `position`, y `position` solo se mira cuando la sección
+  // ordena en manual. Dejar arrastrar en los otros modos persistiría algo que
+  // la tienda ignora: la acción parecería andar y no tendría efecto.
+  const sortModeOf = (section: Section | null) => resolveSortMode(section, store);
 
   const level1Sections = sections.filter((s) => s.parent_id == null);
   const childrenOf = (parentId: string) => sections.filter((s) => s.parent_id === parentId);
@@ -87,24 +100,24 @@ export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sec
 
     if (directProducts.length > 0 || hasChildren) {
       if (directProducts.length > 0) {
-        groups.push({ key: s.id, label: s.name, items: directProducts });
+        groups.push({ key: s.id, label: s.name, items: directProducts, sortMode: sortModeOf(s) });
       } else if (hasChildren) {
         // Show the parent label as a header-only group (0 items, just to mark start)
-        groups.push({ key: s.id, label: s.name, items: [] });
+        groups.push({ key: s.id, label: s.name, items: [], sortMode: sortModeOf(s) });
       }
     }
 
     for (const child of children) {
       const childProducts = products.filter((p) => p.section_id === child.id);
       if (childProducts.length > 0) {
-        groups.push({ key: child.id, label: child.name, items: childProducts, indent: true });
+        groups.push({ key: child.id, label: child.name, items: childProducts, indent: true, sortMode: sortModeOf(child) });
       }
     }
   }
 
   const unsectioned = products.filter((p) => p.section_id === null);
   if (unsectioned.length > 0) {
-    groups.push({ key: NO_SECTION_KEY, label: 'Sin sección', items: unsectioned });
+    groups.push({ key: NO_SECTION_KEY, label: 'Sin sección', items: unsectioned, sortMode: sortModeOf(null) });
   }
 
   const handleProductSaved = (product: Product, savedTiers: PriceTier[]) => {
@@ -233,6 +246,84 @@ export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sec
     }
   };
 
+  // La fila del producto se comparte entre el listado arrastrable y el de
+  // orden automático, donde no hay handle.
+  const renderProductRow = (product: Product, handle: React.ReactNode) => (
+    <div className={`flex items-center gap-3 border rounded-xl px-3 py-2.5 transition-colors ${
+      product.is_active
+        ? 'bg-white/6 border-white/10'
+        : 'bg-white/3 border-white/5 opacity-60'
+    }`}>
+      {handle}
+      <div className="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden bg-white/10">
+        {product.image_urls[0] ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={product.image_urls[0]} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-white/20 text-xs">
+            📦
+          </div>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-[#FBF7EC] truncate">{product.name}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-xs text-[#F5C84B]/80">{formatPrice(product.price_cents)}</p>
+          {product.stock === 0 && (
+            <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">Sin stock</span>
+          )}
+          {product.stock !== null && product.stock >= 1 && product.stock <= 5 && (
+            <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">Stock bajo: {product.stock}</span>
+          )}
+          {product.stock !== null && product.stock > 5 && (
+            <span className="text-xs text-white/30">Stock: {product.stock}</span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => handleToggleActive(product)}
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
+            product.is_active
+              ? 'text-white/40 hover:text-green-400 hover:bg-green-500/10'
+              : 'text-white/30 hover:text-white/60 hover:bg-white/10'
+          }`}
+          aria-label={product.is_active ? `Ocultar ${product.name}` : `Mostrar ${product.name}`}
+          title={product.is_active ? 'Marcar como inactivo' : 'Marcar como activo'}
+        >
+          {product.is_active ? <Eye size={13} /> : <EyeOff size={13} />}
+        </button>
+        <button
+          type="button"
+          onClick={() => setModalProduct(product)}
+          className="w-7 h-7 rounded-lg text-white/40 hover:text-white hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer"
+          aria-label={`Editar ${product.name}`}
+        >
+          <Pencil size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={() => handleDuplicate(product)}
+          disabled={duplicatingId === product.id || atProductsLimit}
+          className="w-7 h-7 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label={`Duplicar ${product.name}`}
+          title={atProductsLimit ? 'Límite de productos alcanzado' : 'Duplicar producto'}
+        >
+          <Copy size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={() => handleDelete(product.id)}
+          className="w-7 h-7 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors cursor-pointer"
+          aria-label={`Borrar ${product.name}`}
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
@@ -344,7 +435,7 @@ export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sec
 
       <div className="space-y-4">
         <p className="text-sm text-white/50">
-          Administrá los productos de tu tienda. Podés arrastrarlos para cambiar el orden.
+          Administrá los productos de tu tienda. En las secciones que ordenás a mano, podés arrastrarlos.
         </p>
 
         {products.length > 0 && (
@@ -376,85 +467,24 @@ export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sec
 
                   {!isCollapsed && !isEmpty && (
                     <div className="mt-1">
-                      <SortableList
-                        items={group.items}
-                        onReorder={handleReorder}
-                        renderItem={(product, handle) => (
-                          <div className={`flex items-center gap-3 border rounded-xl px-3 py-2.5 transition-colors ${
-                            product.is_active
-                              ? 'bg-white/6 border-white/10'
-                              : 'bg-white/3 border-white/5 opacity-60'
-                          }`}>
-                            {handle}
-                            <div className="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden bg-white/10">
-                              {product.image_urls[0] ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={product.image_urls[0]} alt="" className="w-full h-full object-cover" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-white/20 text-xs">
-                                  📦
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-[#FBF7EC] truncate">{product.name}</p>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className="text-xs text-[#F5C84B]/80">{formatPrice(product.price_cents)}</p>
-                                {product.stock === 0 && (
-                                  <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">Sin stock</span>
-                                )}
-                                {product.stock !== null && product.stock >= 1 && product.stock <= 5 && (
-                                  <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">Stock bajo: {product.stock}</span>
-                                )}
-                                {product.stock !== null && product.stock > 5 && (
-                                  <span className="text-xs text-white/30">Stock: {product.stock}</span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleToggleActive(product)}
-                                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
-                                  product.is_active
-                                    ? 'text-white/40 hover:text-green-400 hover:bg-green-500/10'
-                                    : 'text-white/30 hover:text-white/60 hover:bg-white/10'
-                                }`}
-                                aria-label={product.is_active ? `Ocultar ${product.name}` : `Mostrar ${product.name}`}
-                                title={product.is_active ? 'Marcar como inactivo' : 'Marcar como activo'}
-                              >
-                                {product.is_active ? <Eye size={13} /> : <EyeOff size={13} />}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setModalProduct(product)}
-                                className="w-7 h-7 rounded-lg text-white/40 hover:text-white hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer"
-                                aria-label={`Editar ${product.name}`}
-                              >
-                                <Pencil size={13} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDuplicate(product)}
-                                disabled={duplicatingId === product.id || atProductsLimit}
-                                className="w-7 h-7 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                aria-label={`Duplicar ${product.name}`}
-                                title={atProductsLimit ? 'Límite de productos alcanzado' : 'Duplicar producto'}
-                              >
-                                <Copy size={13} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(product.id)}
-                                className="w-7 h-7 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors cursor-pointer"
-                                aria-label={`Borrar ${product.name}`}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      />
+                      {group.sortMode !== 'manual' && (
+                        <p className="text-xs text-white/30 mb-1.5">
+                          Orden automático: {sortModeLabel(group.sortMode).toLowerCase()}. Se cambia desde Secciones.
+                        </p>
+                      )}
+                      {group.sortMode === 'manual' ? (
+                        <SortableList
+                          items={group.items}
+                          onReorder={handleReorder}
+                          renderItem={renderProductRow}
+                        />
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {group.items.map((product) => (
+                            <div key={product.id}>{renderProductRow(product, null)}</div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -2,6 +2,7 @@
 // Pure module: no React, no Next.js deps. Safe to import in server and client.
 
 import type { StorefrontVariant, ProductVariantData } from "@/lib/storefront/resolve";
+import { isInStock } from "@/lib/storefront/stock";
 
 export interface UIProduct {
   id: string;
@@ -112,25 +113,6 @@ function effectivePrice(
     .map((v) => v.price_override! / 100);
   if (prices.length === 0) return product.price;
   return Math.min(...prices);
-}
-
-/**
- * Returns true if a product is "in stock":
- * - If the product has no variant data: stock === null (no tracking) OR stock > 0
- * - If the product has variants: at least one active variant has stock > 0 or stock === null
- */
-function isInStock(
-  product: UIProduct,
-  variantData: ProductVariantData | undefined
-): boolean {
-  if (!variantData || variantData.variants.length === 0) {
-    // Simple product
-    return product.stock === null || product.stock > 0;
-  }
-  // Product with variants — in stock if at least one variant has stock > 0 or null
-  return variantData.variants.some(
-    (v) => v.stock === null || v.stock > 0
-  );
 }
 
 export function applyFilters<T extends UIProduct>(

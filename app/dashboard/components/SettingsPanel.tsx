@@ -8,6 +8,8 @@ import { checkSlugAvailable } from '@/lib/onboarding/actions';
 import { RenameSlugModal } from './RenameSlugModal';
 import { DeleteStoreModal } from './DeleteStoreModal';
 import { MercadoPagoPanel } from './MercadoPagoPanel';
+import { saveCatalogSortPreferences } from '@/lib/store/actions';
+import { SORT_MODES, isSortMode, type SortMode } from '@/lib/storefront/sorting';
 import type { Store } from '@/lib/onboarding/state';
 
 type MpConnectionStatus = {
@@ -119,6 +121,34 @@ export function SettingsPanel({ store, mpStatus, checkoutMode, mpConnectResult, 
   // --------------------------------------------------------------------------
   // WhatsApp pending order lifecycle
   // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // Orden del catálogo
+  // --------------------------------------------------------------------------
+  const [defaultSort, setDefaultSort] = useState<SortMode>(
+    isSortMode(store.default_product_sort) ? store.default_product_sort : 'manual'
+  );
+  const [outOfStockLast, setOutOfStockLast] = useState(store.out_of_stock_last ?? true);
+  const [sortSaving, setSortSaving] = useState(false);
+  const [sortError, setSortError] = useState<string | null>(null);
+  const [sortSuccess, setSortSuccess] = useState(false);
+
+  const handleSaveSortPreferences = async () => {
+    setSortSaving(true);
+    setSortError(null);
+    setSortSuccess(false);
+    const result = await saveCatalogSortPreferences({
+      default_product_sort: defaultSort,
+      out_of_stock_last: outOfStockLast,
+    });
+    setSortSaving(false);
+    if ('error' in result) {
+      setSortError(result.error);
+      return;
+    }
+    setSortSuccess(true);
+    setTimeout(() => setSortSuccess(false), 4000);
+  };
+
   const [waTtlDays, setWaTtlDays] = useState(store.wa_pending_ttl_days ?? 7);
   const [waAutoConfirm, setWaAutoConfirm] = useState(store.wa_auto_confirm ?? false);
   const [waSaving, setWaSaving] = useState(false);
@@ -318,6 +348,93 @@ export function SettingsPanel({ store, mpStatus, checkoutMode, mpConnectResult, 
             </div>
           </div>
         )}
+      </section>
+
+      <hr className="border-white/10" />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Catalog sort preferences */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="space-y-4">
+        <h2 className="text-base font-semibold text-[#FBF7EC]">Orden del catálogo</h2>
+        <p className="text-xs text-white/50">
+          Cómo se ordenan los productos dentro de cada sección de tu tienda. Cada sección puede tener su propio
+          orden desde la pestaña Secciones; lo que elijas acá aplica a las que están en &quot;Como en la tienda&quot;.
+        </p>
+
+        {sortError && (
+          <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-300">
+            {sortError}
+          </div>
+        )}
+        {sortSuccess && (
+          <div role="status" className="bg-green-500/10 border border-green-500/30 rounded-xl px-4 py-3 text-sm text-green-300 flex items-center gap-2">
+            <CheckCircle size={14} />
+            Orden guardado.
+          </div>
+        )}
+
+        <div>
+          <label htmlFor="default-sort" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
+            Orden por defecto
+          </label>
+          <select
+            id="default-sort"
+            value={defaultSort}
+            onChange={(e) => {
+              if (isSortMode(e.target.value)) setDefaultSort(e.target.value);
+            }}
+            className="w-full sm:w-72 rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] px-4 py-3 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors cursor-pointer"
+          >
+            {SORT_MODES.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-white/30 mt-1">
+            Las secciones con un orden propio no se ven afectadas por este cambio.
+          </p>
+        </div>
+
+        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-[#FBF7EC]">Mostrar los productos sin stock al final</p>
+            <p className="text-xs text-white/50 mt-1">
+              Se aplica a todas las secciones, sin importar cómo estén ordenadas: primero lo que se puede comprar y
+              después lo agotado, respetando el orden elegido dentro de cada grupo.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOutOfStockLast((v) => !v)}
+            role="switch"
+            aria-checked={outOfStockLast}
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+              outOfStockLast ? 'bg-[#F5C84B]' : 'bg-white/20'
+            }`}
+          >
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ease-in-out ${
+                outOfStockLast ? 'translate-x-[22px]' : 'translate-x-0.5'
+              }`}
+            />
+            <span className="sr-only">
+              {outOfStockLast ? 'Dejar de mandar los agotados al final' : 'Mandar los agotados al final'}
+            </span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSaveSortPreferences}
+          disabled={sortSaving}
+          className="min-h-[44px] px-6 rounded-xl bg-white/10 text-[#FBF7EC] font-semibold text-sm hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2 cursor-pointer"
+        >
+          {sortSaving && <Loader2 size={14} className="animate-spin" />}
+          Guardar
+        </button>
       </section>
 
       <hr className="border-white/10" />

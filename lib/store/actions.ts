@@ -18,14 +18,21 @@ import { getSubscriptionState } from '@/lib/subscription/state';
 import { validateProductFields, checkBatchFits, validatePriceTiers } from '@/lib/store/product-validation';
 import type { PriceTier } from '@/lib/store/pricing';
 import { MAX_PHOTOS_PER_ZIP } from '@/lib/store/bulk-import/zip';
+import { SORT_MODE_IDS, type SortMode } from '@/lib/storefront/sorting';
 
 // Section item schema (without the min-1 array constraint — dashboard can have 0)
+const sortModeSchema = z.enum(SORT_MODE_IDS as unknown as [SortMode, ...SortMode[]]);
+
 const sectionItemSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(1, 'El nombre de la sección es requerido').max(40, 'Máximo 40 caracteres'),
   slug: z.string().min(1),
   position: z.number().int().min(0),
   parent_id: z.string().nullable().optional(),
+  // null = heredar el orden por defecto de la tienda. Tiene que sobrevivir el
+  // viaje como null: convertirlo a 'manual' desengancharía la sección de los
+  // cambios futuros del default.
+  sort_mode: sortModeSchema.nullable().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -225,6 +232,7 @@ type SectionInput = {
   slug: string;
   position: number;
   parent_id?: string | null;
+  sort_mode?: SortMode | null;
 };
 
 export async function saveStoreSections(formData: {
@@ -273,6 +281,7 @@ export async function saveStoreSections(formData: {
           slug: section.slug,
           position: section.position,
           parent_id: section.parent_id ?? null,
+          sort_mode: section.sort_mode ?? null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', section.id)
@@ -284,6 +293,7 @@ export async function saveStoreSections(formData: {
         slug: section.slug,
         position: section.position,
         parent_id: section.parent_id ?? null,
+        sort_mode: section.sort_mode ?? null,
         is_active: true,
       });
     }
@@ -296,6 +306,43 @@ export async function saveStoreSections(formData: {
 
   revalidatePath('/dashboard', 'layout');
   return { ok: true, storeId: store.id };
+}
+
+// ---------------------------------------------------------------------------
+// saveCatalogSortPreferences — orden por defecto del catálogo + agotados al final.
+// El default solo alcanza a las secciones que heredan (sort_mode NULL); el
+// toggle de stock se aplica a todas, porque no compite con el modo de orden.
+// ---------------------------------------------------------------------------
+
+export async function saveCatalogSortPreferences(formData: {
+  default_product_sort: string;
+  out_of_stock_last: boolean;
+}): Promise<{ ok: true } | { error: string }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const parsed = z
+    .object({
+      default_product_sort: sortModeSchema,
+      out_of_stock_last: z.boolean(),
+    })
+    .safeParse(formData);
+  if (!parsed.success) return { error: 'El orden elegido no es válido.' };
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from('stores')
+    .update({
+      default_product_sort: parsed.data.default_product_sort,
+      out_of_stock_last: parsed.data.out_of_stock_last,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', store.id);
+
+  if (error) return { error: 'No se pudieron guardar las preferencias de orden.' };
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

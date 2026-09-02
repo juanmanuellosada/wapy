@@ -8,6 +8,7 @@ import { getTopSellers, getRelatedProductIds } from "@/lib/storefront/insights";
 import type { UIProduct } from "./types";
 import { getStoreMpConnectionStatus } from "@/lib/store/checkout/oauth";
 import { buildTierGroupSizes } from "@/lib/store/pricing";
+import { sortCatalog, needsTopSellers } from "@/lib/storefront/sorting";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -111,10 +112,18 @@ export default async function SlugPage({ params, searchParams }: Props) {
       const checkoutMode: 'whatsapp' | 'mercadopago' =
         resolution.store.checkout_mode === 'mercadopago' ? 'mercadopago' : 'whatsapp';
 
+      // Cuando alguna sección ordena por "más vendidos" hace falta el ranking
+      // completo, no el top 10 de la fila de destacados. Se pide una sola vez
+      // con el límite alto y la fila sale de un slice del mismo resultado.
+      const sortsByBestSelling = needsTopSellers(
+        resolution.sections,
+        resolution.store
+      );
+
       // task 5.6: Fetch MP connection status + top sellers + related in parallel
       // MP status is best-effort — defaults to disconnected on error
       const [topSellerIds, initialRelatedIds, mpStatus] = await Promise.all([
-        getTopSellers(resolution.store.id),
+        getTopSellers(resolution.store.id, 30, sortsByBestSelling ? 500 : 10),
         initialProductId
           ? getRelatedProductIds(initialProductId, resolution.store.id)
           : Promise.resolve([]),
@@ -130,14 +139,24 @@ export default async function SlugPage({ params, searchParams }: Props) {
 
       // Map RPC ids → UIProduct, filtering products not in the active catalog.
       const topSellerProducts: UIProduct[] = topSellerIds
+        .slice(0, 10)
         .map((id) => productMap.get(id))
         .filter((p): p is UIProduct => p !== undefined);
+
+      // El orden del catálogo viaja como el orden de este array: StoreClient
+      // reparte por sección con un filter, que lo preserva.
+      const sortedProducts = sortCatalog(resolution.products, {
+        sections: resolution.sections,
+        store: resolution.store,
+        variantsByProduct: resolution.variantsByProduct,
+        topSellers: sortsByBestSelling ? topSellerIds : undefined,
+      });
 
       return (
         <StoreClient
           store={resolution.store}
           sections={resolution.sections}
-          products={resolution.products}
+          products={sortedProducts}
           variantsByProduct={resolution.variantsByProduct}
           priceTiersByProduct={resolution.priceTiersByProduct}
           initialFilters={initialFilters}

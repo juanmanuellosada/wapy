@@ -543,6 +543,7 @@ export type Database = {
           parent_id: string | null
           position: number
           slug: string
+          sort_mode: string | null
           store_id: string
           updated_at: string
         }
@@ -554,6 +555,7 @@ export type Database = {
           parent_id?: string | null
           position?: number
           slug: string
+          sort_mode?: string | null
           store_id: string
           updated_at?: string
         }
@@ -565,6 +567,7 @@ export type Database = {
           parent_id?: string | null
           position?: number
           slug?: string
+          sort_mode?: string | null
           store_id?: string
           updated_at?: string
         }
@@ -666,6 +669,7 @@ export type Database = {
           blocked_at: string | null
           checkout_mode: string
           created_at: string
+          default_product_sort: string
           description: string | null
           id: string
           logo_url: string | null
@@ -674,6 +678,7 @@ export type Database = {
           name: string
           onboarding_step: number
           order_seq: number
+          out_of_stock_last: boolean
           owner_id: string
           payment_exempt: boolean
           payment_exempt_reason: string | null
@@ -695,6 +700,7 @@ export type Database = {
           blocked_at?: string | null
           checkout_mode?: string
           created_at?: string
+          default_product_sort?: string
           description?: string | null
           id?: string
           logo_url?: string | null
@@ -703,6 +709,7 @@ export type Database = {
           name: string
           onboarding_step?: number
           order_seq?: number
+          out_of_stock_last?: boolean
           owner_id: string
           payment_exempt?: boolean
           payment_exempt_reason?: string | null
@@ -724,6 +731,7 @@ export type Database = {
           blocked_at?: string | null
           checkout_mode?: string
           created_at?: string
+          default_product_sort?: string
           description?: string | null
           id?: string
           logo_url?: string | null
@@ -732,6 +740,7 @@ export type Database = {
           name?: string
           onboarding_step?: number
           order_seq?: number
+          out_of_stock_last?: boolean
           owner_id?: string
           payment_exempt?: boolean
           payment_exempt_reason?: string | null
