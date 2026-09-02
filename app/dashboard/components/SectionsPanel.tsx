@@ -235,11 +235,13 @@ function SortableSectionItem({
                 isSortMode(e.target.value) ? e.target.value : null
               )
             }
-            className="min-w-0 flex-1 sm:flex-none sm:w-56 bg-white/8 border border-white/10 rounded-lg px-2 py-1 text-xs text-[#FBF7EC] focus:outline-none focus:border-[#F5C84B] cursor-pointer"
+            className="min-w-0 flex-1 sm:flex-none sm:w-56 bg-white/8 border border-white/10 rounded-lg px-2 py-1 text-xs text-[#FBF7EC] focus:outline-none focus:border-[#F5C84B] cursor-pointer [color-scheme:dark]"
           >
-            <option value="">Como en la tienda ({sortModeLabel(inheritedMode)})</option>
+            <option value="" className="bg-[#16222E] text-[#FBF7EC]">
+              Como en la tienda ({sortModeLabel(inheritedMode)})
+            </option>
             {SORT_MODES.map((m) => (
-              <option key={m.id} value={m.id}>
+              <option key={m.id} value={m.id} className="bg-[#16222E] text-[#FBF7EC]">
                 {m.label}
               </option>
             ))}

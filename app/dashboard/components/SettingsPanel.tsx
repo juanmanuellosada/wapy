@@ -384,10 +384,10 @@ export function SettingsPanel({ store, mpStatus, checkoutMode, mpConnectResult, 
             onChange={(e) => {
               if (isSortMode(e.target.value)) setDefaultSort(e.target.value);
             }}
-            className="w-full sm:w-72 rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] px-4 py-3 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors cursor-pointer"
+            className="w-full sm:w-72 rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] px-4 py-3 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors cursor-pointer [color-scheme:dark]"
           >
             {SORT_MODES.map((m) => (
-              <option key={m.id} value={m.id}>
+              <option key={m.id} value={m.id} className="bg-[#16222E] text-[#FBF7EC]">
                 {m.label}
               </option>
             ))}
