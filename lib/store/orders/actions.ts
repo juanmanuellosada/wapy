@@ -11,6 +11,7 @@ import { customerPhoneSchema } from '@/lib/store/whatsapp/customerPhone';
 import { canReactivateOrder, type OrderCancelledBy } from './expiry';
 import { getPlanLimits } from '@/lib/plans/limits';
 import type { PlanId } from '@/lib/plans/limits';
+import type { Json } from '@/lib/supabase/types';
 
 // 3.1 Each cart item may carry an optional variantId.
 type CreateOrderInput = {
@@ -1503,6 +1504,98 @@ export async function exportOrdersCsv(
 }
 
 // ---------------------------------------------------------------------------
+// order_action_log (add-order-action-undo): registro de las acciones del
+// dueño sobre pedidos, para poder deshacerlas. Ver
+// openspec/changes/add-order-action-undo/design.md.
+// ---------------------------------------------------------------------------
+
+export type OrderActionType = 'confirm' | 'deliver' | 'cancel' | 'delete';
+
+/**
+ * Una entrada por pedido afectado por una operación. Decisión D3: cada campo
+ * es un HECHO observado al aplicar la acción (el estado antes, el estado que
+ * quedó, y si esa acción concreta repuso stock o revirtió un cupón) — nunca
+ * algo que el deshacer deba inferir después a partir del estado actual del
+ * pedido. Es lo único que evita duplicar stock cuando, por ejemplo, un
+ * pedido `pending` borrado queda con el mismo status que uno nunca tocado.
+ */
+type OrderActionLogEntry = {
+  order_id: string;
+  status_before: OrderStatus;
+  status_after: OrderStatus;
+  cancelled_by_before: OrderCancelledBy | null;
+  cancelled_by_after: OrderCancelledBy | null;
+  deleted_at_before: string | null;
+  deleted_at_after: string | null;
+  stock_restored: boolean;
+  coupon_reverted: boolean;
+};
+
+// Decisión D6: ventana de deshacer — últimas 5 operaciones no deshechas,
+// dentro de las últimas 24 horas.
+const UNDO_WINDOW_HOURS = 24;
+const UNDO_WINDOW_LIMIT = 5;
+
+// Tarea 2.6: tope de entradas por operación. Superado, se registra la
+// operación como no deshacible con su motivo en lugar de guardar una fila
+// con miles de entradas (riesgo señalado en design.md).
+const MAX_LOG_ENTRIES = 500;
+
+function actionTypeForNextStatus(next: OrderStatus): OrderActionType | null {
+  if (next === 'confirmed') return 'confirm';
+  if (next === 'delivered') return 'deliver';
+  if (next === 'cancelled') return 'cancel';
+  return null;
+}
+
+/**
+ * Registra una operación (una fila, no una por pedido — Decisión D1). Un
+ * fallo acá se loguea y no se propaga (tarea 2.5 / Decisión D7): perder la
+ * posibilidad de deshacer es mucho menos grave que abortar una acción ya
+ * aplicada con éxito.
+ *
+ * Devuelve el id de la operación registrada, para que el panel pueda ofrecer
+ * "Deshacer" sobre esta operación puntual (grupo 5) — `null` si no había
+ * nada que registrar, si el insert falló, o si quedó marcada como no
+ * deshacible (superó MAX_LOG_ENTRIES): en ninguno de esos casos hay una
+ * operación deshacible que ofrecer.
+ */
+async function logOrderAction(
+  admin: AdminClient,
+  storeId: string,
+  performedBy: string | null,
+  actionType: OrderActionType,
+  entries: OrderActionLogEntry[]
+): Promise<string | null> {
+  if (entries.length === 0) return null; // nada se aplicó de verdad — nada que registrar
+
+  const tooMany = entries.length > MAX_LOG_ENTRIES;
+
+  const { data, error } = await admin
+    .from('order_action_log')
+    .insert({
+      store_id: storeId,
+      action_type: actionType,
+      performed_by: performedBy,
+      entries: (tooMany ? [] : entries) as unknown as Json,
+      non_undoable_reason: tooMany ? 'too_many_entries' : null,
+    })
+    .select('id')
+    .single();
+
+  if (error || !data) {
+    console.error('[logOrderAction] insert failed:', error);
+    Sentry.captureException(error ?? new Error('order_action_log insert returned no data'), {
+      tags: { feature: 'orders-undo' },
+      extra: { storeId, actionType, entryCount: entries.length },
+    });
+    return null;
+  }
+
+  return tooMany ? null : (data.id as string);
+}
+
+// ---------------------------------------------------------------------------
 // updateOrderStatus
 // ---------------------------------------------------------------------------
 
@@ -1573,7 +1666,7 @@ async function deductOrderStock(
 }
 
 type UpdateOrderStatusResult =
-  | { ok: true; order: OrderWithItems }
+  | { ok: true; order: OrderWithItems; logEntry: OrderActionLogEntry | null; storeId: string; performedBy: string }
   | { error: 'unauthorized' | 'invalid_transition' | 'not_found' }
   | { error: 'stock_insufficient'; details: StockInsufficientDetail[] };
 
@@ -1587,14 +1680,14 @@ async function updateOrderStatusInternal(
   order_id: string,
   next_status: OrderStatus
 ): Promise<UpdateOrderStatusResult> {
-  const { store } = await requireOwnerStore();
+  const { user, store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
 
   const admin = createAdminClient();
 
   const { data: existing } = await admin
     .from('orders')
-    .select('id, status, store_id, cancelled_by')
+    .select('id, status, store_id, cancelled_by, deleted_at')
     .eq('id', order_id)
     .eq('store_id', store.id)
     .maybeSingle();
@@ -1629,9 +1722,18 @@ async function updateOrderStatusInternal(
   // checks the order's current status to stay idempotent, so it must run while
   // the order is still 'pending'/'confirmed' in the DB. revertCouponUse ya no
   // depende del status (Decisión 3), pero se agrupa acá con la misma reversión.
+  //
+  // add-order-action-undo (D3): stockRestored/couponReverted se toman del
+  // resultado REAL de estas llamadas, no de "next_status === 'cancelled'" —
+  // son los hechos que el registro de la operación necesita para poder
+  // deshacerla sin inferir nada más tarde.
+  let stockRestored = false;
+  let couponReverted = false;
   if (next_status === 'cancelled') {
-    await replenishOrderStock(order_id);
-    await revertCouponUse(order_id);
+    const replenishResult = await replenishOrderStock(order_id);
+    stockRestored = 'ok' in replenishResult && !replenishResult.alreadyReplenished;
+    const revertResult = await revertCouponUse(order_id);
+    couponReverted = 'ok' in revertResult && revertResult.reverted;
   }
 
   const now = new Date().toISOString();
@@ -1664,6 +1766,25 @@ async function updateOrderStatusInternal(
     return { error: 'not_found' };
   }
 
+  // add-order-action-undo (D7): revivir un pedido ('cancelled' → 'confirmed'
+  // por la dueña) ya tiene su propio mecanismo dedicado ("Revivir pedido") y
+  // sus efectos son inversos a los de un confirm normal (vuelve a comprometer
+  // stock/cupón en vez de reponerlos) — no encaja en la tabla D3 de las
+  // cuatro acciones estándar, así que no se registra como deshacible acá.
+  const logEntry: OrderActionLogEntry | null = isReactivation
+    ? null
+    : {
+        order_id,
+        status_before: current,
+        status_after: next_status,
+        cancelled_by_before: existing.cancelled_by as OrderCancelledBy | null,
+        cancelled_by_after: updated.cancelled_by as OrderCancelledBy | null,
+        deleted_at_before: existing.deleted_at as string | null,
+        deleted_at_after: updated.deleted_at as string | null,
+        stock_restored: stockRestored,
+        coupon_reverted: couponReverted,
+      };
+
   return {
     ok: true,
     order: {
@@ -1686,16 +1807,35 @@ async function updateOrderStatusInternal(
       store_order_number: updated.store_order_number,
       items: (updated.order_items ?? []) as OrderWithItems['items'],
     },
+    logEntry,
+    storeId: store.id,
+    performedBy: user.id,
   };
 }
+
+export type UpdateOrderStatusPublicResult =
+  | (Omit<Extract<UpdateOrderStatusResult, { ok: true }>, 'logEntry' | 'storeId' | 'performedBy'> & {
+      /** grupo 5: id de la operación registrada, para ofrecer "Deshacer" — `null` si no quedó deshacible. */
+      operationId: string | null;
+    })
+  | Exclude<UpdateOrderStatusResult, { ok: true }>;
 
 export async function updateOrderStatus(
   order_id: string,
   next_status: OrderStatus
-): Promise<UpdateOrderStatusResult> {
+): Promise<UpdateOrderStatusPublicResult> {
   const result = await updateOrderStatusInternal(order_id, next_status);
   if ('ok' in result) {
+    let operationId: string | null = null;
+    if (result.logEntry) {
+      const actionType = actionTypeForNextStatus(next_status);
+      if (actionType) {
+        const admin = createAdminClient();
+        operationId = await logOrderAction(admin, result.storeId, result.performedBy, actionType, [result.logEntry]);
+      }
+    }
     revalidatePath('/dashboard', 'layout');
+    return { ok: true, order: result.order, operationId };
   }
   return result;
 }
@@ -1713,6 +1853,8 @@ export type BatchUpdateOrderStatusResult = {
     | { order_id: string; reason: 'invalid_transition' | 'not_found' }
     | { order_id: string; reason: 'stock_insufficient'; details: StockInsufficientDetail[] }
   >;
+  /** grupo 5: id de la operación registrada para el lote, para ofrecer "Deshacer" — `null` si no quedó deshacible. */
+  operationId: string | null;
 };
 
 export async function batchUpdateOrderStatus(
@@ -1723,7 +1865,7 @@ export async function batchUpdateOrderStatus(
   selection: string[] | { filters: ListOrdersFilters },
   next_status: OrderStatus
 ): Promise<BatchUpdateOrderStatusResult | { error: 'unauthorized' }> {
-  const { store } = await requireOwnerStore();
+  const { user, store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
 
   let orderIds: string[];
@@ -1746,11 +1888,16 @@ export async function batchUpdateOrderStatus(
 
   const updated: OrderWithItems[] = [];
   const failed: BatchUpdateOrderStatusResult['failed'] = [];
+  // add-order-action-undo (D1): un lote se registra como UNA sola operación,
+  // con todas las entradas de los pedidos efectivamente aplicados — no una
+  // fila por pedido.
+  const logEntries: OrderActionLogEntry[] = [];
 
   for (const orderId of orderIds) {
     const result = await updateOrderStatusInternal(orderId, next_status);
     if ('ok' in result) {
       updated.push(result.order);
+      if (result.logEntry) logEntries.push(result.logEntry);
     } else if (result.error === 'stock_insufficient') {
       failed.push({ order_id: orderId, reason: 'stock_insufficient', details: result.details });
     } else if (result.error === 'unauthorized') {
@@ -1762,10 +1909,17 @@ export async function batchUpdateOrderStatus(
     }
   }
 
+  const batchActionType = actionTypeForNextStatus(next_status);
+  let operationId: string | null = null;
+  if (batchActionType && logEntries.length > 0) {
+    const admin = createAdminClient();
+    operationId = await logOrderAction(admin, store.id, user.id, batchActionType, logEntries);
+  }
+
   // Una sola revalidación al final del lote, no una por pedido dentro del loop.
   revalidatePath('/dashboard', 'layout');
 
-  return { updated, failed };
+  return { updated, failed, operationId };
 }
 
 // ---------------------------------------------------------------------------
@@ -1774,7 +1928,9 @@ export async function batchUpdateOrderStatus(
 // openspec/changes/add-order-soft-delete/design.md, Decisión 1.
 // ---------------------------------------------------------------------------
 
-export type DeleteOrderResult = { ok: true } | { error: 'unauthorized' | 'not_found' };
+export type DeleteOrderResult =
+  | { ok: true; logEntry: OrderActionLogEntry | null; storeId: string; performedBy: string }
+  | { error: 'unauthorized' | 'not_found' };
 
 /**
  * Marca un pedido como borrado (deleted_at). Reusa replenishOrderStock y
@@ -1794,29 +1950,39 @@ export type DeleteOrderResult = { ok: true } | { error: 'unauthorized' | 'not_fo
  * una sola vez al final del lote en su lugar.
  */
 async function deleteOrderInternal(order_id: string): Promise<DeleteOrderResult> {
-  const { store } = await requireOwnerStore();
+  const { user, store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
 
   const admin = createAdminClient();
 
   const { data: existing } = await admin
     .from('orders')
-    .select('id, status, deleted_at')
+    .select('id, status, deleted_at, cancelled_by')
     .eq('id', order_id)
     .eq('store_id', store.id)
     .maybeSingle();
 
   if (!existing) return { error: 'not_found' };
-  if (existing.deleted_at) return { ok: true }; // ya borrado — idempotente
+  // ya borrado — idempotente, y no hay nada nuevo que registrar (add-order-action-undo).
+  if (existing.deleted_at) return { ok: true, logEntry: null, storeId: store.id, performedBy: user.id };
 
+  // add-order-action-undo (D3): igual que en updateOrderStatusInternal, los
+  // flags se toman del resultado real de estas llamadas, no de "status !==
+  // 'delivered'" — son los hechos que el deshacer necesita para revertir sin
+  // inferir (evita duplicar stock al deshacer el borrado de un pendiente).
+  let stockRestored = false;
+  let couponReverted = false;
   if (existing.status !== 'delivered') {
-    await replenishOrderStock(order_id);
-    await revertCouponUse(order_id);
+    const replenishResult = await replenishOrderStock(order_id);
+    stockRestored = 'ok' in replenishResult && !replenishResult.alreadyReplenished;
+    const revertResult = await revertCouponUse(order_id);
+    couponReverted = 'ok' in revertResult && revertResult.reverted;
   }
 
+  const deletedAt = new Date().toISOString();
   const { error } = await admin
     .from('orders')
-    .update({ deleted_at: new Date().toISOString() })
+    .update({ deleted_at: deletedAt })
     .eq('id', order_id);
 
   if (error) {
@@ -1825,20 +1991,47 @@ async function deleteOrderInternal(order_id: string): Promise<DeleteOrderResult>
     return { error: 'not_found' };
   }
 
-  return { ok: true };
+  const logEntry: OrderActionLogEntry = {
+    order_id,
+    status_before: existing.status as OrderStatus,
+    status_after: existing.status as OrderStatus, // borrar no cambia el status
+    cancelled_by_before: existing.cancelled_by as OrderCancelledBy | null,
+    cancelled_by_after: existing.cancelled_by as OrderCancelledBy | null,
+    deleted_at_before: null,
+    deleted_at_after: deletedAt,
+    stock_restored: stockRestored,
+    coupon_reverted: couponReverted,
+  };
+
+  return { ok: true, logEntry, storeId: store.id, performedBy: user.id };
 }
 
-export async function deleteOrder(order_id: string): Promise<DeleteOrderResult> {
+export type DeleteOrderPublicResult =
+  | { ok: true; /** grupo 5: id de la operación registrada, para ofrecer "Deshacer" — `null` si no quedó deshacible. */ operationId: string | null }
+  | Extract<DeleteOrderResult, { error: unknown }>;
+
+export async function deleteOrder(order_id: string): Promise<DeleteOrderPublicResult> {
   const result = await deleteOrderInternal(order_id);
   if ('ok' in result) {
+    let operationId: string | null = null;
+    if (result.logEntry) {
+      const admin = createAdminClient();
+      operationId = await logOrderAction(admin, result.storeId, result.performedBy, 'delete', [result.logEntry]);
+    }
     revalidatePath('/dashboard', 'layout');
+    return { ok: true, operationId };
   }
   return result;
 }
 
 export type BatchDeleteOrdersResult = {
   deletedCount: number;
+  // add-order-action-undo (tarea 3.1): sin los ids no hay forma de deshacer
+  // un borrado en lote.
+  deletedIds: string[];
   failed: Array<{ order_id: string; reason: 'not_found' }>;
+  /** grupo 5: id de la operación registrada para el lote, para ofrecer "Deshacer" — `null` si no quedó deshacible. */
+  operationId: string | null;
 };
 
 /**
@@ -1851,7 +2044,7 @@ export type BatchDeleteOrdersResult = {
 export async function batchDeleteOrders(
   selection: string[] | { filters: ListOrdersFilters }
 ): Promise<BatchDeleteOrdersResult | { error: 'unauthorized' }> {
-  const { store } = await requireOwnerStore();
+  const { user, store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
 
   let orderIds: string[];
@@ -1873,21 +2066,32 @@ export async function batchDeleteOrders(
   }
 
   let deletedCount = 0;
+  const deletedIds: string[] = [];
   const failed: BatchDeleteOrdersResult['failed'] = [];
+  // add-order-action-undo (D1): una sola operación para todo el lote.
+  const logEntries: OrderActionLogEntry[] = [];
 
   for (const orderId of orderIds) {
     const result = await deleteOrderInternal(orderId);
     if ('ok' in result) {
       deletedCount += 1;
+      deletedIds.push(orderId);
+      if (result.logEntry) logEntries.push(result.logEntry);
     } else {
       failed.push({ order_id: orderId, reason: 'not_found' });
     }
   }
 
+  let operationId: string | null = null;
+  if (logEntries.length > 0) {
+    const admin = createAdminClient();
+    operationId = await logOrderAction(admin, store.id, user.id, 'delete', logEntries);
+  }
+
   // Una sola revalidación al final del lote, no una por pedido dentro del loop.
   revalidatePath('/dashboard', 'layout');
 
-  return { deletedCount, failed };
+  return { deletedCount, deletedIds, failed, operationId };
 }
 
 export type OrderDeleteImpact = { total: number; deliveredCount: number };
@@ -1925,4 +2129,203 @@ export async function getOrderDeleteImpact(
     total: rows.length,
     deliveredCount: rows.filter((r) => r.status === 'delivered').length,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Deshacer (add-order-action-undo, grupo 4)
+// ---------------------------------------------------------------------------
+
+export type UndoableOrderAction = {
+  id: string;
+  action_type: OrderActionType;
+  performed_at: string;
+  entry_count: number;
+  // grupo 5 (tarea 5.3): la lista de acciones recientes del panel también
+  // muestra las operaciones no deshacibles (superaron MAX_LOG_ENTRIES), sin
+  // botón de deshacer y con este motivo. `null` = sí se puede deshacer.
+  non_undoable_reason: string | null;
+};
+
+/**
+ * Tarea 4.1 — últimas 5 operaciones no deshechas, dentro de 24h, de la
+ * tienda de la dueña (Decisión D6). Incluye las marcadas como no deshacibles
+ * (tarea 5.3): el panel las muestra igual en "acciones recientes", solo que
+ * sin botón. Ante un error de consulta devuelve lista vacía en vez de
+ * propagar, mismo patrón que listOrders.
+ */
+export async function listUndoableOrderActions(): Promise<
+  { operations: UndoableOrderAction[] } | { error: 'unauthorized' }
+> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+  const windowStart = new Date(Date.now() - UNDO_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await admin
+    .from('order_action_log')
+    .select('id, action_type, performed_at, entries, non_undoable_reason')
+    .eq('store_id', store.id)
+    .is('undone_at', null)
+    .gte('performed_at', windowStart)
+    .order('performed_at', { ascending: false })
+    .limit(UNDO_WINDOW_LIMIT);
+
+  if (error) {
+    console.error('[listUndoableOrderActions] query failed:', error);
+    Sentry.captureException(error, { tags: { feature: 'orders-undo' }, extra: { storeId: store.id } });
+    return { operations: [] };
+  }
+
+  return {
+    operations: (data ?? []).map((row) => ({
+      id: row.id as string,
+      action_type: row.action_type as OrderActionType,
+      performed_at: row.performed_at as string,
+      entry_count: Array.isArray(row.entries) ? row.entries.length : 0,
+      non_undoable_reason: (row.non_undoable_reason as string | null) ?? null,
+    })),
+  };
+}
+
+/**
+ * Deshace una entrada individual dentro de una operación.
+ *
+ * Decisión D2: el permiso para deshacer se verifica contra el estado ACTUAL
+ * del pedido, no contra el log — si `status`/`deleted_at` no coinciden con lo
+ * que la acción dejó registrado (`status_after`/`deleted_at_after`), alguien
+ * lo tocó después (otra pestaña, el cron, un webhook) y esta entrada se
+ * saltea con `modified_since`.
+ *
+ * Decisión D3: los efectos se revierten según los flags registrados
+ * (`stock_restored`/`coupon_reverted`), nunca inferidos del estado actual.
+ *
+ * Decisión D4: escribe directo con el admin client, sin pasar por
+ * ALLOWED_TRANSITIONS — y limpia exactamente el timestamp que la acción
+ * había escrito, sin dejar el residuo que sí deja la reactivación existente.
+ */
+async function undoSingleEntry(
+  admin: AdminClient,
+  actionType: OrderActionType,
+  entry: OrderActionLogEntry
+): Promise<
+  | { ok: true }
+  | { ok: false; reason: 'modified_since' | 'not_found' }
+  | { ok: false; reason: 'stock_insufficient'; details: StockInsufficientDetail[] }
+> {
+  const { data: current } = await admin
+    .from('orders')
+    .select('id, status, deleted_at')
+    .eq('id', entry.order_id)
+    .maybeSingle();
+
+  if (!current) return { ok: false, reason: 'not_found' };
+
+  const currentDeletedAt = current.deleted_at as string | null;
+  if (current.status !== entry.status_after || currentDeletedAt !== entry.deleted_at_after) {
+    return { ok: false, reason: 'modified_since' };
+  }
+
+  if (entry.stock_restored) {
+    const stockResult = await deductOrderStock(admin, entry.order_id);
+    if ('error' in stockResult) {
+      return { ok: false, reason: 'stock_insufficient', details: stockResult.details };
+    }
+  }
+  if (entry.coupon_reverted) {
+    await incrementCouponUse(entry.order_id);
+  }
+
+  const patch: {
+    status: OrderStatus;
+    cancelled_by: OrderCancelledBy | null;
+    deleted_at: string | null;
+    confirmed_at?: null;
+    delivered_at?: null;
+    cancelled_at?: null;
+  } = {
+    status: entry.status_before,
+    cancelled_by: entry.cancelled_by_before,
+    deleted_at: entry.deleted_at_before,
+  };
+  if (actionType === 'confirm') patch.confirmed_at = null;
+  if (actionType === 'deliver') patch.delivered_at = null;
+  if (actionType === 'cancel') patch.cancelled_at = null;
+
+  const { error } = await admin.from('orders').update(patch).eq('id', entry.order_id);
+  if (error) {
+    console.error('[undoOrderAction] restore failed:', error);
+    Sentry.captureException(error, { tags: { feature: 'orders-undo' }, extra: { orderId: entry.order_id } });
+    return { ok: false, reason: 'not_found' };
+  }
+
+  return { ok: true };
+}
+
+export type UndoOrderActionResult = {
+  undone: number;
+  failed: Array<
+    | { order_id: string; reason: 'modified_since' | 'not_found' }
+    | { order_id: string; reason: 'stock_insufficient'; details: StockInsufficientDetail[] }
+  >;
+};
+
+/**
+ * Tarea 4.2 — deshace una operación completa (individual o en lote, es
+ * indistinto: ambas son una fila con N entradas). Devuelve resultado parcial
+ * (D5), igual que batchUpdateOrderStatus.
+ */
+export async function undoOrderAction(
+  operationId: string
+): Promise<UndoOrderActionResult | { error: 'unauthorized' | 'not_found' | 'already_undone' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+
+  const { data: operation } = await admin
+    .from('order_action_log')
+    .select('id, action_type, entries')
+    .eq('id', operationId)
+    .eq('store_id', store.id)
+    .maybeSingle();
+
+  if (!operation) return { error: 'not_found' };
+
+  // Tarea 4.8: guard optimista — se reclama la operación marcando undone_at
+  // ANTES de aplicar ningún efecto. Si dos deshacer llegan a la vez, el
+  // segundo no encuentra fila para actualizar (WHERE undone_at IS NULL) y
+  // se resuelve como "ya deshecha" sin tocar ningún pedido.
+  const { data: claimed } = await admin
+    .from('order_action_log')
+    .update({ undone_at: new Date().toISOString() })
+    .eq('id', operationId)
+    .is('undone_at', null)
+    .select('id')
+    .maybeSingle();
+
+  if (!claimed) return { error: 'already_undone' };
+
+  const actionType = operation.action_type as OrderActionType;
+  const entries = (operation.entries ?? []) as OrderActionLogEntry[];
+
+  let undone = 0;
+  const failed: UndoOrderActionResult['failed'] = [];
+
+  for (const entry of entries) {
+    const result = await undoSingleEntry(admin, actionType, entry);
+    if (result.ok) {
+      undone += 1;
+    } else if (result.reason === 'stock_insufficient') {
+      failed.push({ order_id: entry.order_id, reason: 'stock_insufficient', details: result.details });
+    } else {
+      failed.push({ order_id: entry.order_id, reason: result.reason });
+    }
+  }
+
+  // D5: la operación queda marcada aunque haya fallos parciales — no se
+  // reintenta sola y sale de la lista de deshacibles.
+  revalidatePath('/dashboard', 'layout');
+
+  return { undone, failed };
 }

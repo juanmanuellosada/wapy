@@ -114,6 +114,54 @@ export type Database = {
           },
         ]
       }
+      order_action_log: {
+        Row: {
+          action_type: string
+          entries: Json
+          id: string
+          non_undoable_reason: string | null
+          performed_at: string
+          performed_by: string | null
+          store_id: string
+          undone_at: string | null
+        }
+        Insert: {
+          action_type: string
+          entries?: Json
+          id?: string
+          non_undoable_reason?: string | null
+          performed_at?: string
+          performed_by?: string | null
+          store_id: string
+          undone_at?: string | null
+        }
+        Update: {
+          action_type?: string
+          entries?: Json
+          id?: string
+          non_undoable_reason?: string | null
+          performed_at?: string
+          performed_by?: string | null
+          store_id?: string
+          undone_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_action_log_performed_by_fkey"
+            columns: ["performed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_action_log_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       order_items: {
         Row: {
           cost_at_purchase: number | null

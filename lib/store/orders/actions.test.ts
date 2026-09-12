@@ -38,6 +38,9 @@ const {
   getBacklogPendingCount,
   deleteOrder,
   batchDeleteOrders,
+  updateOrderStatus,
+  listUndoableOrderActions,
+  undoOrderAction,
 } = await import('./actions');
 
 // Espejo del tamaño de página interno de actions.ts (no se exporta: el archivo
@@ -59,6 +62,7 @@ function makeFakeAdmin(
     order_items?: Row[];
     products?: Row[];
     product_variants?: Row[];
+    order_action_log?: Row[];
   } = {}
 ) {
   const state = {
@@ -68,9 +72,18 @@ function makeFakeAdmin(
     order_items: tables.order_items ?? [],
     products: tables.products ?? [],
     product_variants: tables.product_variants ?? [],
+    order_action_log: tables.order_action_log ?? [],
+    // Test hook (add-order-action-undo, 2.5/2.8): forzar que el INSERT en
+    // order_action_log falle, para probar que un fallo de registro no
+    // aborta la acción ya aplicada.
+    __forceOrderActionLogInsertError: false,
   };
 
-  function from(table: 'orders' | 'coupons' | 'stores' | 'order_items' | 'products' | 'product_variants') {
+  let nextInsertId = 0;
+
+  function from(
+    table: 'orders' | 'coupons' | 'stores' | 'order_items' | 'products' | 'product_variants' | 'order_action_log'
+  ) {
     const filters: Array<(r: Row) => boolean> = [];
     let patch: Row | null = null;
     let countRequested = false;
@@ -78,6 +91,7 @@ function makeFakeAdmin(
     let orderAsc = true;
     let rangeFrom: number | null = null;
     let rangeTo: number | null = null;
+    let limitCount: number | null = null;
 
     function computeMatches(): Row[] {
       return state[table].filter((r) => filters.every((f) => f(r)));
@@ -127,9 +141,36 @@ function makeFakeAdmin(
         rangeTo = to;
         return builder;
       },
+      limit(n: number) {
+        limitCount = n;
+        return builder;
+      },
       update(p: Row) {
         patch = p;
         return builder;
+      },
+      insert(rows: Row | Row[]) {
+        const forceError = table === 'order_action_log' && state.__forceOrderActionLogInsertError;
+        const toInsert = (Array.isArray(rows) ? rows : [rows]).map((r) => ({
+          id: (r.id as string | undefined) ?? `gen_${table}_${++nextInsertId}`,
+          ...r,
+        }));
+        if (!forceError) state[table].push(...toInsert);
+        const errorResult = { message: 'forced insert error' };
+        return {
+          then(resolve: (v: { data: Row[] | null; error: Row | null }) => void) {
+            resolve(forceError ? { data: null, error: errorResult } : { data: toInsert, error: null });
+          },
+          // logOrderAction (add-order-action-undo, grupo 5) encadena
+          // .select('id').single() para devolver el id insertado.
+          select(_cols?: string) {
+            return {
+              async single() {
+                return forceError ? { data: null, error: errorResult } : { data: toInsert[0] ?? null, error: null };
+              },
+            };
+          },
+        };
       },
       async maybeSingle() {
         const row = state[table].find((r) => filters.every((f) => f(r))) ?? null;
@@ -156,6 +197,9 @@ function makeFakeAdmin(
         }
         if (rangeFrom !== null && rangeTo !== null) {
           rows = rows.slice(rangeFrom, rangeTo + 1);
+        }
+        if (limitCount !== null) {
+          rows = rows.slice(0, limitCount);
         }
         resolve({ data: rows, error: null, count });
       },
@@ -1108,7 +1152,7 @@ describe('deleteOrder (3.4)', () => {
     });
 
     const result = await deleteOrder('o1');
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
     expect(admin.__state.products[0].stock).toBe(13);
     expect(admin.__state.orders[0].deleted_at).not.toBeNull();
   });
@@ -1121,7 +1165,7 @@ describe('deleteOrder (3.4)', () => {
     });
 
     const result = await deleteOrder('o1');
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
     expect(admin.__state.coupons[0].uses_count).toBe(0);
     expect(admin.__state.orders[0].coupon_counted).toBe(false);
   });
@@ -1135,7 +1179,7 @@ describe('deleteOrder (3.4)', () => {
     });
 
     const result = await deleteOrder('o1');
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
     // replenishOrderStock no-opea porque el status ya es 'cancelled', y
     // revertCouponUse no-opea porque coupon_counted ya está en false.
     expect(admin.__state.products[0].stock).toBe(10);
@@ -1151,7 +1195,7 @@ describe('deleteOrder (3.4)', () => {
     });
 
     const result = await deleteOrder('o1');
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ ok: true });
     expect(admin.__state.products[0].stock).toBe(10); // no se repuso: el producto ya salió del catálogo
     expect(admin.__state.coupons[0].uses_count).toBe(1); // el cupón se usó de verdad
     expect(admin.__state.orders[0].deleted_at).not.toBeNull(); // pero el pedido igual se borra
@@ -1179,7 +1223,496 @@ describe('deleteOrder (3.4)', () => {
     const result = await batchDeleteOrders(['o1', 'o2']);
     if ('error' in result) throw new Error('unexpected error');
     expect(result.deletedCount).toBe(2);
+    // add-order-action-undo (3.1): sin los ids no hay forma de deshacer un
+    // borrado en lote.
+    expect(result.deletedIds.sort()).toEqual(['o1', 'o2']);
     expect(result.failed).toEqual([]);
     expect(admin.__state.orders.every((o) => o.deleted_at !== null)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// add-order-action-undo, grupo 2 — registro de acciones
+// ---------------------------------------------------------------------------
+
+describe('registro de acciones (order_action_log)', () => {
+  function setup(tables: Parameters<typeof makeFakeAdmin>[0]) {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      ...tables,
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+    return admin;
+  }
+
+  function pendingOrder(id: string): Row {
+    return { id, store_id: 's1', status: 'pending', cancelled_by: null, deleted_at: null, coupon_code: null, coupon_counted: false };
+  }
+
+  it('una acción individual queda registrada con una entrada', async () => {
+    const admin = setup({ orders: [pendingOrder('o1')], order_items: [] });
+
+    const result = await updateOrderStatus('o1', 'confirmed');
+    if (!('ok' in result)) throw new Error('unexpected error');
+
+    expect(admin.__state.order_action_log).toHaveLength(1);
+    const op = admin.__state.order_action_log[0];
+    expect(op.action_type).toBe('confirm');
+    expect(op.store_id).toBe('s1');
+    expect(op.entries).toHaveLength(1);
+    expect(op.entries[0]).toMatchObject({
+      order_id: 'o1',
+      status_before: 'pending',
+      status_after: 'confirmed',
+      stock_restored: false,
+      coupon_reverted: false,
+    });
+  });
+
+  it('un lote queda registrado como UNA sola operación con todas las entradas', async () => {
+    const admin = setup({
+      orders: [pendingOrder('o1'), pendingOrder('o2'), pendingOrder('o3')],
+      order_items: [],
+    });
+
+    const result = await batchUpdateOrderStatus(['o1', 'o2', 'o3'], 'confirmed');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(admin.__state.order_action_log).toHaveLength(1);
+    expect(admin.__state.order_action_log[0].entries).toHaveLength(3);
+  });
+
+  it('un lote con fallos registra solo las entradas de los pedidos efectivamente aplicados', async () => {
+    const admin = setup({
+      orders: [
+        pendingOrder('o1'),
+        pendingOrder('o2'),
+        { id: 'o3', store_id: 's1', status: 'cancelled', cancelled_by: 'owner', deleted_at: null, coupon_code: null, coupon_counted: false },
+      ],
+      order_items: [],
+    });
+
+    const result = await batchUpdateOrderStatus(['o1', 'o2', 'o3'], 'confirmed');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.failed).toHaveLength(1);
+    expect(admin.__state.order_action_log).toHaveLength(1);
+    expect(admin.__state.order_action_log[0].entries).toHaveLength(2);
+  });
+
+  it('cancelar registra stock_restored/coupon_reverted según lo que realmente ocurrió', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'pending', cancelled_by: null, deleted_at: null, coupon_code: 'PROMO', coupon_counted: true }],
+      coupons: [{ id: 'c1', store_id: 's1', code: 'PROMO', uses_count: 1 }],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 2 }],
+      products: [{ id: 'p1', stock: 5 }],
+    });
+
+    const result = await updateOrderStatus('o1', 'cancelled');
+    if (!('ok' in result)) throw new Error('unexpected error');
+
+    const entry = admin.__state.order_action_log[0].entries[0];
+    expect(entry.stock_restored).toBe(true);
+    expect(entry.coupon_reverted).toBe(true);
+    expect(admin.__state.products[0].stock).toBe(7);
+  });
+
+  it('borrar un pedido pendiente registra stock_restored=true (repuso stock de verdad)', async () => {
+    const admin = setup({
+      orders: [pendingOrder('o1')],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    const result = await deleteOrder('o1');
+    if (!('ok' in result)) throw new Error('unexpected error');
+
+    const entry = admin.__state.order_action_log[0].entries[0];
+    expect(entry.stock_restored).toBe(true);
+    expect(admin.__state.products[0].stock).toBe(13);
+  });
+
+  it('borrar un pedido entregado registra stock_restored=false (venta concretada, no repuso nada)', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'delivered', cancelled_by: null, deleted_at: null, coupon_code: null, coupon_counted: false }],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    const result = await deleteOrder('o1');
+    if (!('ok' in result)) throw new Error('unexpected error');
+
+    const entry = admin.__state.order_action_log[0].entries[0];
+    expect(entry.stock_restored).toBe(false);
+    expect(admin.__state.products[0].stock).toBe(10);
+  });
+
+  it('un fallo al registrar la operación no revierte la acción ya aplicada', async () => {
+    const admin = setup({ orders: [pendingOrder('o1')], order_items: [] });
+    admin.__state.__forceOrderActionLogInsertError = true;
+
+    const result = await updateOrderStatus('o1', 'confirmed');
+    if (!('ok' in result)) throw new Error('unexpected error');
+
+    expect(admin.__state.orders[0].status).toBe('confirmed'); // la acción se aplicó igual
+    expect(admin.__state.order_action_log).toHaveLength(0); // pero no quedó registrada
+  });
+
+  it('un lote que supera el tope de entradas se registra como no deshacible, sin guardar una fila gigante', async () => {
+    const orders = Array.from({ length: 501 }, (_, i) => pendingOrder(`o${i}`));
+    const admin = setup({ orders, order_items: [] });
+
+    const result = await batchUpdateOrderStatus(orders.map((o) => o.id as string), 'confirmed');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(admin.__state.order_action_log).toHaveLength(1);
+    const op = admin.__state.order_action_log[0];
+    expect(op.non_undoable_reason).toBe('too_many_entries');
+    expect(op.entries).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// add-order-action-undo, grupo 4 — deshacer
+// ---------------------------------------------------------------------------
+
+describe('listUndoableOrderActions', () => {
+  function setup(tables: Parameters<typeof makeFakeAdmin>[0]) {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      ...tables,
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+    return admin;
+  }
+
+  it('lista solo operaciones de la propia tienda, no deshechas y dentro de las 24hs, más reciente primero', async () => {
+    const now = Date.now();
+    const admin = setup({
+      order_action_log: [
+        { id: 'op_mine', store_id: 's1', action_type: 'confirm', performed_at: new Date(now - 1_000).toISOString(), undone_at: null, non_undoable_reason: null, entries: [{}] },
+        { id: 'op_undone', store_id: 's1', action_type: 'cancel', performed_at: new Date(now - 2_000).toISOString(), undone_at: new Date().toISOString(), non_undoable_reason: null, entries: [] },
+        { id: 'op_other_store', store_id: 'OTHER_STORE', action_type: 'delete', performed_at: new Date(now - 500).toISOString(), undone_at: null, non_undoable_reason: null, entries: [] },
+        { id: 'op_old', store_id: 's1', action_type: 'deliver', performed_at: new Date(now - 30 * 60 * 60 * 1000).toISOString(), undone_at: null, non_undoable_reason: null, entries: [] },
+      ],
+    });
+
+    const result = await listUndoableOrderActions();
+    if ('error' in result) throw new Error('unexpected error');
+    expect(result.operations.map((o) => o.id)).toEqual(['op_mine']);
+  });
+
+  it('limita a las 5 operaciones más recientes', async () => {
+    const now = Date.now();
+    const ops = Array.from({ length: 8 }, (_, i) => ({
+      id: `op${i}`,
+      store_id: 's1',
+      action_type: 'confirm',
+      performed_at: new Date(now - i * 1_000).toISOString(),
+      undone_at: null,
+      non_undoable_reason: null,
+      entries: [],
+    }));
+    const admin = setup({ order_action_log: ops });
+
+    const result = await listUndoableOrderActions();
+    if ('error' in result) throw new Error('unexpected error');
+    expect(result.operations).toHaveLength(5);
+    expect(result.operations[0].id).toBe('op0'); // la más reciente primero
+  });
+});
+
+describe('undoOrderAction', () => {
+  function setup(tables: Parameters<typeof makeFakeAdmin>[0]) {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      ...tables,
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+    return admin;
+  }
+
+  it('deshacer una entrega vuelve a confirmado y limpia delivered_at', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'delivered', cancelled_by: null, deleted_at: null, delivered_at: '2026-01-01T00:00:00.000Z' }],
+      order_action_log: [
+        {
+          id: 'op1',
+          store_id: 's1',
+          action_type: 'deliver',
+          performed_at: new Date().toISOString(),
+          undone_at: null,
+          non_undoable_reason: null,
+          entries: [
+            {
+              order_id: 'o1',
+              status_before: 'confirmed',
+              status_after: 'delivered',
+              cancelled_by_before: null,
+              cancelled_by_after: null,
+              deleted_at_before: null,
+              deleted_at_after: null,
+              stock_restored: false,
+              coupon_reverted: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await undoOrderAction('op1');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.undone).toBe(1);
+    expect(result.failed).toEqual([]);
+    expect(admin.__state.orders[0].status).toBe('confirmed');
+    expect(admin.__state.orders[0].delivered_at).toBeNull();
+  });
+
+  it('deshacer una cancelación vuelve a descontar el stock y a contar el cupón', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'cancelled', cancelled_by: 'owner', deleted_at: null, cancelled_at: '2026-01-01T00:00:00.000Z', coupon_code: 'PROMO', coupon_counted: false }],
+      coupons: [{ id: 'c1', store_id: 's1', code: 'PROMO', uses_count: 0 }],
+      order_items: [{ order_id: 'o1', product_id: 'p1', product_name: 'Remera', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 13 }], // ya con las 3 unidades repuestas por la cancelación
+      order_action_log: [
+        {
+          id: 'op1',
+          store_id: 's1',
+          action_type: 'cancel',
+          performed_at: new Date().toISOString(),
+          undone_at: null,
+          non_undoable_reason: null,
+          entries: [
+            {
+              order_id: 'o1',
+              status_before: 'pending',
+              status_after: 'cancelled',
+              cancelled_by_before: null,
+              cancelled_by_after: 'owner',
+              deleted_at_before: null,
+              deleted_at_after: null,
+              stock_restored: true,
+              coupon_reverted: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await undoOrderAction('op1');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.undone).toBe(1);
+    expect(admin.__state.orders[0].status).toBe('pending');
+    expect(admin.__state.orders[0].cancelled_by).toBeNull();
+    expect(admin.__state.orders[0].cancelled_at).toBeNull();
+    expect(admin.__state.products[0].stock).toBe(10);
+    expect(admin.__state.coupons[0].uses_count).toBe(1);
+  });
+
+  // Este es EL caso que rompe cualquier implementación que infiera el efecto
+  // desde el estado actual del pedido en vez de leer los flags del log
+  // (Decisión D3): borrar un pendiente repone stock sin tocar `status`, así
+  // que un pedido 'pending' con stock ya repuesto es indistinguible —
+  // mirando solo el pedido— de uno nunca tocado.
+  it('deshacer el borrado de un pedido pendiente descuenta el stock exactamente una vez', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'pending', cancelled_by: null, deleted_at: '2026-01-01T00:00:00.000Z', coupon_code: null, coupon_counted: false }],
+      order_items: [{ order_id: 'o1', product_id: 'p1', product_name: 'Remera', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 13 }], // ya con las 3 unidades repuestas por el borrado
+      order_action_log: [
+        {
+          id: 'op1',
+          store_id: 's1',
+          action_type: 'delete',
+          performed_at: new Date().toISOString(),
+          undone_at: null,
+          non_undoable_reason: null,
+          entries: [
+            {
+              order_id: 'o1',
+              status_before: 'pending',
+              status_after: 'pending',
+              cancelled_by_before: null,
+              cancelled_by_after: null,
+              deleted_at_before: null,
+              deleted_at_after: '2026-01-01T00:00:00.000Z',
+              stock_restored: true,
+              coupon_reverted: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await undoOrderAction('op1');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.undone).toBe(1);
+    expect(admin.__state.orders[0].deleted_at).toBeNull();
+    expect(admin.__state.orders[0].status).toBe('pending');
+    // La trampa: si se infiriera desde `status === 'pending'` que nunca se
+    // repuso stock, esto quedaría en 13 en vez de 10 (double-count).
+    expect(admin.__state.products[0].stock).toBe(10);
+  });
+
+  it('si el pedido cambió después de la acción, esa entrada se saltea con modified_since', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'cancelled', cancelled_by: 'owner', deleted_at: null }],
+      order_action_log: [
+        {
+          id: 'op1',
+          store_id: 's1',
+          action_type: 'confirm',
+          performed_at: new Date().toISOString(),
+          undone_at: null,
+          non_undoable_reason: null,
+          entries: [
+            {
+              order_id: 'o1',
+              status_before: 'pending',
+              status_after: 'confirmed',
+              cancelled_by_before: null,
+              cancelled_by_after: null,
+              deleted_at_before: null,
+              deleted_at_after: null,
+              stock_restored: false,
+              coupon_reverted: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await undoOrderAction('op1');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.undone).toBe(0);
+    expect(result.failed).toEqual([{ order_id: 'o1', reason: 'modified_since' }]);
+    expect(admin.__state.orders[0].status).toBe('cancelled'); // no se tocó
+  });
+
+  it('si el stock no alcanza, esa entrada se bloquea y no toca el pedido', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'cancelled', cancelled_by: 'owner', deleted_at: null, cancelled_at: '2026-01-01T00:00:00.000Z' }],
+      order_items: [{ order_id: 'o1', product_id: 'p1', product_name: 'Remera', variant_id: null, quantity: 5 }],
+      products: [{ id: 'p1', stock: 2 }], // ya se vendió a otra persona, no alcanza
+      order_action_log: [
+        {
+          id: 'op1',
+          store_id: 's1',
+          action_type: 'cancel',
+          performed_at: new Date().toISOString(),
+          undone_at: null,
+          non_undoable_reason: null,
+          entries: [
+            {
+              order_id: 'o1',
+              status_before: 'pending',
+              status_after: 'cancelled',
+              cancelled_by_before: null,
+              cancelled_by_after: 'owner',
+              deleted_at_before: null,
+              deleted_at_after: null,
+              stock_restored: true,
+              coupon_reverted: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await undoOrderAction('op1');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.undone).toBe(0);
+    expect(result.failed).toEqual([
+      { order_id: 'o1', reason: 'stock_insufficient', details: [{ productId: 'p1', productName: 'Remera', requested: 5, available: 2 }] },
+    ]);
+    expect(admin.__state.orders[0].status).toBe('cancelled'); // no se tocó
+    expect(admin.__state.products[0].stock).toBe(2); // no se dedujo nada
+  });
+
+  it('deshacer una operación ya deshecha no modifica ningún pedido', async () => {
+    const admin = setup({
+      orders: [{ id: 'o1', store_id: 's1', status: 'pending', cancelled_by: null, deleted_at: null }],
+      order_action_log: [
+        {
+          id: 'op1',
+          store_id: 's1',
+          action_type: 'confirm',
+          performed_at: new Date().toISOString(),
+          undone_at: new Date().toISOString(),
+          non_undoable_reason: null,
+          entries: [
+            {
+              order_id: 'o1',
+              status_before: 'pending',
+              status_after: 'confirmed',
+              cancelled_by_before: null,
+              cancelled_by_after: null,
+              deleted_at_before: null,
+              deleted_at_after: null,
+              stock_restored: false,
+              coupon_reverted: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await undoOrderAction('op1');
+    expect(result).toEqual({ error: 'already_undone' });
+    expect(admin.__state.orders[0].status).toBe('pending'); // no se tocó
+  });
+
+  it('deshacer un lote completo revierte todos los pedidos en una sola operación', async () => {
+    const admin = setup({
+      orders: [
+        { id: 'o1', store_id: 's1', status: 'confirmed', cancelled_by: null, deleted_at: null },
+        { id: 'o2', store_id: 's1', status: 'confirmed', cancelled_by: null, deleted_at: null },
+      ],
+      order_action_log: [
+        {
+          id: 'op1',
+          store_id: 's1',
+          action_type: 'confirm',
+          performed_at: new Date().toISOString(),
+          undone_at: null,
+          non_undoable_reason: null,
+          entries: [
+            { order_id: 'o1', status_before: 'pending', status_after: 'confirmed', cancelled_by_before: null, cancelled_by_after: null, deleted_at_before: null, deleted_at_after: null, stock_restored: false, coupon_reverted: false },
+            { order_id: 'o2', status_before: 'pending', status_after: 'confirmed', cancelled_by_before: null, cancelled_by_after: null, deleted_at_before: null, deleted_at_after: null, stock_restored: false, coupon_reverted: false },
+          ],
+        },
+      ],
+    });
+
+    const result = await undoOrderAction('op1');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.undone).toBe(2);
+    expect(admin.__state.orders.every((o) => o.status === 'pending')).toBe(true);
+  });
+
+  it('deshacer una operación de otra tienda se rechaza', async () => {
+    const admin = setup({
+      order_action_log: [
+        { id: 'op1', store_id: 'OTHER_STORE', action_type: 'confirm', performed_at: new Date().toISOString(), undone_at: null, non_undoable_reason: null, entries: [] },
+      ],
+    });
+
+    const result = await undoOrderAction('op1');
+    expect(result).toEqual({ error: 'not_found' });
   });
 });

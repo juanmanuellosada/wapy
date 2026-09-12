@@ -11,13 +11,18 @@ import {
   deleteOrder,
   batchDeleteOrders,
   getOrderDeleteImpact,
+  listUndoableOrderActions,
+  undoOrderAction,
 } from '@/lib/store/orders/actions';
 import type {
   OrderWithItems,
   OrderStatus,
   OrderChannel,
   OrderPaymentStatus,
+  OrderActionType,
   BatchUpdateOrderStatusResult,
+  UndoOrderActionResult,
+  UndoableOrderAction,
   ListOrdersFilters,
 } from '@/lib/store/orders/actions';
 import { computeCostMargin } from '@/lib/store/orders/margin';
@@ -183,22 +188,49 @@ const DEFAULT_FILTERS: Filters = {
 
 // 7.6: motivos de fallo del lote agrupados por tipo, no listados por id — con
 // selecciones grandes ("29 confirmados, 11 no...") es lo único legible.
+// add-order-action-undo (5.5): también cubre los motivos de un deshacer
+// parcial (`modified_since`, y el mismo `stock_insufficient`/`not_found` que
+// ya usaba el lote), para que un solo resumen sirva en los dos contextos.
 const BATCH_FAILURE_REASON_LABELS: Record<
-  BatchUpdateOrderStatusResult['failed'][number]['reason'],
+  | BatchUpdateOrderStatusResult['failed'][number]['reason']
+  | UndoOrderActionResult['failed'][number]['reason'],
   string
 > = {
   invalid_transition: 'ya estaban en un estado que no permite este cambio',
   not_found: 'no se encontraron',
-  stock_insufficient: 'no tenían stock suficiente',
+  stock_insufficient: 'no tenían stock suficiente para reponer el pedido',
+  modified_since: 'se modificaron desde entonces',
 };
 
-function summarizeBatchFailures(failed: BatchUpdateOrderStatusResult['failed']): string {
+function summarizeBatchFailures(
+  failed: Array<{ reason: keyof typeof BATCH_FAILURE_REASON_LABELS }>
+): string {
   const counts = new Map<string, number>();
   for (const f of failed) counts.set(f.reason, (counts.get(f.reason) ?? 0) + 1);
   return Array.from(counts.entries())
     .map(([reason, count]) => `${count} ${BATCH_FAILURE_REASON_LABELS[reason as keyof typeof BATCH_FAILURE_REASON_LABELS]}`)
     .join('; ');
 }
+
+// add-order-action-undo (5.1): el aviso con "Deshacer" necesita quedar en
+// pantalla más que el default de sonner (4s) para dar tiempo a reaccionar,
+// sin quedarse pegado indefinidamente.
+const UNDO_TOAST_DURATION_MS = 8000;
+
+// add-order-action-undo (5.3): "qué se hizo" para cada fila de la lista de
+// acciones recientes, en singular/plural.
+const ORDER_ACTION_TYPE_LABELS: Record<OrderActionType, { one: string; many: string }> = {
+  confirm: { one: 'pedido confirmado', many: 'pedidos confirmados' },
+  deliver: { one: 'pedido entregado', many: 'pedidos entregados' },
+  cancel: { one: 'pedido cancelado', many: 'pedidos cancelados' },
+  delete: { one: 'pedido borrado', many: 'pedidos borrados' },
+};
+
+// add-order-action-undo (5.3): hoy el único motivo de no-deshacible es haber
+// superado el tope de entradas por operación (tarea 2.6).
+const NON_UNDOABLE_REASON_LABELS: Record<string, string> = {
+  too_many_entries: 'abarcó demasiados pedidos',
+};
 
 const BATCH_ACTION_WORDS: Record<'confirmed' | 'cancelled', { noun: string; verb: string }> = {
   confirmed: { noun: 'confirmado', verb: 'confirmarse' },
@@ -224,9 +256,11 @@ type OrderDetailModalProps = {
   onClose: () => void;
   onStatusChange: () => void;
   onDeleted: () => void;
+  /** add-order-action-undo (5.1): dispara el "Deshacer" del aviso de esta acción puntual. */
+  onUndo: (operationId: string) => void;
 };
 
-function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, onDeleted }: OrderDetailModalProps) {
+function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, onDeleted, onUndo }: OrderDetailModalProps) {
   const [loading, setLoading] = useState<OrderStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -263,7 +297,12 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
       setError(messages[result.error] ?? 'Error al actualizar el estado.');
       return;
     }
-    toast.success('Pedido actualizado');
+    toast.success(
+      'Pedido actualizado',
+      result.operationId
+        ? { action: { label: 'Deshacer', onClick: () => onUndo(result.operationId as string) }, duration: UNDO_TOAST_DURATION_MS }
+        : undefined
+    );
     // 6.6: confirmar cierra el detalle y vuelve al listado ya actualizado,
     // en vez de dejar el modal abierto.
     onStatusChange();
@@ -278,7 +317,12 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
       );
       return;
     }
-    toast.success('Pedido borrado');
+    toast.success(
+      'Pedido borrado',
+      result.operationId
+        ? { action: { label: 'Deshacer', onClick: () => onUndo(result.operationId as string) }, duration: UNDO_TOAST_DURATION_MS }
+        : undefined
+    );
     onDeleted();
   };
 
@@ -506,7 +550,9 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
       </div>
 
       {/* 4.3: aviso distinto para entregados — bajan los ingresos históricos,
-          no es solo "esta acción es irreversible". */}
+          no es solo "esta acción es irreversible". add-order-action-undo
+          (5.6): el borrado sí se puede deshacer, desde las acciones
+          recientes, dentro de la ventana de 24hs. */}
       <ConfirmModal
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
@@ -514,8 +560,8 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
         title="Borrar pedido"
         message={
           order.status === 'delivered'
-            ? `Este pedido ya fue entregado. Borrarlo va a bajar tus ingresos históricos en ${formatPrice(order.total_cents)}. La dueña no puede deshacer esto desde el panel.`
-            : 'Vas a borrar este pedido. La dueña no puede deshacer esto desde el panel.'
+            ? `Este pedido ya fue entregado. Borrarlo va a bajar tus ingresos históricos en ${formatPrice(order.total_cents)}. Podés deshacerlo después desde las acciones recientes.`
+            : 'Vas a borrar este pedido. Podés deshacerlo después desde las acciones recientes.'
         }
         confirmLabel="Sí, borrar"
         variant="destructive"
@@ -558,9 +604,24 @@ export function OrdersPanel({
   // lote (selectAllMatching puede abarcar más pedidos de los que están cargados).
   const [batchDeleteImpact, setBatchDeleteImpact] = useState<{ total: number; deliveredCount: number } | null>(null);
   const [batchDeleteLoading, setBatchDeleteLoading] = useState(false);
+  // add-order-action-undo (5.3): últimas operaciones deshacibles (o no, con
+  // su motivo) de la tienda, para la lista de "acciones recientes".
+  const [recentActions, setRecentActions] = useState<UndoableOrderAction[]>([]);
 
   const isFirstRender = useRef(true);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
+  // add-order-action-undo (5.2): el aviso con "Deshacer" puede seguir en
+  // pantalla después de que la dueña cambió de filtro o de página — el
+  // onClick tiene que leer estos valores al momento del click, no capturarlos
+  // como closure de cuando se creó el toast.
+  const filtersRef = useRef(filters);
+  const pageRef = useRef(page);
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
 
   const fetchOrders = useCallback(async (f: Filters, p: number) => {
     setLoading(true);
@@ -614,6 +675,52 @@ export function OrdersPanel({
     if ('count' in result) setBacklogCount(result.count);
   }, []);
 
+  // add-order-action-undo (5.3): se pide al montar y después de cada acción
+  // (individual, en lote, o un deshacer) para que la lista de recientes
+  // refleje lo que acaba de pasar.
+  const refreshRecentActions = useCallback(async () => {
+    const result = await listUndoableOrderActions();
+    if ('operations' in result) setRecentActions(result.operations);
+  }, []);
+
+  useEffect(() => {
+    refreshRecentActions();
+  }, [refreshRecentActions]);
+
+  // add-order-action-undo (5.4): deshace una operación completa (individual
+  // o en lote) desde el aviso o desde la lista de acciones recientes, y
+  // refresca el panel con el mismo patrón que handleStatusChange — pero
+  // leyendo filtros/página desde el ref (5.2), no de la closure vigente al
+  // crear el toast.
+  const handleUndo = useCallback(
+    async (operationId: string) => {
+      const result = await undoOrderAction(operationId);
+      if ('error' in result) {
+        const messages: Record<string, string> = {
+          unauthorized: 'No tenés permisos para esta acción.',
+          not_found: 'Esa operación ya no está disponible para deshacer.',
+          already_undone: 'Esa operación ya había sido deshecha.',
+        };
+        toast.error(messages[result.error] ?? 'No se pudo deshacer la acción.');
+        return;
+      }
+      const { undone, failed } = result;
+      if (failed.length === 0) {
+        toast.success(`${undone} pedido${undone === 1 ? '' : 's'} restaurado${undone === 1 ? '' : 's'}.`);
+      } else if (undone === 0) {
+        toast.error(`No se pudo deshacer: ${summarizeBatchFailures(failed)}.`);
+      } else {
+        toast.info(
+          `${undone} restaurado${undone === 1 ? '' : 's'}, ${failed.length} no se ${failed.length === 1 ? 'pudo' : 'pudieron'} deshacer (${summarizeBatchFailures(failed)}).`
+        );
+      }
+      fetchOrders(filtersRef.current, pageRef.current);
+      refreshBacklogCount();
+      refreshRecentActions();
+    },
+    [fetchOrders, refreshBacklogCount, refreshRecentActions]
+  );
+
   const updateFilters = (patch: Partial<Filters>) => {
     setFilters((prev) => ({ ...prev, ...patch }));
     setPage(1);
@@ -640,6 +747,7 @@ export function OrdersPanel({
     setSelectedOrder(null);
     fetchOrders(filters, page);
     refreshBacklogCount();
+    refreshRecentActions();
   };
 
   const toggleSelected = (orderId: string) => {
@@ -704,19 +812,24 @@ export function OrdersPanel({
       toast.error('No tenés permisos para esta acción.');
       return;
     }
-    const { updated, failed } = result;
+    const { updated, failed, operationId } = result;
     const { noun, verb } = BATCH_ACTION_WORDS[nextStatus];
+    const undoAction = operationId
+      ? { action: { label: 'Deshacer', onClick: () => handleUndo(operationId) }, duration: UNDO_TOAST_DURATION_MS }
+      : undefined;
     if (failed.length === 0) {
-      toast.success(`${updated.length} pedido${updated.length === 1 ? '' : 's'} ${noun}${updated.length === 1 ? '' : 's'}.`);
+      toast.success(`${updated.length} pedido${updated.length === 1 ? '' : 's'} ${noun}${updated.length === 1 ? '' : 's'}.`, undoAction);
     } else {
       toast.info(
-        `${updated.length} ${noun}${updated.length === 1 ? '' : 's'}, ${failed.length} no ${failed.length === 1 ? 'pudo' : 'pudieron'} ${verb} (${summarizeBatchFailures(failed)}).`
+        `${updated.length} ${noun}${updated.length === 1 ? '' : 's'}, ${failed.length} no ${failed.length === 1 ? 'pudo' : 'pudieron'} ${verb} (${summarizeBatchFailures(failed)}).`,
+        undoAction
       );
     }
     setSelectedIds(new Set());
     setSelectAllMatching(false);
     fetchOrders(filters, page);
     refreshBacklogCount();
+    refreshRecentActions();
   };
 
   // 4.2/4.3: antes de mostrar la confirmación, resuelve server-side la
@@ -741,16 +854,23 @@ export function OrdersPanel({
       toast.error('No tenés permisos para esta acción.');
       return;
     }
-    const { deletedCount, failed } = result;
+    const { deletedCount, failed, operationId } = result;
+    const undoAction = operationId
+      ? { action: { label: 'Deshacer', onClick: () => handleUndo(operationId) }, duration: UNDO_TOAST_DURATION_MS }
+      : undefined;
     if (failed.length === 0) {
-      toast.success(`${deletedCount} pedido${deletedCount === 1 ? '' : 's'} borrado${deletedCount === 1 ? '' : 's'}.`);
+      toast.success(`${deletedCount} pedido${deletedCount === 1 ? '' : 's'} borrado${deletedCount === 1 ? '' : 's'}.`, undoAction);
     } else {
-      toast.info(`${deletedCount} borrado${deletedCount === 1 ? '' : 's'}, ${failed.length} no se ${failed.length === 1 ? 'encontró' : 'encontraron'}.`);
+      toast.info(
+        `${deletedCount} borrado${deletedCount === 1 ? '' : 's'}, ${failed.length} no se ${failed.length === 1 ? 'encontró' : 'encontraron'}.`,
+        undoAction
+      );
     }
     setSelectedIds(new Set());
     setSelectAllMatching(false);
     fetchOrders(filters, page);
     refreshBacklogCount();
+    refreshRecentActions();
   };
 
   const handleExportCsv = async () => {
@@ -973,7 +1093,9 @@ export function OrdersPanel({
       )}
 
       {/* 4.2/4.3: cantidad exacta + aviso distinto si la selección incluye
-          pedidos entregados (bajan los ingresos históricos). */}
+          pedidos entregados (bajan los ingresos históricos).
+          add-order-action-undo (5.6/5.7): el borrado en lote también se
+          puede deshacer desde las acciones recientes. */}
       <ConfirmModal
         open={batchDeleteImpact !== null}
         onClose={() => setBatchDeleteImpact(null)}
@@ -982,13 +1104,47 @@ export function OrdersPanel({
         message={
           batchDeleteImpact
             ? batchDeleteImpact.deliveredCount > 0
-              ? `Vas a borrar ${batchDeleteImpact.total} pedido${batchDeleteImpact.total === 1 ? '' : 's'}, de los cuales ${batchDeleteImpact.deliveredCount} ya ${batchDeleteImpact.deliveredCount === 1 ? 'fue entregado' : 'fueron entregados'}. Eso va a bajar tus ingresos históricos. La dueña no puede deshacer esto desde el panel.`
-              : `Vas a borrar ${batchDeleteImpact.total} pedido${batchDeleteImpact.total === 1 ? '' : 's'}. La dueña no puede deshacer esto desde el panel.`
+              ? `Vas a borrar ${batchDeleteImpact.total} pedido${batchDeleteImpact.total === 1 ? '' : 's'}, de los cuales ${batchDeleteImpact.deliveredCount} ya ${batchDeleteImpact.deliveredCount === 1 ? 'fue entregado' : 'fueron entregados'}. Eso va a bajar tus ingresos históricos. Podés deshacerlo después desde las acciones recientes.`
+              : `Vas a borrar ${batchDeleteImpact.total} pedido${batchDeleteImpact.total === 1 ? '' : 's'}. Podés deshacerlo después desde las acciones recientes.`
             : ''
         }
         confirmLabel="Sí, borrar"
         variant="destructive"
       />
+
+      {/* add-order-action-undo (5.3): últimas operaciones deshacibles (o no,
+          con su motivo) — el mismo botón "Deshacer" que el aviso, para
+          cuando ya se cerró. */}
+      {recentActions.length > 0 && (
+        <div className="mb-4 rounded-xl border border-white/10 bg-white/4 divide-y divide-white/10">
+          <p className="px-4 py-2 text-xs font-semibold text-white/50">Acciones recientes</p>
+          {recentActions.map((op) => {
+            const label = ORDER_ACTION_TYPE_LABELS[op.action_type];
+            const countLabel = `${op.entry_count} ${op.entry_count === 1 ? label.one : label.many}`;
+            return (
+              <div key={op.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm text-white/70">{countLabel}</p>
+                  <p className="text-xs text-white/40 mt-0.5">
+                    {formatDate(op.performed_at)}
+                    {op.non_undoable_reason &&
+                      ` · No se puede deshacer: ${NON_UNDOABLE_REASON_LABELS[op.non_undoable_reason] ?? 'no se puede deshacer'}.`}
+                  </p>
+                </div>
+                {!op.non_undoable_reason && (
+                  <button
+                    type="button"
+                    onClick={() => handleUndo(op.id)}
+                    className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/8 text-white/70 hover:text-white hover:bg-white/15 border border-white/10 transition-colors cursor-pointer"
+                  >
+                    Deshacer
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* List */}
       {!loading && orders.length === 0 && !hasActiveFilters(filters) && (
@@ -1109,6 +1265,7 @@ export function OrdersPanel({
           onClose={() => setSelectedOrder(null)}
           onStatusChange={handleStatusChange}
           onDeleted={handleStatusChange}
+          onUndo={handleUndo}
         />
       )}
     </div>

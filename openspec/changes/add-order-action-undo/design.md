@@ -92,7 +92,7 @@ El registro se escribe **después** de que la acción se aplicó con éxito, y s
 
 ## Migration Plan
 
-1. Aplicar `044_order_action_log.sql`: tabla nueva más sus policies. No toca `orders` ni ninguna tabla existente, así que no hay riesgo sobre datos actuales.
+1. Aplicar `043_order_action_log.sql`: tabla nueva más sus policies. No toca `orders` ni ninguna tabla existente, así que no hay riesgo sobre datos actuales.
 2. Desplegar. Sin operaciones registradas la lista de acciones recientes está vacía y el panel se comporta como hoy.
 3. El registro empieza a poblarse con el uso; no hay backfill posible ni deseable.
 4. **Rollback**: `DROP TABLE order_action_log`. Se pierde la posibilidad de deshacer, no se pierde ningún pedido. El cambio de retorno de `batchDeleteOrders` es de código y se revierte con el despliegue.
@@ -101,3 +101,4 @@ El registro se escribe **después** de que la acción se aplicó con éxito, y s
 
 - ¿Conviene que el registro también capte las acciones del superadministrador cuando opera sobre una tienda? Hoy no hay un flujo así en el panel; si aparece, el `performed_by` ya está en la tabla para distinguirlo.
 - ¿Cuánto tiempo conservar las filas ya deshechas o vencidas? No molestan a esta escala y son el insumo de un historial por pedido, así que por ahora no se limpian. Si crecen, un cron de retención es trivial de agregar.
+- **"Revivir pedido" no queda registrada como deshacible en esta versión.** La reactivación de un pedido cancelado por el sistema (`cancelled → confirmed` vía `canReactivateOrder`) vuelve a *comprometer* stock y a *contar* el cupón — el efecto inverso al de las cuatro acciones estándar de la tabla D3, que siempre reponen/revierten. El registro de esta versión modela un solo sentido de efecto (`stock_restored`/`coupon_reverted` como reposición), así que encajar la reactivación exigiría una segunda dimensión de flags o una entrada con semántica opuesta — se deja fuera para no complicar D3 antes de que haya un caso de uso real que lo pida (D7/Non-Goals ya la excluye explícitamente). Consecuencia práctica: si alguien revive un pedido por error y lo cancela a mano para corregirlo, ese pedido queda con `cancelled_by = 'owner'` (D4/`updateOrderStatusInternal`) y ya no cumple `canReactivateOrder` — pierde la posibilidad de volver a revivirse por cualquiera de los dos caminos.
