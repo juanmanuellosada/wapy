@@ -72,7 +72,7 @@ El total del pedido se calcula server-side a partir de las líneas para que no p
 ## Migration Plan
 
 1. Implementar y desplegar `add-product-cost-tracking` primero (dependencia dura).
-2. Aplicar `042_manual_sales.sql`: ampliación del `CHECK` de canal, `sold_at` con backfill desde `created_at`, `stock_applied` con default `true`, índice `(store_id, sold_at)`.
+2. Aplicar `043_manual_sales.sql`: ampliación del `CHECK` de canal, `sold_at` con backfill desde `created_at`, `stock_applied` con default `true`, índice `(store_id, sold_at)`.
 3. Regenerar tipos y desplegar. Con la columna backfilleada, las métricas dan exactamente los mismos números que antes del cambio — conviene verificarlo comparando un rango antes y después.
 4. **Rollback**: revertir el `CHECK` requiere que no existan filas con `channel = 'manual'`. Si ya se cargaron ventas manuales, el rollback implica borrarlas primero. Es el único paso no trivialmente reversible del change y hay que tenerlo presente antes de aplicar en producción.
 

@@ -239,6 +239,7 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
       unit_price_cents: i.unit_price_cents,
       cost_at_purchase: i.cost_at_purchase,
       quantity: i.quantity,
+      cost_is_estimated: i.cost_is_estimated,
     }))
   );
   const showOrderMargin = allowCostTracking && orderMargin.margin_pct !== null;
@@ -411,6 +412,11 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
                 <p className="text-xs text-white/50">Margen</p>
                 <p className="text-sm text-[#FBF7EC]">{formatPercent(orderMargin.margin_pct as number)}</p>
               </div>
+              {orderMargin.has_estimated_cost && (
+                <p className="text-xs text-amber-400/80">
+                  Costo estimado: se completó después de la venta, no es el costo real de ese momento.
+                </p>
+              )}
             </div>
           )}
         </div>

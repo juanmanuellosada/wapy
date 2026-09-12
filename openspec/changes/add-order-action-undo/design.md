@@ -92,7 +92,7 @@ El registro se escribe **después** de que la acción se aplicó con éxito, y s
 
 ## Migration Plan
 
-1. Aplicar `043_order_action_log.sql`: tabla nueva más sus policies. No toca `orders` ni ninguna tabla existente, así que no hay riesgo sobre datos actuales.
+1. Aplicar `044_order_action_log.sql`: tabla nueva más sus policies. No toca `orders` ni ninguna tabla existente, así que no hay riesgo sobre datos actuales.
 2. Desplegar. Sin operaciones registradas la lista de acciones recientes está vacía y el panel se comporta como hoy.
 3. El registro empieza a poblarse con el uso; no hay backfill posible ni deseable.
 4. **Rollback**: `DROP TABLE order_action_log`. Se pierde la posibilidad de deshacer, no se pierde ningún pedido. El cambio de retorno de `batchDeleteOrders` es de código y se revierte con el despliegue.

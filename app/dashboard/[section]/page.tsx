@@ -127,7 +127,7 @@ export default async function DashboardSectionPage({
     revenue_by_day: [],
     top_products: [],
     orders_by_section: [],
-    margin: { costed_revenue_cents: 0, cost_cents: 0, profit_cents: 0, margin_pct: null, cost_coverage_pct: 0 },
+    margin: { costed_revenue_cents: 0, cost_cents: 0, profit_cents: 0, margin_pct: null, cost_coverage_pct: 0, has_estimated_cost: false },
   };
 
   const couponsResult = section === 'coupons'

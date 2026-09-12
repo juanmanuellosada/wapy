@@ -23,7 +23,7 @@ Muchas ventas de un negocio chico no pasan por el sitio: la vecina que pasa a bu
 ## Impact
 
 - **Depende de** `add-product-cost-tracking`: usa `order_items.cost_at_purchase` y `resolveEffectiveCost`. Hay que implementarlo después de ese change, no en paralelo.
-- **DB (nueva migración `042`)**: ampliar el `CHECK` de `orders.channel` a `('whatsapp','mercadopago','manual')`; `orders.sold_at timestamptz NOT NULL DEFAULT now()` con backfill `sold_at = created_at`; `orders.stock_applied boolean NOT NULL DEFAULT true` (el default refleja lo que hacen hoy todos los pedidos); índice por `(store_id, sold_at)` para las métricas.
+- **DB (nueva migración `043`)**: ampliar el `CHECK` de `orders.channel` a `('whatsapp','mercadopago','manual')`; `orders.sold_at timestamptz NOT NULL DEFAULT now()` con backfill `sold_at = created_at`; `orders.stock_applied boolean NOT NULL DEFAULT true` (el default refleja lo que hacen hoy todos los pedidos); índice por `(store_id, sold_at)` para las métricas.
 - **Trigger existente**: `prevent_order_payment_column_writes` (031) restringe la escritura de `channel` y `payment_status` a `service_role`. La creación manual pasa por una server action con el admin client, igual que `createPendingOrder`, así que no hay que tocar el trigger.
 - **Métricas**: `lib/store/orders/actions.ts` — `getOrderStats` y `getRangeStart` cambian de `created_at` a `sold_at`, incluido el bucketing por día en zona horaria de Argentina.
 - **Pedidos**: nueva server action de creación manual; `fetchFilteredOrders`, `listOrders`, `exportOrdersCsv` y los filtros por fecha pasan a `sold_at`; `replenishOrderStock` consulta `stock_applied` antes de reponer.

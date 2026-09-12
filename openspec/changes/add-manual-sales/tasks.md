@@ -4,7 +4,7 @@
 
 ## 1. Migración
 
-- [ ] 1.1 Crear `042_manual_sales.sql` con cabecera comentada, referenciando el `design.md` de este change
+- [ ] 1.1 Crear `043_manual_sales.sql` con cabecera comentada, referenciando el `design.md` de este change
 - [ ] 1.2 Ampliar el CHECK de `orders.channel` a `('whatsapp','mercadopago','manual')`
 - [ ] 1.3 `orders.sold_at timestamptz NOT NULL DEFAULT now()` con backfill `UPDATE orders SET sold_at = created_at`
 - [ ] 1.4 `orders.stock_applied boolean NOT NULL DEFAULT true` (el default describe el comportamiento de todos los pedidos existentes)

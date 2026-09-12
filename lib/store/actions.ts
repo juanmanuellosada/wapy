@@ -16,7 +16,7 @@ import type { PlanId } from '@/lib/plans/limits';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 import { getSubscriptionState } from '@/lib/subscription/state';
 import { validateProductFields, checkBatchFits, validatePriceTiers } from '@/lib/store/product-validation';
-import type { PriceTier } from '@/lib/store/pricing';
+import { resolveEffectiveCost, type PriceTier } from '@/lib/store/pricing';
 import { MAX_PHOTOS_PER_ZIP } from '@/lib/store/bulk-import/zip';
 import { SORT_MODE_IDS, type SortMode } from '@/lib/storefront/sorting';
 
@@ -616,6 +616,117 @@ export async function saveStoreProduct(
 
   revalidatePath('/dashboard', 'layout');
   return { ok: true, productId: newProduct.id };
+}
+
+// ---------------------------------------------------------------------------
+// countUncostedOrders / backfillProductCost — completar el costo de pedidos
+// anteriores al guardar el costo de un producto (add-cost-backfill-on-save).
+//
+// Ambas operan sobre TODAS las líneas de `product_id`, sin importar si el
+// costo se cargó en el producto o en una de sus variantes (D4): el costo
+// efectivo de cada línea se resuelve con la misma regla que la creación de
+// pedidos, `resolveEffectiveCost` (override de variante, si no el del
+// producto). Filtrar por un `product_id` puntual ya excluye por construcción
+// las líneas de un producto borrado del catálogo: al borrarse, `order_items
+// .product_id` queda en NULL (ON DELETE SET NULL) y nunca matchea este id.
+// ---------------------------------------------------------------------------
+
+export type CountUncostedOrdersResult =
+  | { ok: true; lineCount: number; orderCount: number }
+  | { error: string };
+
+export async function countUncostedOrders(productId: string): Promise<CountUncostedOrdersResult> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const { allowCostTracking } = getPlanLimits((store as unknown as { plan: PlanId | null }).plan);
+  if (!allowCostTracking) return { error: 'Tu plan no incluye el costo de mercadería.' };
+
+  const admin = createAdminClient();
+
+  const { data: product } = await admin
+    .from('products')
+    .select('id')
+    .eq('id', productId)
+    .eq('store_id', store.id)
+    .maybeSingle();
+  if (!product) return { error: 'Producto no encontrado.' };
+
+  const { data: rows, error } = await admin
+    .from('order_items')
+    .select('order_id')
+    .eq('product_id', productId)
+    .is('cost_at_purchase', null);
+  if (error) return { error: 'No se pudieron contar los pedidos sin costo.' };
+
+  const orderIds = new Set((rows ?? []).map((r) => r.order_id));
+  return { ok: true, lineCount: rows?.length ?? 0, orderCount: orderIds.size };
+}
+
+export type BackfillProductCostResult = { ok: true; updated: number } | { error: string };
+
+export async function backfillProductCost(productId: string): Promise<BackfillProductCostResult> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  const { allowCostTracking } = getPlanLimits((store as unknown as { plan: PlanId | null }).plan);
+  if (!allowCostTracking) return { error: 'Tu plan no incluye el costo de mercadería.' };
+
+  const admin = createAdminClient();
+
+  const { data: product } = await admin
+    .from('products')
+    .select('id, cost_cents')
+    .eq('id', productId)
+    .eq('store_id', store.id)
+    .maybeSingle();
+  if (!product) return { error: 'Producto no encontrado.' };
+
+  const { data: variants } = await admin
+    .from('product_variants')
+    .select('id, cost_override')
+    .eq('product_id', productId);
+  const costOverrideByVariantId = new Map((variants ?? []).map((v) => [v.id, v.cost_override] as const));
+
+  const { data: items, error } = await admin
+    .from('order_items')
+    .select('id, variant_id')
+    .eq('product_id', productId)
+    .is('cost_at_purchase', null);
+  if (error) return { error: 'No se pudieron completar los pedidos.' };
+
+  // D1, innegociable: solo se tocan líneas sin costo. Se agrupan por el costo
+  // efectivo que les corresponde para actualizarlas en una sola tanda por
+  // valor (una variante con override propio puede diferir del producto).
+  const idsByCost = new Map<number, string[]>();
+  for (const item of items ?? []) {
+    const effectiveCost = resolveEffectiveCost(
+      { cost_cents: product.cost_cents },
+      item.variant_id ? { cost_override: costOverrideByVariantId.get(item.variant_id) ?? null } : null
+    );
+    if (effectiveCost == null) continue; // sin costo en ningún nivel: queda sin completar
+    const ids = idsByCost.get(effectiveCost) ?? [];
+    ids.push(item.id);
+    idsByCost.set(effectiveCost, ids);
+  }
+
+  let updated = 0;
+  for (const [cost, ids] of idsByCost) {
+    // El `.is('cost_at_purchase', null)` se repite acá a propósito: es la
+    // misma condición innegociable (D1) aplicada en el UPDATE, no solo en el
+    // SELECT previo — nunca se pisa un costo ya congelado.
+    const { data: updatedRows, error: updateError } = await admin
+      .from('order_items')
+      .update({ cost_at_purchase: cost, cost_is_estimated: true })
+      .in('id', ids)
+      .is('cost_at_purchase', null)
+      .select('id');
+    if (updateError) return { error: 'No se pudieron completar los pedidos.' };
+    updated += updatedRows?.length ?? 0;
+  }
+
+  revalidatePath('/dashboard', 'layout');
+  return { ok: true, updated };
 }
 
 // ---------------------------------------------------------------------------

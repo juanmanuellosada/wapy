@@ -458,6 +458,7 @@ describe('getOrderStats', () => {
       profit_cents: 0,
       margin_pct: null,
       cost_coverage_pct: 0,
+      has_estimated_cost: false,
     });
     // El KPI de ingresos no depende del plan.
     expect(result.kpis.revenue_cents).toBe(100_000);

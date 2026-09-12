@@ -1,6 +1,6 @@
 ## 1. Migración
 
-- [ ] 1.1 Crear `043_order_action_log.sql` con cabecera comentada, referenciando el `design.md` de este change
+- [ ] 1.1 Crear `044_order_action_log.sql` con cabecera comentada, referenciando el `design.md` de este change
 - [ ] 1.2 Tabla `order_action_log`: tienda, tipo de acción, momento, autor, `undone_at`, y las entradas afectadas con estado previo (`status`, `cancelled_by`, `deleted_at`) y los flags `stock_restored` / `coupon_reverted`
 - [ ] 1.3 Índice que sirva a la consulta de la ventana: por tienda, no deshechas, ordenadas por momento descendente
 - [ ] 1.4 RLS con el patrón de tabla hija de `stores` (`auth.uid() IN (SELECT owner_id FROM stores WHERE id = store_id)`) más la policy de superadmin, siguiendo `019_orders.sql:47`

@@ -938,6 +938,9 @@ export type OrderWithItems = {
     section_id: string | null;
     section_name: string | null;
     cost_at_purchase: number | null;
+    // Completado después de la venta, no congelado al comprar
+    // (add-cost-backfill-on-save, D3).
+    cost_is_estimated: boolean;
   }>;
 };
 
@@ -1237,6 +1240,7 @@ const EMPTY_COST_MARGIN: CostMarginResult = {
   profit_cents: 0,
   margin_pct: null,
   cost_coverage_pct: 0,
+  has_estimated_cost: false,
 };
 
 function getRangeStart(range: OrderStatsRange): Date {
@@ -1298,7 +1302,7 @@ export async function getOrderStats(
   // como venta en los KPIs: items de pedidos confirmados o entregados.
   const { data: items } = await admin
     .from('order_items')
-    .select('order_id, product_name, unit_price_cents, quantity, section_name, cost_at_purchase')
+    .select('order_id, product_name, unit_price_cents, quantity, section_name, cost_at_purchase, cost_is_estimated')
     .in('order_id', confirmedOrders.map((o) => o.id));
 
   const allItems = items ?? [];

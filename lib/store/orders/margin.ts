@@ -18,6 +18,11 @@ export interface CostableLine {
   unit_price_cents: number;
   cost_at_purchase: number | null;
   quantity: number;
+  // Completado después de la venta vía backfillProductCost, en vez de
+  // congelado al crear el pedido (add-cost-backfill-on-save, D3/D5). No
+  // afecta ningún cálculo de este helper, solo si se avisa el origen del
+  // número. Opcional para no romper líneas anteriores a esta columna.
+  cost_is_estimated?: boolean;
 }
 
 export interface CostMarginResult {
@@ -28,12 +33,15 @@ export interface CostMarginResult {
   margin_pct: number | null;
   /** 0 a 1. 0 cuando ninguna línea del conjunto tiene costo congelado. */
   cost_coverage_pct: number;
+  /** true si al menos una línea con costo proviene de un completado posterior, no de la venta. */
+  has_estimated_cost: boolean;
 }
 
 export function computeCostMargin(lines: readonly CostableLine[]): CostMarginResult {
   let totalRevenueCents = 0;
   let costedRevenueCents = 0;
   let costCents = 0;
+  let hasEstimatedCost = false;
 
   for (const line of lines) {
     const lineRevenue = line.unit_price_cents * line.quantity;
@@ -41,6 +49,7 @@ export function computeCostMargin(lines: readonly CostableLine[]): CostMarginRes
     if (line.cost_at_purchase == null) continue;
     costedRevenueCents += lineRevenue;
     costCents += line.cost_at_purchase * line.quantity;
+    if (line.cost_is_estimated) hasEstimatedCost = true;
   }
 
   const profitCents = costedRevenueCents - costCents;
@@ -51,5 +60,6 @@ export function computeCostMargin(lines: readonly CostableLine[]): CostMarginRes
     profit_cents: profitCents,
     margin_pct: costedRevenueCents > 0 ? profitCents / costedRevenueCents : null,
     cost_coverage_pct: totalRevenueCents > 0 ? costedRevenueCents / totalRevenueCents : 0,
+    has_estimated_cost: hasEstimatedCost,
   };
 }

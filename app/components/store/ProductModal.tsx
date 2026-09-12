@@ -10,7 +10,9 @@ import { VariantsSection } from './VariantsSection';
 import { Select } from '@/app/components/Select';
 import { deleteImage } from '@/lib/onboarding/storage';
 import { uploadProductImageAction } from '@/lib/onboarding/upload-actions';
-import { saveStoreProduct } from '@/lib/store/actions';
+import { saveStoreProduct, countUncostedOrders, backfillProductCost } from '@/lib/store/actions';
+import { ConfirmModal } from '@/app/components/ConfirmModal';
+import { toast } from '@/lib/toast';
 import type { Section, Product } from '@/lib/onboarding/state';
 import type { PriceTier } from '@/lib/store/pricing';
 import {
@@ -84,6 +86,15 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
   const [hasVariants, setHasVariants] = useState(false);
   const [variantsTotalStock, setVariantsTotalStock] = useState(0);
   const [tierDrafts, setTierDrafts] = useState<TierDraft[]>(() => tiersToDrafts(priceTiers ?? []));
+  // Ofrecimiento de completar pedidos anteriores (add-cost-backfill-on-save,
+  // D2): se muestra DESPUÉS de guardar el costo, y el guardado ya quedó firme
+  // para cuando este estado se llena — aceptar o rechazar es una decisión aparte.
+  const [pendingBackfill, setPendingBackfill] = useState<{
+    productId: string;
+    orderCount: number;
+    savedProduct: Product;
+    savedTiers: PriceTier[];
+  } | null>(null);
 
   const handleVariantsChange = useCallback(
     (hv: boolean, total: number) => {
@@ -210,7 +221,39 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
       ...(({ min_quantity, qty_step } as unknown as object)),
     } as unknown as Product;
 
+    // Se guardó un costo (no se lo dejó vacío ni sin tocar): ofrecer completar
+    // los pedidos anteriores de este producto (add-cost-backfill-on-save, D2).
+    // El guardado de arriba ya es firme; esto es una decisión aparte.
+    if (cost_cents != null) {
+      const countResult = await countUncostedOrders(result.productId);
+      if ('ok' in countResult && countResult.orderCount > 0) {
+        setPendingBackfill({
+          productId: result.productId,
+          orderCount: countResult.orderCount,
+          savedProduct,
+          savedTiers: price_tiers ?? [],
+        });
+        setSaving(false);
+        return;
+      }
+    }
+
     onSaved(savedProduct, price_tiers ?? []);
+  };
+
+  const handleBackfillConfirm = async () => {
+    if (!pendingBackfill) return;
+    const result = await backfillProductCost(pendingBackfill.productId);
+    if ('error' in result) toast.error(result.error);
+    else toast.success('Pedidos anteriores completados.');
+    onSaved(pendingBackfill.savedProduct, pendingBackfill.savedTiers);
+    setPendingBackfill(null);
+  };
+
+  const handleBackfillDecline = () => {
+    if (!pendingBackfill) return;
+    onSaved(pendingBackfill.savedProduct, pendingBackfill.savedTiers);
+    setPendingBackfill(null);
   };
 
   return (
@@ -537,6 +580,18 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
           </div>
         </form>
       </div>
+
+      {pendingBackfill && (
+        <ConfirmModal
+          open
+          onClose={handleBackfillDecline}
+          onConfirm={handleBackfillConfirm}
+          title="Completar pedidos anteriores"
+          message={`Este producto tiene ${pendingBackfill.orderCount} pedido${pendingBackfill.orderCount === 1 ? '' : 's'} sin costo cargado. ¿Querés completarlos con el costo recién guardado? El resultado queda marcado como estimado, no como el costo real del momento de la venta.`}
+          confirmLabel="Completar"
+          cancelLabel="No, gracias"
+        />
+      )}
     </div>
   );
 }

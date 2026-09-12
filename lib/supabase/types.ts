@@ -117,6 +117,7 @@ export type Database = {
       order_items: {
         Row: {
           cost_at_purchase: number | null
+          cost_is_estimated: boolean
           id: string
           order_id: string
           price_at_purchase: number
@@ -131,6 +132,7 @@ export type Database = {
         }
         Insert: {
           cost_at_purchase?: number | null
+          cost_is_estimated?: boolean
           id?: string
           order_id: string
           price_at_purchase?: number
@@ -145,6 +147,7 @@ export type Database = {
         }
         Update: {
           cost_at_purchase?: number | null
+          cost_is_estimated?: boolean
           id?: string
           order_id?: string
           price_at_purchase?: number

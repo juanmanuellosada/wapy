@@ -24,7 +24,7 @@ Un clic equivocado en el panel de pedidos es definitivo. `delivered` y `cancelle
 
 ## Impact
 
-- **DB (nueva migración `043`)**: tabla `order_action_log` con `store_id`, tipo de acción, momento, autor, `undone_at`, y las entradas afectadas con su estado previo y los efectos aplicados. RLS con el patrón de tabla hija de `stores` (`auth.uid() IN (SELECT owner_id FROM stores WHERE id = store_id)`), más la policy de superadmin.
+- **DB (nueva migración `044`)**: tabla `order_action_log` con `store_id`, tipo de acción, momento, autor, `undone_at`, y las entradas afectadas con su estado previo y los efectos aplicados. RLS con el patrón de tabla hija de `stores` (`auth.uid() IN (SELECT owner_id FROM stores WHERE id = store_id)`), más la policy de superadmin.
 - **Pedidos**: `lib/store/orders/actions.ts` — registrar la operación en `updateOrderStatusInternal`, `batchUpdateOrderStatus`, `deleteOrderInternal` y `batchDeleteOrders`; nueva server action de deshacer; exportar o adaptar `deductOrderStock`, hoy privada del módulo; cambiar el retorno de `batchDeleteOrders`.
 - **UI**: `app/dashboard/components/OrdersPanel.tsx` — botón de deshacer en los seis puntos donde ya hay toast (`:241`, `:256`, `:658`, `:660`, `:694`, `:696`), lista de acciones recientes, y **reescribir el copy del modal de borrado** (`:466-467`), que hoy afirma lo contrario.
 - **Refresco**: el panel no usa realtime ni estado optimista; se repuebla con `fetchOrders` + `refreshBacklogCount` (`:587`). El deshacer sigue el mismo camino, con cuidado de que el handler del toast no capture filtros viejos por closure.

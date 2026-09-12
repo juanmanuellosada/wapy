@@ -13,7 +13,12 @@ import {
   getProductVariantsData,
 } from '@/lib/variants/actions';
 import type { OptionTypeData, VariantData } from '@/lib/variants/actions';
+// Completar pedidos anteriores (add-cost-backfill-on-save) es una operación
+// por producto, no por variante — vive en el dominio de producto aunque se
+// dispare al guardar el cost_override de una variante (D4).
+import { countUncostedOrders, backfillProductCost } from '@/lib/store/actions';
 import { compressImage, MAX_ORIGINAL_BYTES, MAX_FINAL_BYTES } from '@/lib/images/compress';
+import { ConfirmModal } from '@/app/components/ConfirmModal';
 
 // ---------------------------------------------------------------------------
 // Validation constants (mirrors server D10)
@@ -171,6 +176,9 @@ export function VariantsSection({ productId, productPriceCents, productCostCents
   // ---- global mutating flag: serializes structural changes ----
   const [mutating, setMutating] = useState(false);
 
+  // ---- ofrecimiento de completar pedidos anteriores (add-cost-backfill-on-save) ----
+  const [pendingBackfillCount, setPendingBackfillCount] = useState<number | null>(null);
+
   const hasVariants = variants.length > 0;
   const hasOptionTypes = optionTypes.length > 0;
   // For tracked variants (stock !== null) sum their stock
@@ -279,6 +287,11 @@ export function VariantsSection({ productId, productPriceCents, productCostCents
     delete errors[variantId];
     setVariantErrors(errors);
 
+    // Costo previo de ESTA variante (antes de este guardado), para saber si el
+    // costo realmente cambió: este blur también dispara con stock/precio solos,
+    // y ofrecer el backfill en esos casos sería puro ruido.
+    const previousCostOverride = variants.find((v) => v.id === variantId)?.cost_override ?? null;
+
     setSavingVariant(variantId);
     try {
       const result = await updateVariant({
@@ -306,6 +319,16 @@ export function VariantsSection({ productId, productPriceCents, productCostCents
               : v
           )
         );
+
+        // Se guardó un costo nuevo para esta variante: ofrecer completar los
+        // pedidos anteriores del producto entero (add-cost-backfill-on-save,
+        // D2/D4 — el costo se resuelve por línea, no solo para esta variante).
+        if (allowCostTracking && costOverride != null && costOverride !== previousCostOverride && productId) {
+          const countResult = await countUncostedOrders(productId);
+          if ('ok' in countResult && countResult.orderCount > 0) {
+            setPendingBackfillCount(countResult.orderCount);
+          }
+        }
       }
     } catch {
       setVariantErrors((prev) => ({ ...prev, [variantId]: 'Error al guardar.' }));
@@ -876,6 +899,24 @@ export function VariantsSection({ productId, productPriceCents, productCostCents
             ))}
           </div>
         </div>
+      )}
+
+      {pendingBackfillCount != null && (
+        <ConfirmModal
+          open
+          onClose={() => setPendingBackfillCount(null)}
+          onConfirm={async () => {
+            if (!productId) return;
+            const result = await backfillProductCost(productId);
+            if ('error' in result) toast.error(result.error);
+            else toast.success('Pedidos anteriores completados.');
+            setPendingBackfillCount(null);
+          }}
+          title="Completar pedidos anteriores"
+          message={`Este producto tiene ${pendingBackfillCount} pedido${pendingBackfillCount === 1 ? '' : 's'} sin costo cargado. ¿Querés completarlos con el costo recién guardado? El resultado queda marcado como estimado, no como el costo real del momento de la venta.`}
+          confirmLabel="Completar"
+          cancelLabel="No, gracias"
+        />
       )}
     </div>
   );

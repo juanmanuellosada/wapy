@@ -29,6 +29,7 @@ function formatPrice(cents: number): string {
     style: 'currency',
     currency: 'ARS',
     minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   }).format(cents / 100);
 }
 
@@ -220,6 +221,11 @@ export function OrdersStats({ accentColor, initialStats, initialRange }: Props) 
                 </p>
                 <p className="text-xs text-white/40 mt-1">Margen · sobre la facturación con costo</p>
               </div>
+              {margin.has_estimated_cost && (
+                <p className="text-xs text-amber-400/80 col-span-2 lg:col-span-3">
+                  Parte de la ganancia proviene de costos estimados, completados después de la venta.
+                </p>
+              )}
             </div>
           )}
 
