@@ -41,6 +41,8 @@ const {
   updateOrderStatus,
   listUndoableOrderActions,
   undoOrderAction,
+  replenishOrderStock,
+  createManualSale,
 } = await import('./actions');
 
 // Espejo del tamaño de página interno de actions.ts (no se exporta: el archivo
@@ -332,6 +334,7 @@ describe('getOrderStats', () => {
           total_cents: 1_000_000,
           discount_cents: 200_000,
           created_at: now,
+          sold_at: now,
         },
         // Entregado sin descuento: cuenta entero.
         {
@@ -341,6 +344,7 @@ describe('getOrderStats', () => {
           total_cents: 400_000,
           discount_cents: null,
           created_at: now,
+          sold_at: now,
         },
         // Pendiente: no debe sumar a ingresos ni aparecer en top_products/orders_by_section.
         {
@@ -350,6 +354,7 @@ describe('getOrderStats', () => {
           total_cents: 500_000,
           discount_cents: 0,
           created_at: now,
+          sold_at: now,
         },
         // Cancelado: tampoco debe sumar.
         {
@@ -359,6 +364,7 @@ describe('getOrderStats', () => {
           total_cents: 300_000,
           discount_cents: 0,
           created_at: now,
+          sold_at: now,
         },
       ],
       order_items: [
@@ -448,7 +454,7 @@ describe('getOrderStats', () => {
   it('sin ningún costo cargado en el período, la cobertura es cero y el margen es null', async () => {
     const admin = makeFakeAdmin({
       stores: [{ id: 's1', owner_id: 'u1', plan: 'pro' }],
-      orders: [{ id: 'o1', store_id: 's1', status: 'confirmed', total_cents: 100_000, discount_cents: 0, created_at: now }],
+      orders: [{ id: 'o1', store_id: 's1', status: 'confirmed', total_cents: 100_000, discount_cents: 0, created_at: now, sold_at: now }],
       order_items: [
         { order_id: 'o1', product_name: 'Remera', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa', cost_at_purchase: null },
       ],
@@ -481,7 +487,7 @@ describe('getOrderStats', () => {
     const admin = makeFakeAdmin({
       // Sin 'plan' → getPlanLimits(undefined) cae a 'inicial' (fail closed).
       stores: [{ id: 's1', owner_id: 'u1' }],
-      orders: [{ id: 'o1', store_id: 's1', status: 'confirmed', total_cents: 100_000, discount_cents: 0, created_at: now }],
+      orders: [{ id: 'o1', store_id: 's1', status: 'confirmed', total_cents: 100_000, discount_cents: 0, created_at: now, sold_at: now }],
       order_items: [
         { order_id: 'o1', product_name: 'Remera', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa', cost_at_purchase: 60_000 },
       ],
@@ -778,6 +784,52 @@ describe('exportOrdersCsv', () => {
     expect(rowCols[headerCols.indexOf('store_order_number')]).toBe('42');
   });
 
+  // add-manual-sales (7.2): la columna de fecha del CSV es la de VENTA
+  // (sold_at), no la de carga del registro — una venta manual cargada hoy
+  // con fecha pasada tiene que aparecer en la fila con esa fecha pasada.
+  it('la columna de fecha usa sold_at, no created_at (add-manual-sales, 7.2)', async () => {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      orders: [
+        {
+          id: 'o1',
+          store_id: 's1',
+          status: 'confirmed',
+          channel: 'manual',
+          customer_name: null,
+          total_cents: 10000,
+          currency: 'ARS',
+          notes: null,
+          created_at: '2026-09-11T09:00:00Z', // cargada hoy...
+          sold_at: '2026-09-08T15:00:00Z', // ...pero vendida el martes anterior
+          confirmed_at: null,
+          cancelled_at: null,
+          delivered_at: null,
+          cancelled_by: null,
+          payment_status: 'approved',
+          store_order_number: 7,
+          order_items: [],
+        },
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await exportOrdersCsv({});
+    if ('error' in result) throw new Error('unexpected error');
+
+    const [header, row] = result.csv.replace(/^﻿/, '').split('\r\n');
+    const headerCols = header.split(',');
+    expect(headerCols).toContain('sold_at');
+    expect(headerCols).not.toContain('created_at');
+
+    const rowCols = parseCsvRow(row);
+    const dateCol = rowCols[headerCols.indexOf('sold_at')];
+    expect(dateCol).toContain('08/09/2026'); // fecha de venta, no la de carga (11/09)
+  });
+
   it('incluye customer_phone en el header y en la fila', async () => {
     const admin = makeFakeAdmin({
       stores: [{ id: 's1', owner_id: 'u1' }],
@@ -876,7 +928,7 @@ describe('exportOrdersCsv', () => {
     const headerCols = header.split(',');
     // Las columnas previas conservan exactamente su orden y contenido.
     expect(headerCols.slice(0, 11)).toEqual([
-      'id', 'store_order_number', 'created_at', 'status', 'customer_name',
+      'id', 'store_order_number', 'sold_at', 'status', 'customer_name',
       'customer_phone', 'total', 'currency', 'items_count', 'items_summary', 'notes',
     ]);
     expect(headerCols.slice(11)).toEqual(['cost_total', 'profit_total', 'margin_pct']);
@@ -1038,6 +1090,7 @@ describe('deleted_at — un pedido borrado no aparece en ningún lado (2.5)', ()
       currency: 'ARS',
       notes: null,
       created_at: new Date().toISOString(),
+      sold_at: new Date().toISOString(),
       confirmed_at: null,
       cancelled_at: null,
       delivered_at: null,
@@ -1714,5 +1767,403 @@ describe('undoOrderAction', () => {
 
     const result = await undoOrderAction('op1');
     expect(result).toEqual({ error: 'not_found' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// add-manual-sales, grupo 2 (tareas 2.3/2.4) — sold_at reemplaza a created_at
+// como eje temporal de getOrderStats.
+// ---------------------------------------------------------------------------
+
+describe('getOrderStats usa sold_at, no created_at (add-manual-sales, 2.3/2.4)', () => {
+  function setup(tables: Parameters<typeof makeFakeAdmin>[0]) {
+    const admin = makeFakeAdmin({ stores: [{ id: 's1', owner_id: 'u1' }], ...tables });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+    return admin;
+  }
+
+  // 2.3: una venta cargada hoy pero con sold_at pasado cae en el día en que
+  // ocurrió, no en el día en que se cargó (created_at).
+  it('una venta con sold_at pasado cae en el día correcto de revenue_by_day, no en el de created_at', async () => {
+    const today = new Date();
+    const pastDate = new Date();
+    pastDate.setHours(12, 0, 0, 0);
+    pastDate.setDate(pastDate.getDate() - 5);
+
+    setup({
+      orders: [
+        {
+          id: 'o1',
+          store_id: 's1',
+          status: 'confirmed',
+          total_cents: 50_000,
+          discount_cents: 0,
+          created_at: today.toISOString(), // cargada hoy...
+          sold_at: pastDate.toISOString(), // ...pero vendida hace 5 días
+        },
+      ],
+      order_items: [],
+    });
+
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+
+    const dayKey = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const pastEntry = result.revenue_by_day.find((r) => r.date === dayKey(pastDate));
+    const todayEntry = result.revenue_by_day.find((r) => r.date === dayKey(today));
+
+    expect(pastEntry?.cents).toBe(50_000);
+    expect(todayEntry?.cents).toBe(0);
+  });
+
+  // 2.4: no-regresión — con sold_at backfilleado a created_at (lo que hace la
+  // migración 044 para todo pedido preexistente), las métricas dan
+  // exactamente los mismos valores que daban antes del sweep a sold_at (mismo
+  // fixture que la suite original de getOrderStats, que ejercitaba estos
+  // números keying off created_at).
+  it('con sold_at = created_at (pedidos preexistentes backfilleados), las métricas no cambian', async () => {
+    const now = new Date().toISOString();
+    setup({
+      stores: [{ id: 's1', owner_id: 'u1', plan: 'pro' }],
+      orders: [
+        { id: 'o1', store_id: 's1', status: 'confirmed', total_cents: 1_000_000, discount_cents: 200_000, created_at: now, sold_at: now },
+        { id: 'o2', store_id: 's1', status: 'delivered', total_cents: 400_000, discount_cents: null, created_at: now, sold_at: now },
+        { id: 'o3', store_id: 's1', status: 'pending', total_cents: 500_000, discount_cents: 0, created_at: now, sold_at: now },
+        { id: 'o4', store_id: 's1', status: 'cancelled', total_cents: 300_000, discount_cents: 0, created_at: now, sold_at: now },
+      ],
+      order_items: [
+        { order_id: 'o1', product_name: 'Remera', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa', cost_at_purchase: 60_000 },
+        { order_id: 'o2', product_name: 'Remera', unit_price_cents: 100_000, quantity: 3, section_name: 'Calzado', cost_at_purchase: null },
+        { order_id: 'o3', product_name: 'Campera', unit_price_cents: 100_000, quantity: 5, section_name: 'Ropa', cost_at_purchase: 50_000 },
+        { order_id: 'o4', product_name: 'Pantalón', unit_price_cents: 100_000, quantity: 2, section_name: 'Ropa', cost_at_purchase: 50_000 },
+      ],
+    });
+
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+
+    // Mismos números que verificaba la suite original de getOrderStats sobre
+    // este fixture (antes del sweep, cuando la consulta usaba created_at).
+    expect(result.kpis.revenue_cents).toBe(1_200_000);
+    expect(result.kpis.order_count).toBe(4);
+    const names = result.top_products.map((p) => p.name);
+    expect(names).toContain('Remera');
+    expect(names).not.toContain('Campera');
+    expect(names).not.toContain('Pantalón');
+    const remera = result.top_products.find((p) => p.name === 'Remera');
+    expect(remera?.units).toBe(1 + 3);
+    expect(result.margin.cost_cents).toBe(60_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// add-manual-sales, tarea 7.3 — las ventas manuales aportan a top_products y
+// orders_by_section como cualquier otro pedido confirmado; las líneas sueltas
+// (sin producto ni sección) caen en el grupo "Sin sección" con etiqueta
+// clara, no en un hueco vacío.
+// ---------------------------------------------------------------------------
+
+describe('getOrderStats incluye ventas manuales, con líneas sueltas agrupadas en "Sin sección" (add-manual-sales, 7.3)', () => {
+  it('un pedido manual confirmado suma a top_products y a orders_by_section, y su línea suelta cae en "Sin sección"', async () => {
+    const now = new Date().toISOString();
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      orders: [
+        { id: 'o1', store_id: 's1', status: 'confirmed', channel: 'manual', total_cents: 18_000, discount_cents: 0, created_at: now, sold_at: now },
+      ],
+      order_items: [
+        // Línea de catálogo: tiene sección, como cualquier pedido del sitio.
+        { order_id: 'o1', product_name: 'Remera', unit_price_cents: 10_000, quantity: 1, section_name: 'Ropa', cost_at_purchase: null },
+        // Línea suelta (sin producto en el catálogo): section_name es null.
+        { order_id: 'o1', product_name: 'Remera lisa (sin catálogo)', unit_price_cents: 8_000, quantity: 1, section_name: null, cost_at_purchase: null },
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+
+    const names = result.top_products.map((p) => p.name);
+    expect(names).toContain('Remera');
+    expect(names).toContain('Remera lisa (sin catálogo)');
+
+    const sections = Object.fromEntries(result.orders_by_section.map((s) => [s.section_name, s.count]));
+    expect(sections['Ropa']).toBe(1);
+    expect(sections['Sin sección']).toBe(1); // la línea suelta, con una etiqueta clara, no un hueco vacío
+  });
+});
+
+// ---------------------------------------------------------------------------
+// add-manual-sales, grupo 3 (tarea 3.8) — alta de una venta manual.
+// ---------------------------------------------------------------------------
+
+describe('createManualSale (add-manual-sales, 3.8)', () => {
+  function setup(tables: Parameters<typeof makeFakeAdmin>[0]) {
+    const admin = makeFakeAdmin({ ...tables });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+    return admin;
+  }
+
+  function proStore(overrides: Row = {}): Row {
+    return { id: 's1', owner_id: 'u1', plan: 'pro', ...overrides };
+  }
+
+  it('venta de catálogo: descuenta stock, congela el costo del producto y no confía en un total enviado por el cliente', async () => {
+    const admin = setup({
+      stores: [proStore()],
+      products: [{ id: 'p1', store_id: 's1', name: 'Remera', cost_cents: 6_000, section_id: null, sections: null, stock: 10 }],
+    });
+
+    const result = await createManualSale({
+      sold_at: new Date().toISOString(),
+      lines: [{ product_id: 'p1', quantity: 2, unit_price_cents: 10_000 }],
+    });
+
+    if ('error' in result) throw new Error(`unexpected error: ${JSON.stringify(result)}`);
+    const order = admin.__state.orders.find((o) => o.id === result.order_id)!;
+    expect(order.channel).toBe('manual');
+    expect(order.status).toBe('confirmed');
+    expect(order.payment_status).toBe('approved');
+    expect(order.total_cents).toBe(20_000); // 2 × 10.000, calculado server-side
+    expect(order.stock_applied).toBe(true);
+    expect(admin.__state.products[0].stock).toBe(8); // 10 - 2
+
+    const item = admin.__state.order_items.find((i) => i.order_id === result.order_id)!;
+    expect(item.cost_at_purchase).toBe(6_000); // costo del catálogo, no lo que mandó el cliente
+    expect(item.cost_is_estimated).toBe(false);
+  });
+
+  it('venta con una línea suelta: no toca stock ni catálogo, y acepta costo escrito a mano', async () => {
+    const admin = setup({ stores: [proStore()] });
+
+    const result = await createManualSale({
+      sold_at: new Date().toISOString(),
+      lines: [{ name: 'Remera lisa (sin catálogo)', quantity: 2, unit_price_cents: 8_000, cost_cents: 3_000 }],
+    });
+
+    if ('error' in result) throw new Error(`unexpected error: ${JSON.stringify(result)}`);
+    const order = admin.__state.orders.find((o) => o.id === result.order_id)!;
+    expect(order.total_cents).toBe(16_000);
+    expect(order.stock_applied).toBe(true); // el checkbox estaba prendido, pero no había nada que descontar
+
+    const item = admin.__state.order_items.find((i) => i.order_id === result.order_id)!;
+    expect(item.product_id).toBeNull();
+    expect(item.cost_at_purchase).toBe(3_000);
+    expect(item.cost_is_estimated).toBe(false);
+  });
+
+  it('venta mixta (catálogo + suelta): el total server-side suma ambas líneas, sin depender de ningún total enviado por el cliente', async () => {
+    const admin = setup({
+      stores: [proStore()],
+      products: [{ id: 'p1', store_id: 's1', name: 'Remera', cost_cents: null, section_id: null, sections: null, stock: null }],
+    });
+
+    // createManualSale no acepta un total como input (Decisión D6): el único
+    // total posible es el que el servidor suma a partir de las líneas.
+    const result = await createManualSale({
+      sold_at: new Date().toISOString(),
+      discount_stock: false,
+      lines: [
+        { product_id: 'p1', quantity: 1, unit_price_cents: 12_000 },
+        { name: 'Suelta', quantity: 3, unit_price_cents: 1_000 },
+      ],
+    });
+
+    if ('error' in result) throw new Error(`unexpected error: ${JSON.stringify(result)}`);
+    const order = admin.__state.orders.find((o) => o.id === result.order_id)!;
+    expect(order.total_cents).toBe(12_000 * 1 + 1_000 * 3);
+    const items = admin.__state.order_items.filter((i) => i.order_id === result.order_id);
+    expect(items).toHaveLength(2);
+  });
+
+  it('el checkbox de stock apagado no descuenta nada y queda registrado en stock_applied', async () => {
+    const admin = setup({
+      stores: [proStore()],
+      products: [{ id: 'p1', store_id: 's1', name: 'Remera', cost_cents: null, section_id: null, sections: null, stock: 10 }],
+    });
+
+    const result = await createManualSale({
+      sold_at: new Date().toISOString(),
+      discount_stock: false,
+      lines: [{ product_id: 'p1', quantity: 4, unit_price_cents: 5_000 }],
+    });
+
+    if ('error' in result) throw new Error(`unexpected error: ${JSON.stringify(result)}`);
+    const order = admin.__state.orders.find((o) => o.id === result.order_id)!;
+    expect(order.stock_applied).toBe(false);
+    expect(admin.__state.products[0].stock).toBe(10); // sin tocar
+  });
+
+  it('rechaza una fecha futura sin crear ningún pedido', async () => {
+    const admin = setup({ stores: [proStore()] });
+    const future = new Date();
+    future.setDate(future.getDate() + 1);
+
+    const result = await createManualSale({
+      sold_at: future.toISOString(),
+      lines: [{ name: 'Suelta', quantity: 1, unit_price_cents: 1_000 }],
+    });
+
+    expect(result).toEqual({ error: 'future_date' });
+    expect(admin.__state.orders).toHaveLength(0);
+  });
+
+  it('rechaza una venta sin líneas', async () => {
+    setup({ stores: [proStore()] });
+
+    const result = await createManualSale({ sold_at: new Date().toISOString(), lines: [] });
+    expect(result).toEqual({ error: 'no_valid_items' });
+  });
+
+  it('rechaza un producto que pertenece a otra tienda', async () => {
+    const admin = setup({
+      stores: [proStore()],
+      products: [{ id: 'p_other', name: 'Ajeno', cost_cents: null, section_id: null, sections: null, stock: 10, store_id: 'OTHER_STORE' }],
+    });
+
+    const result = await createManualSale({
+      sold_at: new Date().toISOString(),
+      lines: [{ product_id: 'p_other', quantity: 1, unit_price_cents: 1_000 }],
+    });
+
+    expect(result).toEqual({ error: 'product_not_found' });
+    expect(admin.__state.orders).toHaveLength(0);
+  });
+
+  it('rechaza la carga si la tienda no es Pro', async () => {
+    const admin = setup({ stores: [{ id: 's1', owner_id: 'u1', plan: 'medio' }] });
+
+    const result = await createManualSale({
+      sold_at: new Date().toISOString(),
+      lines: [{ name: 'Suelta', quantity: 1, unit_price_cents: 1_000 }],
+    });
+
+    expect(result).toEqual({ error: 'not_pro' });
+    expect(admin.__state.orders).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// add-manual-sales, grupo 4 (tarea 4.3) — stock_applied gobierna la
+// reposición, incluida la cadena completa borrar → deshacer.
+// ---------------------------------------------------------------------------
+
+describe('stock_applied gobierna replenishOrderStock (add-manual-sales, 4.3)', () => {
+  function manualOrder(id: string, overrides: Row = {}): Row {
+    return {
+      id,
+      store_id: 's1',
+      status: 'confirmed',
+      channel: 'manual',
+      cancelled_by: null,
+      deleted_at: null,
+      coupon_code: null,
+      coupon_counted: false,
+      stock_applied: true,
+      ...overrides,
+    };
+  }
+
+  function setup(tables: Parameters<typeof makeFakeAdmin>[0]) {
+    const admin = makeFakeAdmin({ stores: [{ id: 's1', owner_id: 'u1' }], ...tables });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+    return admin;
+  }
+
+  it('cancelar una venta manual sin descuento de stock no repone nada', async () => {
+    const admin = setup({
+      orders: [manualOrder('o1', { stock_applied: false })],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    const result = await updateOrderStatus('o1', 'cancelled');
+    if (!('ok' in result)) throw new Error('unexpected error');
+
+    expect(admin.__state.products[0].stock).toBe(10);
+    const entry = admin.__state.order_action_log[0].entries[0];
+    expect(entry.stock_restored).toBe(false);
+  });
+
+  it('borrar una venta manual sin descuento de stock no repone nada', async () => {
+    const admin = setup({
+      orders: [manualOrder('o1', { stock_applied: false })],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    const result = await deleteOrder('o1');
+    if (!('ok' in result)) throw new Error('unexpected error');
+
+    expect(admin.__state.products[0].stock).toBe(10);
+  });
+
+  it('cancelar una venta manual con descuento de stock repone exactamente una vez', async () => {
+    const admin = setup({
+      orders: [manualOrder('o1', { stock_applied: true })],
+      order_items: [{ order_id: 'o1', product_id: 'p1', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 7 }],
+    });
+
+    const result = await updateOrderStatus('o1', 'cancelled');
+    if (!('ok' in result)) throw new Error('unexpected error');
+    expect(admin.__state.products[0].stock).toBe(10);
+
+    // Intentar reponer de nuevo no-opea: el status ya es 'cancelled'.
+    await replenishOrderStock('o1');
+    expect(admin.__state.products[0].stock).toBe(10);
+  });
+
+  it('una línea suelta (sin producto) nunca toca stock aunque stock_applied sea true', async () => {
+    const admin = setup({
+      orders: [manualOrder('o1', { stock_applied: true })],
+      order_items: [{ order_id: 'o1', product_id: null, variant_id: null, quantity: 2 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    const result = await deleteOrder('o1');
+    if (!('ok' in result)) throw new Error('unexpected error');
+    expect(admin.__state.products[0].stock).toBe(10);
+  });
+
+  // Cadena completa exigida por el orquestador: borrar una venta manual que
+  // NO había descontado stock, deshacer ese borrado, y verificar que el
+  // stock queda igual en los tres puntos (antes, después de borrar, después
+  // de deshacer) — nunca se descuenta algo que nunca se había repuesto.
+  it('borrar sin descuento de stock y deshacer el borrado no descuenta ni repone stock en ningún punto', async () => {
+    const admin = setup({
+      orders: [manualOrder('o1', { stock_applied: false })],
+      order_items: [{ order_id: 'o1', product_id: 'p1', product_name: 'Remera', variant_id: null, quantity: 3 }],
+      products: [{ id: 'p1', stock: 10 }],
+    });
+
+    expect(admin.__state.products[0].stock).toBe(10); // antes de borrar
+
+    const deleteResult = await deleteOrder('o1');
+    if (!('ok' in deleteResult)) throw new Error('unexpected error');
+    expect(admin.__state.products[0].stock).toBe(10); // después de borrar: no se repuso nada
+    expect(admin.__state.orders[0].deleted_at).not.toBeNull();
+
+    expect(deleteResult.operationId).not.toBeNull();
+    const undoResult = await undoOrderAction(deleteResult.operationId as string);
+    if ('error' in undoResult) throw new Error('unexpected error');
+    expect(undoResult.undone).toBe(1);
+
+    expect(admin.__state.products[0].stock).toBe(10); // después de deshacer: tampoco se descontó
+    expect(admin.__state.orders[0].deleted_at).toBeNull();
   });
 });

@@ -215,6 +215,7 @@ export default async function DashboardSectionPage({
             initialBacklogCount={initialBacklogCount}
             waLifecycleEffectiveFrom={waLifecycleEffectiveFrom}
             allowCostTracking={limits.allowCostTracking}
+            allowManualSales={limits.allowManualSales}
           />
         </>
       )}

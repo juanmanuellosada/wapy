@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
-import { resolveTieredPrice, resolveEffectiveCost, tierGroupKey, type PriceTier } from '@/lib/store/pricing';
+import { resolveTieredPrice, resolveEffectivePrice, resolveEffectiveCost, tierGroupKey, type PriceTier } from '@/lib/store/pricing';
 import { computeCostMargin, type CostMarginResult } from './margin';
 import { customerPhoneSchema } from '@/lib/store/whatsapp/customerPhone';
 import { canReactivateOrder, type OrderCancelledBy } from './expiry';
@@ -680,15 +680,29 @@ async function replenishStockItems(
  * Replenishes stock for every item of an order. Idempotent: no-ops if the
  * order is already 'cancelled' (assumes stock was replenished when it was).
  * Must be called BEFORE the caller flips the order's status to 'cancelled'.
+ *
+ * add-manual-sales (Decisión D3): también no-opea si `stock_applied` es
+ * `false` — una venta manual que no descontó stock al crearse no tiene nada
+ * que reponer, y hacerlo igual inventaría unidades (stock fantasma). La
+ * guarda vive acá, en el helper compartido, para que cancelar y borrar la
+ * hereden sin duplicarla. `alreadyReplenished: true` en este caso significa
+ * "no hay nada que reponer", el mismo valor que ya consumen los callers
+ * (updateOrderStatusInternal/deleteOrderInternal) para registrar
+ * `stock_restored: false` en order_action_log — así un deshacer posterior no
+ * vuelve a descontar stock que nunca salió.
  */
 export async function replenishOrderStock(
   orderId: string
 ): Promise<{ ok: true; alreadyReplenished: boolean } | { error: 'not_found' }> {
   const admin = createAdminClient();
 
-  const { data: order } = await admin.from('orders').select('id, status').eq('id', orderId).maybeSingle();
+  const { data: order } = await admin
+    .from('orders')
+    .select('id, status, stock_applied')
+    .eq('id', orderId)
+    .maybeSingle();
   if (!order) return { error: 'not_found' };
-  if (order.status === 'cancelled') {
+  if (order.status === 'cancelled' || order.stock_applied === false) {
     return { ok: true, alreadyReplenished: true };
   }
 
@@ -897,7 +911,7 @@ async function requireOwnerStore() {
 // ---------------------------------------------------------------------------
 
 export type OrderStatus = 'pending' | 'confirmed' | 'cancelled' | 'delivered';
-export type OrderChannel = 'whatsapp' | 'mercadopago';
+export type OrderChannel = 'whatsapp' | 'mercadopago' | 'manual';
 export type OrderPaymentStatus =
   | 'pending'
   | 'approved'
@@ -921,6 +935,9 @@ export type OrderWithItems = {
   currency: string;
   notes: string | null;
   created_at: string;
+  /** Fecha en que la venta ocurrió (add-manual-sales, D2) — distinta de
+   *  `created_at` solo en una venta manual cargada con fecha retroactiva. */
+  sold_at: string;
   confirmed_at: string | null;
   cancelled_at: string | null;
   delivered_at: string | null;
@@ -982,6 +999,7 @@ function mapOrderRow(row: {
   currency: string;
   notes: string | null;
   created_at: string;
+  sold_at?: string;
   confirmed_at: string | null;
   cancelled_at: string | null;
   delivered_at: string | null;
@@ -1002,6 +1020,10 @@ function mapOrderRow(row: {
     currency: row.currency,
     notes: row.notes,
     created_at: row.created_at,
+    // Todo pedido real trae `sold_at` (NOT NULL en la tabla, migración 044);
+    // el fallback a created_at solo cubre fixtures de test anteriores a este
+    // change que no lo declaran.
+    sold_at: row.sold_at ?? row.created_at,
     confirmed_at: row.confirmed_at,
     cancelled_at: row.cancelled_at,
     delivered_at: row.delivered_at,
@@ -1087,10 +1109,10 @@ async function fetchFilteredOrders(
     query = query.eq('channel', filters.channel);
   }
   if (filters.date_from) {
-    query = query.gte('created_at', filters.date_from);
+    query = query.gte('sold_at', filters.date_from);
   }
   if (filters.date_to) {
-    query = query.lte('created_at', filters.date_to + ' 23:59:59');
+    query = query.lte('sold_at', filters.date_to + ' 23:59:59');
   }
   if (filters.created_before) {
     query = query.lt('created_at', filters.created_before);
@@ -1286,10 +1308,10 @@ export async function getOrderStats(
 
   const { data: orders } = await admin
     .from('orders')
-    .select('id, status, total_cents, discount_cents, created_at')
+    .select('id, status, total_cents, discount_cents, sold_at')
     .eq('store_id', store.id)
     .is('deleted_at', null)
-    .gte('created_at', rangeStart.toISOString());
+    .gte('sold_at', rangeStart.toISOString());
 
   const allOrders = orders ?? [];
 
@@ -1332,7 +1354,7 @@ export async function getOrderStats(
     dayMap.set(key, 0);
   }
   for (const o of confirmedOrders) {
-    const dateKey = toArgentinaDateStr(o.created_at);
+    const dateKey = toArgentinaDateStr(o.sold_at);
     if (dayMap.has(dateKey)) {
       dayMap.set(dateKey, (dayMap.get(dateKey) ?? 0) + computeNetCents(o.total_cents, o.discount_cents));
     }
@@ -1384,6 +1406,423 @@ export async function getOrderStats(
     orders_by_section,
     margin,
   };
+}
+
+// ---------------------------------------------------------------------------
+// createManualSale (add-manual-sales): alta de una venta ocurrida fuera del
+// sitio, cargada por la dueña desde el dashboard. A diferencia de
+// createPendingOrder (que sirve el checkout público, con input de una
+// compradora anónima), acá el input viene de la dueña autenticada: la venta
+// nace 'confirmed' con payment_status 'approved' (Decisión D4) y el servidor
+// NO recalcula los precios que ella cargó — ni tramos, ni promo, ni
+// min_quantity/qty_step (Decisión D6). Solo valida rangos y pertenencia, y
+// el total se computa server-side sumando las líneas para que nunca dependa
+// del total que mandó el cliente.
+// ---------------------------------------------------------------------------
+
+export type ManualSaleCatalogLine = {
+  product_id: string;
+  variant_id?: string | null;
+  quantity: number;
+  unit_price_cents: number;
+};
+
+export type ManualSaleLooseLine = {
+  product_id?: null;
+  name: string;
+  quantity: number;
+  unit_price_cents: number;
+  cost_cents?: number | null;
+};
+
+export type ManualSaleLineInput = ManualSaleCatalogLine | ManualSaleLooseLine;
+
+export type CreateManualSaleInput = {
+  /** Fecha en que la venta ocurrió (Decisión D2) — puede ser pasada, no futura. */
+  sold_at: string;
+  customer_name?: string | null;
+  notes?: string | null;
+  lines: ManualSaleLineInput[];
+  /** Checkbox de descuento de stock, prendido por default (Decisión D3). */
+  discount_stock?: boolean;
+};
+
+export type CreateManualSaleResult =
+  | { order_id: string; store_order_number: number | null }
+  | {
+      error:
+        | 'unauthorized'
+        | 'not_pro'
+        | 'no_valid_items'
+        | 'invalid_line'
+        | 'invalid_date'
+        | 'future_date'
+        | 'product_not_found'
+        | 'insert_failed';
+    }
+  | { error: 'stock_insufficient'; details: StockInsufficientDetail[] };
+
+function isManualSaleCatalogLine(line: ManualSaleLineInput): line is ManualSaleCatalogLine {
+  return typeof line.product_id === 'string' && line.product_id.length > 0;
+}
+
+/** Mismo criterio de armado que createPendingOrder (3.4): valores ordenados por posición del tipo de opción. */
+function buildVariantLabel(variant: {
+  product_variant_option_values: Array<{
+    product_option_values: {
+      value: string;
+      product_option_types: { position: number } | null;
+    } | null;
+  }>;
+}): string | null {
+  const valueEntries = (variant.product_variant_option_values ?? [])
+    .map((ov) => ({
+      position: ov.product_option_values?.product_option_types?.position ?? 0,
+      value: ov.product_option_values?.value ?? '',
+    }))
+    .sort((a, b) => a.position - b.position);
+  return valueEntries.map((e) => e.value).join(' / ') || null;
+}
+
+export async function createManualSale(input: CreateManualSaleInput): Promise<CreateManualSaleResult> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const { allowManualSales } = getPlanLimits((store as unknown as { plan: PlanId | null }).plan);
+  if (!allowManualSales) return { error: 'not_pro' };
+
+  const soldAtMs = new Date(input.sold_at).getTime();
+  if (Number.isNaN(soldAtMs)) return { error: 'invalid_date' };
+  if (soldAtMs > Date.now()) return { error: 'future_date' };
+
+  if (!Array.isArray(input.lines) || input.lines.length === 0) {
+    return { error: 'no_valid_items' };
+  }
+
+  for (const line of input.lines) {
+    if (!Number.isInteger(line.quantity) || line.quantity < 1) return { error: 'invalid_line' };
+    if (!Number.isInteger(line.unit_price_cents) || line.unit_price_cents < 0) return { error: 'invalid_line' };
+  }
+
+  const catalogLines = input.lines.filter(isManualSaleCatalogLine);
+  const looseLines = input.lines.filter(
+    (l): l is ManualSaleLooseLine => !isManualSaleCatalogLine(l)
+  );
+
+  for (const line of looseLines) {
+    if (!line.name || !line.name.trim()) return { error: 'invalid_line' };
+    if (line.cost_cents != null && (!Number.isInteger(line.cost_cents) || line.cost_cents < 0)) {
+      return { error: 'invalid_line' };
+    }
+  }
+
+  const admin = createAdminClient();
+
+  // Productos referenciados: deben pertenecer a esta tienda (aislamiento).
+  type ProductRow = {
+    id: string;
+    name: string;
+    cost_cents: number | null;
+    section_id: string | null;
+    sections: { name: string } | null;
+  };
+  const productIds = Array.from(new Set(catalogLines.map((l) => l.product_id)));
+  const productMap = new Map<string, ProductRow>();
+  if (productIds.length > 0) {
+    const { data: products } = (await admin
+      .from('products')
+      .select('id, name, cost_cents, section_id, sections(name)')
+      .eq('store_id', store.id)
+      .in('id', productIds)) as { data: ProductRow[] | null };
+    for (const p of products ?? []) productMap.set(p.id, p);
+    if (productMap.size !== productIds.length) return { error: 'product_not_found' };
+  }
+
+  // Variantes referenciadas: deben pertenecer al producto de su propia línea.
+  type VariantRow = {
+    id: string;
+    product_id: string;
+    cost_override: number | null;
+    deleted_at: string | null;
+    product_variant_option_values: Array<{
+      product_option_values: {
+        value: string;
+        product_option_types: { position: number } | null;
+      } | null;
+    }>;
+  };
+  const variantIds = catalogLines
+    .map((l) => l.variant_id)
+    .filter((id): id is string => typeof id === 'string');
+  const variantMap = new Map<string, VariantRow>();
+  if (variantIds.length > 0) {
+    const { data: variants } = (await admin
+      .from('product_variants')
+      .select(
+        'id, product_id, cost_override, deleted_at, product_variant_option_values(product_option_values(value, product_option_types(position)))'
+      )
+      .in('id', variantIds)) as { data: VariantRow[] | null };
+    for (const v of variants ?? []) variantMap.set(v.id, v);
+  }
+  for (const line of catalogLines) {
+    if (line.variant_id) {
+      const variant = variantMap.get(line.variant_id);
+      if (!variant || variant.product_id !== line.product_id || variant.deleted_at !== null) {
+        return { error: 'product_not_found' };
+      }
+    }
+  }
+
+  type EnrichedLine = {
+    product_id: string | null;
+    variant_id: string | null;
+    product_name: string;
+    variant_label: string | null;
+    section_id: string | null;
+    section_name: string | null;
+    unit_price_cents: number;
+    quantity: number;
+    cost_at_purchase: number | null;
+  };
+
+  const enrichedLines: EnrichedLine[] = [];
+  for (const line of catalogLines) {
+    const product = productMap.get(line.product_id)!;
+    const variant = line.variant_id ? variantMap.get(line.variant_id)! : null;
+    const section = product.sections as { name: string } | null;
+    enrichedLines.push({
+      product_id: line.product_id,
+      variant_id: line.variant_id ?? null,
+      product_name: product.name,
+      variant_label: variant ? buildVariantLabel(variant) : null,
+      section_id: product.section_id ?? null,
+      section_name: section?.name ?? null,
+      unit_price_cents: line.unit_price_cents,
+      quantity: line.quantity,
+      // Costo congelado del catálogo (D5), nunca recalculado a partir del
+      // precio que la dueña haya ajustado a mano.
+      cost_at_purchase: resolveEffectiveCost(product, variant ? { cost_override: variant.cost_override } : null),
+    });
+  }
+  for (const line of looseLines) {
+    enrichedLines.push({
+      product_id: null,
+      variant_id: null,
+      product_name: line.name.trim(),
+      variant_label: null,
+      section_id: null,
+      section_name: null,
+      unit_price_cents: line.unit_price_cents,
+      quantity: line.quantity,
+      cost_at_purchase: line.cost_cents ?? null,
+    });
+  }
+
+  // D6: el total SIEMPRE se recalcula sumando las líneas — nunca se confía
+  // en un total enviado por el cliente.
+  const totalCents = enrichedLines.reduce((sum, l) => sum + l.unit_price_cents * l.quantity, 0);
+
+  const orderNumber = await assignOrderNumber(admin, store.id);
+  if (orderNumber === null) return { error: 'insert_failed' };
+
+  const discountStock = input.discount_stock ?? true;
+  const nowIso = new Date().toISOString();
+
+  const { data: order, error: orderError } = await admin
+    .from('orders')
+    .insert({
+      store_id: store.id,
+      total_cents: totalCents,
+      currency: 'ARS',
+      status: 'confirmed',
+      channel: 'manual',
+      payment_status: 'approved',
+      confirmed_at: nowIso,
+      sold_at: new Date(input.sold_at).toISOString(),
+      // Se corrige a `true` más abajo solo si el descuento de stock resulta
+      // exitoso (Decisión D3) — así un fallo de stock nunca deja la fila
+      // creída "descontó stock" sin haberlo hecho de verdad.
+      stock_applied: false,
+      store_order_number: orderNumber,
+      customer_name: input.customer_name ?? null,
+      notes: input.notes ?? null,
+    })
+    .select('id, store_order_number')
+    .single();
+
+  if (orderError || !order) {
+    console.error('[createManualSale] order insert failed:', orderError);
+    Sentry.captureException(orderError ?? new Error('order insert returned no data'), {
+      tags: { feature: 'manual-sales' },
+      extra: { storeId: store.id },
+    });
+    return { error: 'insert_failed' };
+  }
+
+  const itemRows = enrichedLines.map((l) => ({
+    order_id: order.id,
+    product_id: l.product_id,
+    product_name: l.product_name,
+    unit_price_cents: l.unit_price_cents,
+    quantity: l.quantity,
+    section_id: l.section_id,
+    section_name: l.section_name,
+    variant_id: l.variant_id,
+    price_at_purchase: l.unit_price_cents,
+    variant_label: l.variant_label,
+    // Costo congelado al vender, no una estimación posterior
+    // (add-cost-backfill-on-save, D3): tanto el heredado del catálogo como
+    // el escrito a mano en una línea suelta son el costo vigente al vender.
+    cost_at_purchase: l.cost_at_purchase,
+    cost_is_estimated: false,
+  }));
+
+  const { error: itemsError } = await admin.from('order_items').insert(itemRows);
+  if (itemsError) {
+    console.error('[createManualSale] order_items insert failed:', itemsError);
+    Sentry.captureException(itemsError, {
+      tags: { feature: 'manual-sales' },
+      extra: { storeId: store.id, orderId: order.id },
+    });
+    return { error: 'insert_failed' };
+  }
+
+  if (discountStock) {
+    // Reusa deductOrderStock (mismo helper que revivir un pedido cancelado):
+    // lee las líneas ya insertadas, se salta las sueltas (sin product_id ni
+    // variant_id) y repone lo ya deducido si alguna no alcanza.
+    const stockResult = await deductOrderStock(admin, order.id);
+    if ('error' in stockResult) {
+      await admin
+        .from('orders')
+        .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+        .eq('id', order.id);
+      return { error: 'stock_insufficient', details: stockResult.details };
+    }
+    await admin.from('orders').update({ stock_applied: true }).eq('id', order.id);
+  }
+
+  revalidatePath('/dashboard', 'layout');
+  return { order_id: order.id, store_order_number: order.store_order_number };
+}
+
+// ---------------------------------------------------------------------------
+// searchManualSaleCatalog (grupo 5): buscador de catálogo para el formulario
+// de alta manual. Cada variante de un producto con variantes es una opción
+// aparte (con su propio precio/costo/stock efectivos); un producto sin
+// variantes es una sola opción. Precio y costo son los VIGENTES ahora mismo
+// (D5) — el formulario los precarga editables, no los congela hasta guardar.
+// ---------------------------------------------------------------------------
+
+export type ManualSaleCatalogOption = {
+  product_id: string;
+  variant_id: string | null;
+  label: string;
+  unit_price_cents: number;
+  cost_cents: number | null;
+  /** null = sin seguimiento de stock (ilimitado). */
+  stock: number | null;
+};
+
+export async function searchManualSaleCatalog(
+  query: string
+): Promise<{ options: ManualSaleCatalogOption[] } | { error: 'unauthorized' }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'unauthorized' };
+
+  const admin = createAdminClient();
+
+  type ProductRow = {
+    id: string;
+    name: string;
+    price_cents: number;
+    promo_price_cents: number | null;
+    cost_cents: number | null;
+    stock: number | null;
+  };
+
+  let productsQuery = admin
+    .from('products')
+    .select('id, name, price_cents, promo_price_cents, cost_cents, stock')
+    .eq('store_id', store.id)
+    .order('position')
+    .limit(20);
+  const trimmed = query.trim();
+  if (trimmed) productsQuery = productsQuery.ilike('name', `%${trimmed}%`);
+
+  const { data: products } = (await productsQuery) as { data: ProductRow[] | null };
+  const productRows = products ?? [];
+  if (productRows.length === 0) return { options: [] };
+
+  const productIds = productRows.map((p) => p.id);
+
+  const { data: optionTypeRows } = await admin
+    .from('product_option_types')
+    .select('product_id')
+    .in('product_id', productIds);
+  const productsWithVariants = new Set((optionTypeRows ?? []).map((r) => r.product_id));
+
+  type VariantRow = {
+    id: string;
+    product_id: string;
+    stock: number | null;
+    price_override: number | null;
+    promo_price_override: number | null;
+    cost_override: number | null;
+    deleted_at: string | null;
+    product_variant_option_values: Array<{
+      product_option_values: {
+        value: string;
+        product_option_types: { position: number } | null;
+      } | null;
+    }>;
+  };
+
+  const variantsByProduct = new Map<string, VariantRow[]>();
+  if (productsWithVariants.size > 0) {
+    const { data: variantRows } = (await admin
+      .from('product_variants')
+      .select(
+        'id, product_id, stock, price_override, promo_price_override, cost_override, deleted_at, product_variant_option_values(product_option_values(value, product_option_types(position)))'
+      )
+      .in('product_id', productIds)
+      .is('deleted_at', null)) as { data: VariantRow[] | null };
+    for (const v of variantRows ?? []) {
+      const list = variantsByProduct.get(v.product_id) ?? [];
+      list.push(v);
+      variantsByProduct.set(v.product_id, list);
+    }
+  }
+
+  const options: ManualSaleCatalogOption[] = [];
+  for (const p of productRows) {
+    if (productsWithVariants.has(p.id)) {
+      for (const v of variantsByProduct.get(p.id) ?? []) {
+        const { effectiveCents } = resolveEffectivePrice(p, v);
+        const label = buildVariantLabel(v);
+        options.push({
+          product_id: p.id,
+          variant_id: v.id,
+          label: label ? `${p.name} — ${label}` : p.name,
+          unit_price_cents: effectiveCents,
+          cost_cents: resolveEffectiveCost(p, v),
+          stock: v.stock,
+        });
+      }
+    } else {
+      const { effectiveCents } = resolveEffectivePrice(p, null);
+      options.push({
+        product_id: p.id,
+        variant_id: null,
+        label: p.name,
+        unit_price_cents: effectiveCents,
+        cost_cents: resolveEffectiveCost(p, null),
+        stock: p.stock,
+      });
+    }
+  }
+
+  return { options };
 }
 
 // ---------------------------------------------------------------------------
@@ -1454,7 +1893,11 @@ export async function exportOrdersCsv(
   // para no romper una planilla que ya lea las columnas existentes por posición.
   const allowCost = getPlanLimits((store as unknown as { plan: PlanId | null }).plan).allowCostTracking;
 
-  const headerCols = ['id', 'store_order_number', 'created_at', 'status', 'customer_name', 'customer_phone', 'total', 'currency', 'items_count', 'items_summary', 'notes'];
+  // add-manual-sales (7.2): la columna de fecha es la de VENTA (`sold_at`),
+  // no la de carga del registro — para un pedido que no sea manual son
+  // siempre el mismo valor (sold_at se backfilleó desde created_at), así que
+  // ninguna planilla existente cambia de números.
+  const headerCols = ['id', 'store_order_number', 'sold_at', 'status', 'customer_name', 'customer_phone', 'total', 'currency', 'items_count', 'items_summary', 'notes'];
   if (allowCost) headerCols.push('cost_total', 'profit_total', 'margin_pct');
   const header = headerCols.join(',');
 
@@ -1466,7 +1909,7 @@ export async function exportOrdersCsv(
     const cols = [
       csvEscape(order.id),
       csvEscape(order.store_order_number != null ? String(order.store_order_number) : ''),
-      csvEscape(formatCsvDate(order.created_at)),
+      csvEscape(formatCsvDate(order.sold_at)),
       csvEscape(order.status),
       csvEscape(order.customer_name),
       csvEscape(order.customer_phone),
@@ -1798,6 +2241,7 @@ async function updateOrderStatusInternal(
       currency: updated.currency,
       notes: updated.notes,
       created_at: updated.created_at,
+      sold_at: updated.sold_at ?? updated.created_at,
       confirmed_at: updated.confirmed_at,
       cancelled_at: updated.cancelled_at,
       delivered_at: updated.delivered_at,

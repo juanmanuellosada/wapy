@@ -32,6 +32,7 @@ import { Select } from '@/app/components/Select';
 import { DatePicker } from '@/app/components/DatePicker';
 import { ConfirmModal } from '@/app/components/ConfirmModal';
 import { toWaMeLink } from './orderContactLink';
+import { ManualSaleModal } from './ManualSaleModal';
 
 type Props = {
   store: Store;
@@ -46,6 +47,8 @@ type Props = {
   waLifecycleEffectiveFrom: string;
   /** Plan Pro únicamente (add-product-cost-tracking, D6/D7). false = sin margen en el detalle. */
   allowCostTracking: boolean;
+  /** Plan Pro únicamente (add-manual-sales). false = sin botón de alta manual. */
+  allowManualSales: boolean;
 };
 
 function formatPrice(cents: number): string {
@@ -80,6 +83,14 @@ function formatDateLong(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(iso));
+}
+
+/** add-manual-sales (5.5): compara solo el día calendario, no la hora — una
+ *  venta manual cargada hoy con fecha de hoy no necesita el aviso extra. */
+function sameLocalDay(aIso: string, bIso: string): boolean {
+  const a = new Date(aIso);
+  const b = new Date(bIso);
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 /** 6.5: el número correlativo es la identificación visible del pedido; el UUID corto queda de respaldo. */
@@ -136,11 +147,13 @@ const PAYMENT_STATUS_BADGE: Record<OrderPaymentStatus, string> = {
 const CHANNEL_LABELS: Record<OrderChannel, string> = {
   whatsapp: 'WhatsApp',
   mercadopago: 'Mercado Pago',
+  manual: 'Manual',
 };
 
 const CHANNEL_BADGE: Record<OrderChannel, string> = {
   whatsapp: 'bg-[#25D366]/10 text-[#25D366] border-[#25D366]/20',
   mercadopago: 'bg-[#009EE3]/10 text-[#009EE3]/80 border-[#009EE3]/15',
+  manual: 'bg-zinc-500/10 text-zinc-300 border-zinc-500/20',
 };
 
 function PaymentStatusBadge({ paymentStatus, channel }: { paymentStatus: OrderPaymentStatus; channel: OrderChannel }) {
@@ -345,6 +358,11 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
           <div className="min-w-0">
             <p className="text-xs text-white/40 font-mono">{orderDisplayRef(order)}</p>
             <p className="text-sm text-white/60 mt-0.5">{formatDateLong(order.created_at)}</p>
+            {/* add-manual-sales (5.5): la fecha de venta aparte, solo cuando
+                difiere del día de carga — evita que parezca un error de datos. */}
+            {!sameLocalDay(order.sold_at, order.created_at) && (
+              <p className="text-xs text-[#F5C84B]/80 mt-0.5">Venta: {formatDateLong(order.sold_at)}</p>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
             <ChannelBadge channel={order.channel} />
@@ -579,6 +597,7 @@ export function OrdersPanel({
   initialBacklogCount,
   waLifecycleEffectiveFrom,
   allowCostTracking,
+  allowManualSales,
 }: Props) {
   const [orders, setOrders] = useState<OrderWithItems[]>(initialOrders);
   const [total, setTotal] = useState(initialTotal);
@@ -607,6 +626,8 @@ export function OrdersPanel({
   // add-order-action-undo (5.3): últimas operaciones deshacibles (o no, con
   // su motivo) de la tienda, para la lista de "acciones recientes".
   const [recentActions, setRecentActions] = useState<UndoableOrderAction[]>([]);
+  // add-manual-sales (5.3): modal de alta manual, solo Pro.
+  const [showManualSaleModal, setShowManualSaleModal] = useState(false);
 
   const isFirstRender = useRef(true);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
@@ -915,7 +936,19 @@ export function OrdersPanel({
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-[#FBF7EC] mb-6">Pedidos</h1>
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <h1 className="text-xl font-bold text-[#FBF7EC]">Pedidos</h1>
+        {/* add-manual-sales (5.3): botón de alta, solo Pro. */}
+        {allowManualSales && (
+          <button
+            type="button"
+            onClick={() => setShowManualSaleModal(true)}
+            className="flex-shrink-0 px-3 py-2 rounded-xl text-xs font-semibold bg-[#F5C84B]/15 text-[#F5C84B] border border-[#F5C84B]/30 hover:bg-[#F5C84B]/25 transition-colors cursor-pointer"
+          >
+            Registrar venta
+          </button>
+        )}
+      </div>
 
       {/* 10.4/10.5: banner de backlog — sin botón de descarte, desaparece solo
           cuando no quedan pendientes previos a la fecha de corte. */}
@@ -972,6 +1005,7 @@ export function OrdersPanel({
                 { value: 'all', label: 'Todos los canales' },
                 { value: 'whatsapp', label: 'WhatsApp' },
                 { value: 'mercadopago', label: 'Mercado Pago' },
+                { value: 'manual', label: 'Manual' },
               ]}
               ariaLabel="Filtrar por canal"
             />
@@ -1266,6 +1300,16 @@ export function OrdersPanel({
           onStatusChange={handleStatusChange}
           onDeleted={handleStatusChange}
           onUndo={handleUndo}
+        />
+      )}
+
+      {showManualSaleModal && (
+        <ManualSaleModal
+          onClose={() => setShowManualSaleModal(false)}
+          onCreated={() => {
+            setShowManualSaleModal(false);
+            fetchOrders(filters, page);
+          }}
         />
       )}
     </div>

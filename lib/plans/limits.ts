@@ -7,12 +7,13 @@ export interface PlanLimits {
   allowVariants: boolean;
   allowBulkProducts: boolean;
   allowCostTracking: boolean;
+  allowManualSales: boolean;
 }
 
 export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
-  inicial: { maxProducts: 20, maxSections: 1, maxImagesPerProduct: 1, allowVariants: false, allowBulkProducts: false, allowCostTracking: false },
-  medio:   { maxProducts: 50, maxSections: 3, maxImagesPerProduct: Infinity, allowVariants: true, allowBulkProducts: false, allowCostTracking: false },
-  pro:     { maxProducts: Infinity, maxSections: Infinity, maxImagesPerProduct: Infinity, allowVariants: true, allowBulkProducts: true, allowCostTracking: true },
+  inicial: { maxProducts: 20, maxSections: 1, maxImagesPerProduct: 1, allowVariants: false, allowBulkProducts: false, allowCostTracking: false, allowManualSales: false },
+  medio:   { maxProducts: 50, maxSections: 3, maxImagesPerProduct: Infinity, allowVariants: true, allowBulkProducts: false, allowCostTracking: false, allowManualSales: false },
+  pro:     { maxProducts: Infinity, maxSections: Infinity, maxImagesPerProduct: Infinity, allowVariants: true, allowBulkProducts: true, allowCostTracking: true, allowManualSales: true },
 };
 
 export function getPlanLimits(plan: PlanId | null | undefined): PlanLimits {

@@ -262,7 +262,9 @@ export type Database = {
           mp_preference_id: string | null
           notes: string | null
           payment_status: string
+          sold_at: string
           status: string
+          stock_applied: boolean
           store_id: string
           store_order_number: number | null
           total_cents: number
@@ -289,7 +291,9 @@ export type Database = {
           mp_preference_id?: string | null
           notes?: string | null
           payment_status?: string
+          sold_at?: string
           status?: string
+          stock_applied?: boolean
           store_id: string
           store_order_number?: number | null
           total_cents: number
@@ -316,7 +320,9 @@ export type Database = {
           mp_preference_id?: string | null
           notes?: string | null
           payment_status?: string
+          sold_at?: string
           status?: string
+          stock_applied?: boolean
           store_id?: string
           store_order_number?: number | null
           total_cents?: number
