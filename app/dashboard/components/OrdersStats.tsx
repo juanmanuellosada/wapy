@@ -178,21 +178,21 @@ export function OrdersStats({ accentColor, initialStats, initialRange }: Props) 
       ) : (
         <>
           {/* KPI cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-2xl font-bold text-[#FBF7EC]">{formatPrice(kpis.revenue_cents)}</p>
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xl sm:text-2xl font-bold text-[#FBF7EC] tabular-nums leading-tight">{formatPrice(kpis.revenue_cents)}</p>
               <p className="text-xs text-white/40 mt-1">Ingresos · confirmados o entregados</p>
             </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-2xl font-bold text-[#FBF7EC]">{kpis.order_count}</p>
+            <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xl sm:text-2xl font-bold text-[#FBF7EC] tabular-nums leading-tight">{kpis.order_count}</p>
               <p className="text-xs text-white/40 mt-1">Pedidos · en el período</p>
             </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-2xl font-bold text-[#FBF7EC]">{formatPrice(kpis.avg_ticket_cents)}</p>
+            <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xl sm:text-2xl font-bold text-[#FBF7EC] tabular-nums leading-tight">{formatPrice(kpis.avg_ticket_cents)}</p>
               <p className="text-xs text-white/40 mt-1">Ticket promedio · por pedido</p>
             </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-2xl font-bold text-[#FBF7EC]">
+            <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xl sm:text-2xl font-bold text-[#FBF7EC] tabular-nums leading-tight">
                 {(kpis.confirmation_rate * 100).toFixed(0)}%
               </p>
               <p className="text-xs text-white/40 mt-1">Tasa de confirmación · confirmados / total</p>
@@ -204,25 +204,25 @@ export function OrdersStats({ accentColor, initialStats, initialRange }: Props) 
               un tooltip ni al pie — y el grupo entero no se renderiza con
               cobertura 0, ni en cero ni vacío. */}
           {showMargin && (
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-2xl font-bold text-[#FBF7EC]">{formatPrice(margin.cost_cents)}</p>
+            <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
+              <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xl sm:text-2xl font-bold text-[#FBF7EC] tabular-nums leading-tight">{formatPrice(margin.cost_cents)}</p>
                 <p className="text-xs text-white/40 mt-1">Costo · líneas con costo cargado</p>
               </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-2xl font-bold text-[#FBF7EC]">{formatPrice(margin.profit_cents)}</p>
+              <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xl sm:text-2xl font-bold text-[#FBF7EC] tabular-nums leading-tight">{formatPrice(margin.profit_cents)}</p>
                 <p className="text-xs text-white/40 mt-1">
                   Ganancia · cobertura {formatPercent(margin.cost_coverage_pct)} de la facturación
                 </p>
               </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-2xl font-bold text-[#FBF7EC]">
+              <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xl sm:text-2xl font-bold text-[#FBF7EC] tabular-nums leading-tight">
                   {margin.margin_pct != null ? formatPercent(margin.margin_pct) : '—'}
                 </p>
                 <p className="text-xs text-white/40 mt-1">Margen · sobre la facturación con costo</p>
               </div>
               {margin.has_estimated_cost && (
-                <p className="text-xs text-amber-400/80 col-span-2 lg:col-span-3">
+                <p className="text-xs text-amber-400/80 col-span-2 xl:col-span-3">
                   Parte de la ganancia proviene de costos estimados, completados después de la venta.
                 </p>
               )}
