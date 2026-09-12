@@ -127,6 +127,7 @@ export default async function DashboardSectionPage({
     revenue_by_day: [],
     top_products: [],
     orders_by_section: [],
+    margin: { costed_revenue_cents: 0, cost_cents: 0, profit_cents: 0, margin_pct: null, cost_coverage_pct: 0 },
   };
 
   const couponsResult = section === 'coupons'
@@ -198,6 +199,7 @@ export default async function DashboardSectionPage({
           maxImagesPerProduct={limits.maxImagesPerProduct}
           allowVariants={limits.allowVariants}
           allowBulkProducts={limits.allowBulkProducts}
+          allowCostTracking={limits.allowCostTracking}
         />
       )}
       {section === 'orders' && (
@@ -212,6 +214,7 @@ export default async function DashboardSectionPage({
             initialDeepLinkOrder={initialDeepLinkOrder}
             initialBacklogCount={initialBacklogCount}
             waLifecycleEffectiveFrom={waLifecycleEffectiveFrom}
+            allowCostTracking={limits.allowCostTracking}
           />
         </>
       )}

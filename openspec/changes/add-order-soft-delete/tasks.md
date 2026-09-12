@@ -31,5 +31,5 @@
 ## 5. Verificación
 
 - [x] 5.1 `npx tsc --noEmit`, `npx vitest run` y `npm run build`
-- [ ] 5.2 Aplicar la migración a producción
+- [x] 5.2 Aplicar la migración a producción — verificado 2026-09-11: `orders.deleted_at`, su índice y el filtro en ambas RPCs del storefront existen en prod
 - [ ] 5.3 Verificar en producción que un pedido borrado desaparece del panel y deja de contar en "lo más pedido" de la tienda pública

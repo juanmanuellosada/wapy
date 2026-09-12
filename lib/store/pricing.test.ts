@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveEffectivePrice,
+  resolveEffectiveCost,
   resolveTieredPrice,
   pickTier,
   tierSavingsPercent,
@@ -13,6 +14,8 @@ import {
   type PriceableProduct,
   type PriceableVariant,
   type PriceTier,
+  type CostableProduct,
+  type CostableVariant,
 } from './pricing';
 
 function product(overrides: Partial<PriceableProduct> = {}): PriceableProduct {
@@ -70,6 +73,51 @@ describe('resolveEffectivePrice', () => {
       variant({ price_override: 5000, promo_price_override: 5000 })
     );
     expect(result).toEqual({ regularCents: 5000, effectiveCents: 5000, onPromo: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Costo de mercadería (resolveEffectiveCost)
+// ---------------------------------------------------------------------------
+
+function costableProduct(overrides: Partial<CostableProduct> = {}): CostableProduct {
+  return { cost_cents: null, ...overrides };
+}
+
+function costableVariant(overrides: Partial<CostableVariant> = {}): CostableVariant {
+  return { cost_override: null, ...overrides };
+}
+
+describe('resolveEffectiveCost', () => {
+  it('sin variante: devuelve el costo del producto', () => {
+    expect(resolveEffectiveCost(costableProduct({ cost_cents: 50000 }))).toBe(50000);
+  });
+
+  it('variante sin cost_override hereda el costo del producto', () => {
+    expect(
+      resolveEffectiveCost(costableProduct({ cost_cents: 50000 }), costableVariant())
+    ).toBe(50000);
+  });
+
+  it('variante con cost_override pisa el costo del producto', () => {
+    expect(
+      resolveEffectiveCost(
+        costableProduct({ cost_cents: 50000 }),
+        costableVariant({ cost_override: 65000 })
+      )
+    ).toBe(65000);
+  });
+
+  it('sin costo en ningún nivel: ausente (null), nunca cero', () => {
+    expect(resolveEffectiveCost(costableProduct(), costableVariant())).toBeNull();
+    expect(resolveEffectiveCost(costableProduct())).toBeNull();
+  });
+
+  it('costo 0 se distingue de ausente en ambos niveles', () => {
+    expect(resolveEffectiveCost(costableProduct({ cost_cents: 0 }))).toBe(0);
+    expect(
+      resolveEffectiveCost(costableProduct({ cost_cents: 50000 }), costableVariant({ cost_override: 0 }))
+    ).toBe(0);
   });
 });
 

@@ -35,6 +35,12 @@ type Props = {
   productId: string | null;
   /** Used as placeholder for price_override inputs */
   productPriceCents: number;
+  /** Costo vigente del producto (o null si no tiene). Placeholder del costo de
+   *  la variante cuando esta no tiene su propio override — así se ve que hereda
+   *  en vez de parecer vacío (add-product-cost-tracking, Decisión D2). */
+  productCostCents: number | null;
+  /** Plan Pro únicamente. false = no se muestra la columna de costo. */
+  allowCostTracking: boolean;
   /** Called when variants change so parent can update stock summary display */
   onVariantsChange?: (hasVariants: boolean, totalStock: number) => void;
 };
@@ -125,7 +131,7 @@ function validateNewTypeDraft(
 // VariantsSection
 // ---------------------------------------------------------------------------
 
-export function VariantsSection({ productId, productPriceCents, onVariantsChange }: Props) {
+export function VariantsSection({ productId, productPriceCents, productCostCents, allowCostTracking, onVariantsChange }: Props) {
   // ---- server state ----
   const [optionTypes, setOptionTypes] = useState<OptionTypeData[]>([]);
   const [variants, setVariants] = useState<VariantData[]>([]);
@@ -136,6 +142,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
   const [stockInputs, setStockInputs] = useState<Record<string, string>>({});
   const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
   const [promoInputs, setPromoInputs] = useState<Record<string, string>>({});
+  const [costInputs, setCostInputs] = useState<Record<string, string>>({});
   const [variantErrors, setVariantErrors] = useState<Record<string, string>>({});
   const [savingVariant, setSavingVariant] = useState<string | null>(null);
 
@@ -205,14 +212,17 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
       const stocks: Record<string, string> = {};
       const prices: Record<string, string> = {};
       const promos: Record<string, string> = {};
+      const costs: Record<string, string> = {};
       for (const v of result.variants) {
         stocks[v.id] = v.stock !== null ? String(v.stock) : '';
         prices[v.id] = v.price_override != null ? formatPrice(v.price_override) : '';
         promos[v.id] = v.promo_price_override != null ? formatPrice(v.promo_price_override) : '';
+        costs[v.id] = v.cost_override != null ? formatPrice(v.cost_override) : '';
       }
       setStockInputs(stocks);
       setPriceInputs(prices);
       setPromoInputs(promos);
+      setCostInputs(costs);
     } catch {
       setServerError('No se pudo cargar las variedades.');
     } finally {
@@ -229,10 +239,12 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
     const stockStr = (stockInputs[variantId] ?? '').trim();
     const priceStr = priceInputs[variantId] ?? '';
     const promoStr = promoInputs[variantId] ?? '';
+    const costStr = costInputs[variantId] ?? '';
 
     const stock: number | null = stockStr === '' ? null : parseInt(stockStr, 10);
     const priceOverride = parsePriceCents(priceStr);
     const promoPriceOverride = parsePriceCents(promoStr);
+    const costOverride = parsePriceCents(costStr);
 
     const errors: Record<string, string> = { ...variantErrors };
 
@@ -257,13 +269,26 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
         return;
       }
     }
+    if (allowCostTracking && costStr.trim() !== '' && (costOverride === null || costOverride < 0)) {
+      errors[variantId] = 'El costo debe ser un número ≥ 0.';
+      setVariantErrors(errors);
+      toast.error('El costo debe ser un número ≥ 0.');
+      return;
+    }
 
     delete errors[variantId];
     setVariantErrors(errors);
 
     setSavingVariant(variantId);
     try {
-      const result = await updateVariant({ variantId, stock, priceOverride, promoPriceOverride });
+      const result = await updateVariant({
+        variantId,
+        stock,
+        priceOverride,
+        promoPriceOverride,
+        // undefined = no tocar el costo (planes sin allowCostTracking no lo mandan).
+        costOverride: allowCostTracking ? costOverride : undefined,
+      });
       if ('error' in result) {
         setVariantErrors((prev) => ({ ...prev, [variantId]: result.error }));
         toast.error(result.error);
@@ -271,7 +296,13 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
         setVariants((prev) =>
           prev.map((v) =>
             v.id === variantId
-              ? { ...v, stock, price_override: priceOverride, promo_price_override: promoPriceOverride }
+              ? {
+                  ...v,
+                  stock,
+                  price_override: priceOverride,
+                  promo_price_override: promoPriceOverride,
+                  cost_override: allowCostTracking ? costOverride : v.cost_override,
+                }
               : v
           )
         );
@@ -782,6 +813,9 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                   <th className="text-left text-xs text-white/40 font-medium py-2 pr-3 w-28">Stock</th>
                   <th className="text-left text-xs text-white/40 font-medium py-2 pr-3 w-36">Precio (opcional)</th>
                   <th className="text-left text-xs text-white/40 font-medium py-2 pr-3 w-36">Promo (opcional)</th>
+                  {allowCostTracking && (
+                    <th className="text-left text-xs text-white/40 font-medium py-2 pr-3 w-36">Costo (opcional)</th>
+                  )}
                   <th className="text-left text-xs text-white/40 font-medium py-2 w-24">Imagen</th>
                 </tr>
               </thead>
@@ -795,6 +829,9 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                     priceInput={priceInputs[variant.id] ?? ''}
                     promoInput={promoInputs[variant.id] ?? ''}
                     priceOverridePlaceholder={formatPrice(productPriceCents)}
+                    costInput={costInputs[variant.id] ?? ''}
+                    costOverridePlaceholder={productCostCents != null ? formatPrice(productCostCents) : 'Sin costo'}
+                    showCost={allowCostTracking}
                     error={variantErrors[variant.id]}
                     saving={savingVariant === variant.id}
                     uploadingImage={uploadingVariantId === variant.id}
@@ -802,6 +839,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                     onStockChange={(v) => setStockInputs((prev) => ({ ...prev, [variant.id]: v }))}
                     onPriceChange={(v) => setPriceInputs((prev) => ({ ...prev, [variant.id]: v }))}
                     onPromoChange={(v) => setPromoInputs((prev) => ({ ...prev, [variant.id]: v }))}
+                    onCostChange={(v) => setCostInputs((prev) => ({ ...prev, [variant.id]: v }))}
                     onBlur={() => handleVariantBlur(variant.id)}
                     onImageFileSelected={(file) => handleImageUpload(variant.id, file)}
                   />
@@ -821,6 +859,9 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                 priceInput={priceInputs[variant.id] ?? ''}
                 promoInput={promoInputs[variant.id] ?? ''}
                 priceOverridePlaceholder={formatPrice(productPriceCents)}
+                costInput={costInputs[variant.id] ?? ''}
+                costOverridePlaceholder={productCostCents != null ? formatPrice(productCostCents) : 'Sin costo'}
+                showCost={allowCostTracking}
                 error={variantErrors[variant.id]}
                 saving={savingVariant === variant.id}
                 uploadingImage={uploadingVariantId === variant.id}
@@ -828,6 +869,7 @@ export function VariantsSection({ productId, productPriceCents, onVariantsChange
                 onStockChange={(v) => setStockInputs((prev) => ({ ...prev, [variant.id]: v }))}
                 onPriceChange={(v) => setPriceInputs((prev) => ({ ...prev, [variant.id]: v }))}
                 onPromoChange={(v) => setPromoInputs((prev) => ({ ...prev, [variant.id]: v }))}
+                onCostChange={(v) => setCostInputs((prev) => ({ ...prev, [variant.id]: v }))}
                 onBlur={() => handleVariantBlur(variant.id)}
                 onImageFileSelected={(file) => handleImageUpload(variant.id, file)}
               />
@@ -850,6 +892,10 @@ type VariantRowProps = {
   priceInput: string;
   promoInput: string;
   priceOverridePlaceholder: string;
+  costInput: string;
+  costOverridePlaceholder: string;
+  /** Plan Pro únicamente. false = no se renderiza el campo de costo. */
+  showCost: boolean;
   error?: string;
   saving: boolean;
   uploadingImage: boolean;
@@ -857,6 +903,7 @@ type VariantRowProps = {
   onStockChange: (v: string) => void;
   onPriceChange: (v: string) => void;
   onPromoChange: (v: string) => void;
+  onCostChange: (v: string) => void;
   onBlur: () => void;
   onImageFileSelected: (file: File) => void;
 };
@@ -868,6 +915,9 @@ function VariantRow({
   priceInput,
   promoInput,
   priceOverridePlaceholder,
+  costInput,
+  costOverridePlaceholder,
+  showCost,
   error,
   saving,
   uploadingImage,
@@ -875,6 +925,7 @@ function VariantRow({
   onStockChange,
   onPriceChange,
   onPromoChange,
+  onCostChange,
   onBlur,
   onImageFileSelected,
 }: VariantRowProps) {
@@ -926,6 +977,23 @@ function VariantRow({
             />
           </div>
         </td>
+        {showCost && (
+          <td className="py-2.5 pr-3">
+            <div className="relative">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-white/40">$</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={costInput}
+                onChange={(e) => onCostChange(e.target.value)}
+                onBlur={onBlur}
+                placeholder={costOverridePlaceholder}
+                className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 pl-6 pr-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+                aria-label={`Costo para ${label}`}
+              />
+            </div>
+          </td>
+        )}
         <td className="py-2.5">
           <VariantImageCell
             imageUrl={variant.image_url}
@@ -939,7 +1007,7 @@ function VariantRow({
       </tr>
       {error && (
         <tr>
-          <td colSpan={5} className="pb-2">
+          <td colSpan={showCost ? 6 : 5} className="pb-2">
             <p role="alert" className="text-xs text-red-400">{error}</p>
           </td>
         </tr>
@@ -959,6 +1027,9 @@ function VariantCard({
   priceInput,
   promoInput,
   priceOverridePlaceholder,
+  costInput,
+  costOverridePlaceholder,
+  showCost,
   error,
   saving,
   uploadingImage,
@@ -966,6 +1037,7 @@ function VariantCard({
   onStockChange,
   onPriceChange,
   onPromoChange,
+  onCostChange,
   onBlur,
   onImageFileSelected,
 }: VariantRowProps) {
@@ -1015,6 +1087,23 @@ function VariantCard({
             />
           </div>
         </div>
+        {showCost && (
+          <div>
+            <label className="block text-xs text-white/40 mb-1">Costo (opcional)</label>
+            <div className="relative">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-white/40">$</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={costInput}
+                onChange={(e) => onCostChange(e.target.value)}
+                onBlur={onBlur}
+                placeholder={costOverridePlaceholder}
+                className="w-full rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 pl-6 pr-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+              />
+            </div>
+          </div>
+        )}
       </div>
       <div>
         <label className="block text-xs text-white/40 mb-1">Imagen (opcional)</label>

@@ -153,3 +153,135 @@ describe('createPendingOrder — teléfono de la compradora (canal whatsapp)', (
     expect((insertedPayload as Record<string, unknown> | null)?.customer_phone).toBe('+56912345678');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Snapshot del costo (add-product-cost-tracking, D1/D6): createPendingOrder
+// congela el costo efectivo vigente en cost_at_purchase, para cualquier plan.
+// ---------------------------------------------------------------------------
+
+describe('createPendingOrder — snapshot del costo (cost_at_purchase)', () => {
+  /** Captura el payload insertado en order_items, devolviéndolo al resolver. */
+  function captureOrderItemsInsert(tables: Record<string, TableResponse>) {
+    const admin = makeFakeAdmin(tables);
+    let insertedRows: Array<Record<string, unknown>> | null = null;
+    const originalFrom = admin.from as ReturnType<typeof vi.fn>;
+    admin.from = vi.fn((table: string) => {
+      if (table === 'order_items') {
+        const builder = makeChainable({ data: null, error: null });
+        const originalInsert = builder.insert as (payload: unknown) => typeof builder;
+        builder.insert = (payload: Array<Record<string, unknown>>) => {
+          insertedRows = payload;
+          return originalInsert(payload);
+        };
+        return builder;
+      }
+      return originalFrom(table);
+    });
+    return { admin, getInsertedRows: () => insertedRows };
+  }
+
+  it('congela el costo efectivo vigente del producto en cost_at_purchase', async () => {
+    const tables = baseTables({
+      products: {
+        data: [
+          {
+            id: PRODUCT_ID,
+            name: 'Producto test',
+            price_cents: 10000,
+            promo_price_cents: null,
+            cost_cents: 500,
+            stock: null,
+            section_id: null,
+            min_quantity: 1,
+            qty_step: 1,
+            sections: null,
+          },
+        ],
+        error: null,
+      },
+    });
+    const { admin, getInsertedRows } = captureOrderItemsInsert(tables);
+    mockCreateAdminClient.mockReturnValue(admin);
+
+    const result = await createPendingOrder({
+      store_id: STORE_ID,
+      items: [{ product_id: PRODUCT_ID, quantity: 2 }],
+      customer_phone: '11 1234-5678',
+    });
+
+    expect('order_id' in result).toBe(true);
+    const rows = getInsertedRows();
+    expect(rows).not.toBeNull();
+    expect((rows as Array<Record<string, unknown>>)[0].cost_at_purchase).toBe(500);
+    expect((rows as Array<Record<string, unknown>>)[0].quantity).toBe(2);
+  });
+
+  it('producto sin costo cargado crea el pedido igual, con la línea en ausente (null)', async () => {
+    const tables = baseTables({
+      products: {
+        data: [
+          {
+            id: PRODUCT_ID,
+            name: 'Producto test',
+            price_cents: 10000,
+            promo_price_cents: null,
+            cost_cents: null,
+            stock: null,
+            section_id: null,
+            min_quantity: 1,
+            qty_step: 1,
+            sections: null,
+          },
+        ],
+        error: null,
+      },
+    });
+    const { admin, getInsertedRows } = captureOrderItemsInsert(tables);
+    mockCreateAdminClient.mockReturnValue(admin);
+
+    const result = await createPendingOrder({
+      store_id: STORE_ID,
+      items: [{ product_id: PRODUCT_ID, quantity: 1 }],
+      customer_phone: '11 1234-5678',
+    });
+
+    expect('order_id' in result).toBe(true);
+    const rows = getInsertedRows();
+    expect((rows as Array<Record<string, unknown>>)[0].cost_at_purchase).toBeNull();
+  });
+
+  it('el costo congelado no depende del plan de la tienda (se escribe igual para cualquier plan)', async () => {
+    // El path de creación de pedidos no consulta el plan en ningún punto: si
+    // costData se congela igual, es porque no hay lookup de plan de por medio.
+    const tables = baseTables({
+      products: {
+        data: [
+          {
+            id: PRODUCT_ID,
+            name: 'Producto test',
+            price_cents: 10000,
+            promo_price_cents: null,
+            cost_cents: 500,
+            stock: null,
+            section_id: null,
+            min_quantity: 1,
+            qty_step: 1,
+            sections: null,
+          },
+        ],
+        error: null,
+      },
+    });
+    const { admin, getInsertedRows } = captureOrderItemsInsert(tables);
+    mockCreateAdminClient.mockReturnValue(admin);
+
+    const result = await createPendingOrder({
+      store_id: STORE_ID,
+      items: [{ product_id: PRODUCT_ID, quantity: 1 }],
+      customer_phone: '11 1234-5678',
+    });
+
+    expect('order_id' in result).toBe(true);
+    expect((getInsertedRows() as Array<Record<string, unknown>>)[0].cost_at_purchase).toBe(500);
+  });
+});

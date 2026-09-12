@@ -32,6 +32,13 @@ function formatPrice(cents: number): string {
   }).format(cents / 100);
 }
 
+function formatPercent(ratio: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    style: 'percent',
+    maximumFractionDigits: 0,
+  }).format(ratio);
+}
+
 function formatCompact(cents: number): string {
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
@@ -121,9 +128,13 @@ export function OrdersStats({ accentColor, initialStats, initialRange }: Props) 
     });
   };
 
-  const { kpis, revenue_by_day, top_products, orders_by_section } = stats;
+  const { kpis, revenue_by_day, top_products, orders_by_section, margin } = stats;
 
   const isEmpty = kpis.order_count === 0;
+  // D5: cobertura 0 = ningún costo congelado en el período (incluye planes sin
+  // allowCostTracking, que el servidor ya fuerza a coverage 0 — 5b.6). Ni en
+  // cero ni vacía: la tarjeta directamente no se renderiza.
+  const showMargin = margin.cost_coverage_pct > 0;
 
   const donutColors = generateDonutColors(accentColor, orders_by_section.length);
   const donutTotal = orders_by_section.reduce((s, d) => s + d.count, 0);
@@ -186,6 +197,31 @@ export function OrdersStats({ accentColor, initialStats, initialRange }: Props) 
               <p className="text-xs text-white/40 mt-1">Tasa de confirmación · confirmados / total</p>
             </div>
           </div>
+
+          {/* Costo/ganancia/margen (add-product-cost-tracking, Pro únicamente).
+              La cobertura vive en la MISMA tarjeta que la ganancia (D5) — no en
+              un tooltip ni al pie — y el grupo entero no se renderiza con
+              cobertura 0, ni en cero ni vacío. */}
+          {showMargin && (
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-2xl font-bold text-[#FBF7EC]">{formatPrice(margin.cost_cents)}</p>
+                <p className="text-xs text-white/40 mt-1">Costo · líneas con costo cargado</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-2xl font-bold text-[#FBF7EC]">{formatPrice(margin.profit_cents)}</p>
+                <p className="text-xs text-white/40 mt-1">
+                  Ganancia · cobertura {formatPercent(margin.cost_coverage_pct)} de la facturación
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-2xl font-bold text-[#FBF7EC]">
+                  {margin.margin_pct != null ? formatPercent(margin.margin_pct) : '—'}
+                </p>
+                <p className="text-xs text-white/40 mt-1">Margen · sobre la facturación con costo</p>
+              </div>
+            </div>
+          )}
 
           {/* Area chart */}
           <div className="rounded-xl border border-white/10 bg-white/5 px-4 pt-4 pb-2">

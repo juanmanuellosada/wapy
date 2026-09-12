@@ -46,6 +46,7 @@ type EditableFields = {
   stock_display: string; // '' = ilimitado
   is_active: boolean;
   price_tiers: PriceTier[]; // tramos por cantidad; [] = sin tramos
+  cost_display: string; // '' = sin costo cargado (solo se usa si allowCostTracking)
 };
 
 /** Clave estable de un set de tramos, para comparar filas sin deep-equal. */
@@ -106,6 +107,7 @@ function buildEditableFields(p: Product, tiers: PriceTier[] = []): EditableField
     stock_display: p.stock != null ? String(p.stock) : '',
     is_active: p.is_active,
     price_tiers: sortTiers(tiers),
+    cost_display: p.cost_cents != null ? formatPriceDisplay(p.cost_cents) : '',
   };
 }
 
@@ -121,6 +123,7 @@ function normalizeFields(f: EditableFields) {
     stock: stockTrim === '' ? null : Number(stockTrim),
     is_active: f.is_active,
     price_tiers: sortTiers(f.price_tiers),
+    cost_cents: f.cost_display.trim() === '' ? null : parsePriceDisplay(f.cost_display),
   };
 }
 
@@ -135,7 +138,8 @@ function isRowDirty(current: EditableFields, baseline: EditableFields): boolean 
     a.section_id !== b.section_id ||
     a.stock !== b.stock ||
     a.is_active !== b.is_active ||
-    tiersKey(a.price_tiers) !== tiersKey(b.price_tiers)
+    tiersKey(a.price_tiers) !== tiersKey(b.price_tiers) ||
+    a.cost_cents !== b.cost_cents
   );
 }
 
@@ -157,12 +161,18 @@ function computeRowValidation(fields: EditableFields): ProductValidationIssue[] 
       promo_price_cents: n.promo_price_cents,
       stock: stockIsGarbage ? null : n.stock,
       price_tiers: n.price_tiers,
+      cost_cents: n.cost_cents,
     })
   );
   return issues;
 }
 
-function toBulkUpdateRow(row: RowState) {
+/**
+ * `includeCost` viene del plan de la tienda (allowCostTracking), no de la fila:
+ * o se manda para TODO el lote o no se manda para ninguna fila, así el upsert
+ * en lote del server no recibe columnas parciales (ver bulkUpdateProducts, 3.5).
+ */
+function toBulkUpdateRow(row: RowState, includeCost: boolean) {
   const n = normalizeFields(row);
   return {
     id: row.id,
@@ -174,6 +184,7 @@ function toBulkUpdateRow(row: RowState) {
     stock: n.stock !== null && Number.isNaN(n.stock) ? null : n.stock,
     is_active: n.is_active,
     price_tiers: n.price_tiers,
+    ...(includeCost ? { cost_cents: n.cost_cents } : {}),
   };
 }
 
@@ -194,8 +205,10 @@ function buildSectionOptions(sections: Section[]): SelectOption[] {
 // (tarjeta apilada por defecto, cada campo con su label visible).
 // ---------------------------------------------------------------------------
 
-const GRID_COLS =
+const GRID_COLS_WITHOUT_COST =
   'md:grid-cols-[minmax(190px,1.6fr)_minmax(130px,1.1fr)_96px_96px_110px_140px_84px_92px_44px]';
+const GRID_COLS_WITH_COST =
+  'md:grid-cols-[minmax(190px,1.6fr)_minmax(130px,1.1fr)_96px_96px_96px_110px_140px_84px_92px_44px]';
 
 const inputClass =
   'w-full min-w-0 rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors';
@@ -221,6 +234,8 @@ type RowProps = {
   row: RowState;
   sectionOptions: SelectOption[];
   selected: boolean;
+  /** Plan Pro únicamente. false = no se renderiza la columna de costo. */
+  showCost: boolean;
   onFieldChange: (id: string, patch: Partial<EditableFields>) => void;
   onToggleSelect: (id: string) => void;
   onOpenModal: (id: string) => void;
@@ -230,15 +245,17 @@ const ProductGridRow = memo(function ProductGridRow({
   row,
   sectionOptions,
   selected,
+  showCost,
   onFieldChange,
   onToggleSelect,
   onOpenModal,
 }: RowProps) {
   const errorFields = new Set(row.errors.map((e) => e.field));
+  const gridCols = showCost ? GRID_COLS_WITH_COST : GRID_COLS_WITHOUT_COST;
 
   return (
     <div
-      className={`rounded-xl border p-3 mb-3 md:mb-0 md:rounded-none md:border-0 md:border-b md:p-0 md:py-2.5 md:px-3 md:grid ${GRID_COLS} md:items-center md:gap-3 transition-colors ${
+      className={`rounded-xl border p-3 mb-3 md:mb-0 md:rounded-none md:border-0 md:border-b md:p-0 md:py-2.5 md:px-3 md:grid ${gridCols} md:items-center md:gap-3 transition-colors ${
         row.errors.length > 0
           ? 'border-red-500/40 bg-red-500/5'
           : selected
@@ -315,6 +332,23 @@ const ProductGridRow = memo(function ProductGridRow({
           />
         </div>
       </Field>
+
+      {showCost && (
+        <Field label="Costo">
+          <div className="relative">
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-white/40">$</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="Sin costo"
+              value={row.cost_display}
+              onChange={(e) => onFieldChange(row.id, { cost_display: e.target.value })}
+              aria-invalid={errorFields.has('cost_cents') || undefined}
+              className={`${inputClass} pl-6`}
+            />
+          </div>
+        </Field>
+      )}
 
       <Field label="Tramos">
         <button
@@ -405,10 +439,12 @@ type Props = {
   sections: Section[];
   maxImagesPerProduct: number;
   allowVariants: boolean;
+  /** Plan Pro únicamente (add-product-cost-tracking). false = sin columna de costo. */
+  allowCostTracking: boolean;
   onClose: () => void;
 };
 
-export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections, maxImagesPerProduct, allowVariants, onClose }: Props) {
+export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections, maxImagesPerProduct, allowVariants, allowCostTracking, onClose }: Props) {
   const productIds = useMemo(() => products.map((p) => p.id), [products]);
   const sectionOptions = useMemo(() => buildSectionOptions(sections), [sections]);
 
@@ -619,7 +655,7 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
 
     setSaving(true);
     setServerError(null);
-    const payload = dirtyRows.map((r) => toBulkUpdateRow(r));
+    const payload = dirtyRows.map((r) => toBulkUpdateRow(r, allowCostTracking));
     const result = await bulkUpdateProducts(payload);
 
     if ('error' in result) {
@@ -641,6 +677,7 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
           stock_display: r.stock_display,
           is_active: r.is_active,
           price_tiers: r.price_tiers,
+          cost_display: r.cost_display,
         };
         baselineRef.current[r.id] = savedFields;
         next[r.id] = { ...next[r.id], dirty: false };
@@ -712,6 +749,7 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
             return s !== null && Number.isNaN(s) ? modalOriginal.stock : s;
           })(),
           is_active: modalRow.is_active,
+          cost_cents: allowCostTracking ? normalizeFields(modalRow).cost_cents : modalOriginal.cost_cents,
         }
       : null;
 
@@ -981,11 +1019,12 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
       )}
 
       {/* Cabecera de columnas (desktop) */}
-      <div className={`hidden md:grid ${GRID_COLS} gap-3 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-white/40 border-b border-white/10 flex-shrink-0`}>
+      <div className={`hidden md:grid ${allowCostTracking ? GRID_COLS_WITH_COST : GRID_COLS_WITHOUT_COST} gap-3 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-white/40 border-b border-white/10 flex-shrink-0`}>
         <span>Producto</span>
         <span>Descripción</span>
         <span>Precio</span>
         <span>Promo</span>
+        {allowCostTracking && <span>Costo</span>}
         <span>Tramos</span>
         <span>Sección</span>
         <span>Stock</span>
@@ -1006,6 +1045,7 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
               row={rowsById[id]}
               sectionOptions={sectionOptions}
               selected={selectedIds.has(id)}
+              showCost={allowCostTracking}
               onFieldChange={onFieldChange}
               onToggleSelect={toggleSelect}
               onOpenModal={openModalFor}
@@ -1057,6 +1097,7 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
           nextPosition={products.length}
           maxImagesPerProduct={maxImagesPerProduct}
           allowVariants={allowVariants}
+          allowCostTracking={allowCostTracking}
           onSaved={(saved, savedTiers) => {
             originalProductsRef.current[saved.id] = saved;
             const fields = buildEditableFields(saved, savedTiers);

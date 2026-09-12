@@ -20,6 +20,7 @@ import type {
   BatchUpdateOrderStatusResult,
   ListOrdersFilters,
 } from '@/lib/store/orders/actions';
+import { computeCostMargin } from '@/lib/store/orders/margin';
 import { toast } from '@/lib/toast';
 import type { Store, Section } from '@/lib/onboarding/state';
 import { Select } from '@/app/components/Select';
@@ -38,6 +39,8 @@ type Props = {
   /** 10.4/10.5: pendientes de WhatsApp anteriores a la fecha de vigencia de la política. */
   initialBacklogCount: number;
   waLifecycleEffectiveFrom: string;
+  /** Plan Pro únicamente (add-product-cost-tracking, D6/D7). false = sin margen en el detalle. */
+  allowCostTracking: boolean;
 };
 
 function formatPrice(cents: number): string {
@@ -46,6 +49,13 @@ function formatPrice(cents: number): string {
     currency: 'ARS',
     minimumFractionDigits: 0,
   }).format(cents / 100);
+}
+
+function formatPercent(ratio: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    style: 'percent',
+    maximumFractionDigits: 0,
+  }).format(ratio);
 }
 
 function formatDate(iso: string): string {
@@ -209,15 +219,29 @@ function hasActiveFilters(f: Filters): boolean {
 
 type OrderDetailModalProps = {
   order: OrderWithItems;
+  /** Plan Pro únicamente (add-product-cost-tracking, D6/D7). false = no se muestra el margen. */
+  allowCostTracking: boolean;
   onClose: () => void;
   onStatusChange: () => void;
   onDeleted: () => void;
 };
 
-function OrderDetailModal({ order, onClose, onStatusChange, onDeleted }: OrderDetailModalProps) {
+function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, onDeleted }: OrderDetailModalProps) {
   const [loading, setLoading] = useState<OrderStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // Costo/ganancia/margen del pedido (6.6): mismo helper y mismo criterio de
+  // línea que usa exportOrdersCsv — solo sobre líneas con costo congelado.
+  // Sin ninguna línea con costo, no se muestra la sección (ni en cero).
+  const orderMargin = computeCostMargin(
+    order.items.map((i) => ({
+      unit_price_cents: i.unit_price_cents,
+      cost_at_purchase: i.cost_at_purchase,
+      quantity: i.quantity,
+    }))
+  );
+  const showOrderMargin = allowCostTracking && orderMargin.margin_pct !== null;
 
   const handleTransition = async (next: OrderStatus) => {
     setLoading(next);
@@ -368,6 +392,27 @@ function OrderDetailModal({ order, onClose, onStatusChange, onDeleted }: OrderDe
             <p className="text-sm font-semibold text-white/70">Total</p>
             <p className="text-base font-bold text-[#F5C84B]">{formatPrice(order.total_cents)}</p>
           </div>
+
+          {/* Costo/ganancia/margen del pedido (6.6, Pro únicamente). Sin ninguna
+              línea con costo congelado no se muestra la sección, ni en cero. */}
+          {showOrderMargin && (
+            <div className="pt-2 border-t border-white/10 space-y-1">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-white/50">Costo</p>
+                <p className="text-sm text-[#FBF7EC]">{formatPrice(orderMargin.cost_cents)}</p>
+              </div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-white/50">
+                  Ganancia · cobertura {formatPercent(orderMargin.cost_coverage_pct)}
+                </p>
+                <p className="text-sm font-semibold text-[#FBF7EC]">{formatPrice(orderMargin.profit_cents)}</p>
+              </div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-white/50">Margen</p>
+                <p className="text-sm text-[#FBF7EC]">{formatPercent(orderMargin.margin_pct as number)}</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -481,6 +526,7 @@ export function OrdersPanel({
   initialDeepLinkOrder,
   initialBacklogCount,
   waLifecycleEffectiveFrom,
+  allowCostTracking,
 }: Props) {
   const [orders, setOrders] = useState<OrderWithItems[]>(initialOrders);
   const [total, setTotal] = useState(initialTotal);
@@ -1053,6 +1099,7 @@ export function OrdersPanel({
       {selectedOrder && (
         <OrderDetailModal
           order={selectedOrder}
+          allowCostTracking={allowCostTracking}
           onClose={() => setSelectedOrder(null)}
           onStatusChange={handleStatusChange}
           onDeleted={handleStatusChange}

@@ -8,7 +8,12 @@ import type { PriceTier } from '@/lib/store/pricing';
 
 export type StoreRow = Tables<'stores'>;
 export type SectionRow = Tables<'sections'>;
-export type ProductRow = Tables<'products'>;
+// El costo de mercadería (add-product-cost-tracking, Decisión D7) es un dato
+// interno del dueño: el camino público NUNCA debe poder leerlo, así que el
+// tipo lo excluye a propósito — cualquier código que intente leer
+// `product.cost_cents` acá adentro no compila. Ver el `select` explícito más
+// abajo, que es lo que hace cumplir esto en runtime.
+export type ProductRow = Omit<Tables<'products'>, 'cost_cents'>;
 
 /**
  * Lo único de `stores` que puede cruzar al cliente. `StoreRow` trae también
@@ -140,9 +145,15 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
         .eq('store_id', pub.id)
         .eq('is_active', true)
         .order('position'),
+      // D7: columnas explícitas, SIN cost_cents — este resultado viaja tal
+      // cual como prop a un client component (StoreClient) y termina en el
+      // HTML/JSON que ve cualquier visitante. Un `select('*')` acá filtraría
+      // el costo de mercadería a la tienda pública, competencia incluida.
       anon
         .from('products')
-        .select('*')
+        .select(
+          'id, store_id, section_id, name, description, price_cents, promo_price_cents, currency, image_urls, stock, is_active, position, min_quantity, qty_step, created_at, updated_at'
+        )
         .eq('store_id', pub.id)
         .eq('is_active', true)
         .order('position'),
@@ -179,7 +190,10 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
         .in('product_id', productIds)
         .order('position');
 
-      // Fetch variants + their option value associations
+      // Fetch variants + their option value associations. Ya explícito y sin
+      // cost_override (D7); además el objeto público (StorefrontVariant, más
+      // abajo) se arma campo a campo, así que ni un select más amplio lo
+      // filtraría — doble resguardo.
       const { data: variantRows } = await anon
         .from('product_variants')
         .select('id, product_id, stock, price_override, promo_price_override, image_url, position, product_variant_option_values(option_value_id, product_option_values(id, option_type_id))')

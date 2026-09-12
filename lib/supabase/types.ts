@@ -116,6 +116,7 @@ export type Database = {
       }
       order_items: {
         Row: {
+          cost_at_purchase: number | null
           id: string
           order_id: string
           price_at_purchase: number
@@ -129,6 +130,7 @@ export type Database = {
           variant_label: string | null
         }
         Insert: {
+          cost_at_purchase?: number | null
           id?: string
           order_id: string
           price_at_purchase?: number
@@ -142,6 +144,7 @@ export type Database = {
           variant_label?: string | null
         }
         Update: {
+          cost_at_purchase?: number | null
           id?: string
           order_id?: string
           price_at_purchase?: number
@@ -341,36 +344,6 @@ export type Database = {
           },
         ]
       }
-      product_variant_option_values: {
-        Row: {
-          option_value_id: string
-          variant_id: string
-        }
-        Insert: {
-          option_value_id: string
-          variant_id: string
-        }
-        Update: {
-          option_value_id?: string
-          variant_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "product_variant_option_values_option_value_id_fkey"
-            columns: ["option_value_id"]
-            isOneToOne: false
-            referencedRelation: "product_option_values"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "product_variant_option_values_variant_id_fkey"
-            columns: ["variant_id"]
-            isOneToOne: false
-            referencedRelation: "product_variants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       product_price_tiers: {
         Row: {
           created_at: string
@@ -403,8 +376,39 @@ export type Database = {
           },
         ]
       }
+      product_variant_option_values: {
+        Row: {
+          option_value_id: string
+          variant_id: string
+        }
+        Insert: {
+          option_value_id: string
+          variant_id: string
+        }
+        Update: {
+          option_value_id?: string
+          variant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_variant_option_values_option_value_id_fkey"
+            columns: ["option_value_id"]
+            isOneToOne: false
+            referencedRelation: "product_option_values"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_variant_option_values_variant_id_fkey"
+            columns: ["variant_id"]
+            isOneToOne: false
+            referencedRelation: "product_variants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_variants: {
         Row: {
+          cost_override: number | null
           created_at: string
           deleted_at: string | null
           id: string
@@ -417,6 +421,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          cost_override?: number | null
           created_at?: string
           deleted_at?: string | null
           id?: string
@@ -429,6 +434,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          cost_override?: number | null
           created_at?: string
           deleted_at?: string | null
           id?: string
@@ -452,6 +458,7 @@ export type Database = {
       }
       products: {
         Row: {
+          cost_cents: number | null
           created_at: string
           currency: string
           description: string | null
@@ -470,6 +477,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          cost_cents?: number | null
           created_at?: string
           currency?: string
           description?: string | null
@@ -488,6 +496,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          cost_cents?: number | null
           created_at?: string
           currency?: string
           description?: string | null
@@ -878,12 +887,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -907,11 +916,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -932,11 +941,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -957,11 +966,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -974,11 +983,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

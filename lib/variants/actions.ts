@@ -515,6 +515,9 @@ const updateVariantSchema = z.object({
   priceOverride: z.number().int().min(0, 'El precio debe ser ≥ 0').nullable(),
   promoPriceOverride: z.number().int().min(0, 'El promo debe ser ≥ 0').nullable(),
   imageUrl: z.string().nullable().optional(),
+  // Costo de mercadería (add-product-cost-tracking, Pro únicamente).
+  // undefined = no tocar el costo existente; null = "sin costo cargado".
+  costOverride: z.number().int().min(0, 'El costo debe ser ≥ 0').nullable().optional(),
 });
 
 export type UpdateVariantInput = {
@@ -523,6 +526,7 @@ export type UpdateVariantInput = {
   priceOverride: number | null;
   promoPriceOverride: number | null;
   imageUrl?: string | null;
+  costOverride?: number | null;
 };
 
 export type UpdateVariantResult = { ok: true } | { error: string };
@@ -536,7 +540,16 @@ export async function updateVariant(
   const parsed = updateVariantSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const { variantId, stock, priceOverride, promoPriceOverride, imageUrl } = parsed.data;
+  const { variantId, stock, priceOverride, promoPriceOverride, imageUrl, costOverride } = parsed.data;
+
+  // El costo es Pro únicamente: el servidor rechaza la escritura sin confiar
+  // en que la interfaz oculte el campo (Decisión D6/D7).
+  if (costOverride !== undefined) {
+    const { allowCostTracking } = getPlanLimits((store as unknown as { plan: PlanId | null }).plan);
+    if (!allowCostTracking) {
+      return { error: 'Tu plan no incluye el costo de mercadería. Pasate a Pro para cargarlo.' };
+    }
+  }
 
   try {
   const admin = createAdminClient();
@@ -573,6 +586,7 @@ export async function updateVariant(
       price_override: priceOverride,
       promo_price_override: promoPriceOverride,
       ...(imageUrl !== undefined ? { image_url: imageUrl } : {}),
+      ...(costOverride !== undefined ? { cost_override: costOverride } : {}),
     })
     .eq('id', variantId);
 
@@ -1046,6 +1060,9 @@ export type VariantData = {
   stock: number | null; // null = no tracking (infinite stock)
   price_override: number | null;
   promo_price_override: number | null;
+  // Costo de mercadería de la variante (add-product-cost-tracking). null = hereda
+  // el costo del producto (Decisión D2); no confundir con 0, que es un costo cargado.
+  cost_override: number | null;
   image_url: string | null;
   position: number;
   // value ids that compose this variant (option_value_id for each type)
@@ -1088,7 +1105,7 @@ export async function getProductVariantsData(
   // Fetch active variants with their option value links
   const { data: rawVariants } = await admin
     .from('product_variants')
-    .select('id, stock, price_override, promo_price_override, image_url, position, product_variant_option_values(option_value_id)')
+    .select('id, stock, price_override, promo_price_override, cost_override, image_url, position, product_variant_option_values(option_value_id)')
     .eq('product_id', productId)
     .is('deleted_at', null)
     .order('position');
@@ -1098,6 +1115,7 @@ export async function getProductVariantsData(
     stock: v.stock,
     price_override: v.price_override,
     promo_price_override: v.promo_price_override,
+    cost_override: v.cost_override,
     image_url: v.image_url,
     position: v.position,
     option_value_ids: (

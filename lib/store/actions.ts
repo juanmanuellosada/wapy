@@ -388,6 +388,10 @@ type ProductInput = {
   // undefined = not touched by this call (preserves the existing tiers on update);
   // [] = explicitly "sin tramos".
   price_tiers?: PriceTier[];
+  // Costo de mercadería (add-product-cost-tracking, Pro únicamente).
+  // undefined = not touched by this call (preserves the existing cost on update);
+  // null = explicitly "sin costo cargado"; 0 es un valor válido (Decisión D3).
+  cost_cents?: number | null;
 };
 
 /** Validates a product-level promo price against its regular price. Server is the source of truth (design Decisión 4). */
@@ -400,6 +404,21 @@ function validatePromoPrice(
     return { error: 'El precio promocional debe ser mayor o igual a 0 y menor al precio regular.', ok: false };
   }
   return { ok: true, value: promo };
+}
+
+/**
+ * Valida el costo de mercadería (add-product-cost-tracking, Decisión D3):
+ * null es "sin dato", 0 es "costo cero" — ambos válidos, sin relación de
+ * orden con el precio de venta (vender a pérdida es legítimo).
+ */
+function validateCostCents(
+  cost: number | null | undefined
+): { ok: true; value: number | null } | { ok: false; error: string } {
+  if (cost === undefined || cost === null) return { ok: true, value: null };
+  if (!Number.isInteger(cost) || cost < 0) {
+    return { error: 'El costo debe ser un número entero mayor o igual a 0.', ok: false };
+  }
+  return { ok: true, value: cost };
 }
 
 /**
@@ -467,11 +486,17 @@ export async function saveStoreProduct(
 
   // Validate image count against plan limit (applies to both create and edit).
   const storePlan = (store as unknown as { plan: PlanId | null }).plan;
-  const { maxImagesPerProduct } = getPlanLimits(storePlan);
+  const { maxImagesPerProduct, allowCostTracking } = getPlanLimits(storePlan);
   if (!isUnlimited(maxImagesPerProduct) && product.image_urls.length > maxImagesPerProduct) {
     return {
       error: `Tu plan permite hasta ${maxImagesPerProduct} imagen${maxImagesPerProduct === 1 ? '' : 'es'} por producto. Pasate a un plan superior para subir más.`,
     };
+  }
+
+  // El costo es Pro únicamente: el servidor rechaza la escritura sin confiar
+  // en que la interfaz oculte el campo (add-product-cost-tracking, Decisión D6/D7).
+  if (product.cost_cents !== undefined && !allowCostTracking) {
+    return { error: 'Tu plan no incluye el costo de mercadería. Pasate a Pro para cargarlo.' };
   }
 
   if (product.id) {
@@ -497,6 +522,15 @@ export async function saveStoreProduct(
       if (tierIssues.length > 0) return { error: tierIssues[0].message };
     }
 
+    // cost_cents sigue el mismo patrón que promo_price_cents: undefined = no
+    // tocar, para que un guardado que no toca el costo no lo borre.
+    const costUpdate: { cost_cents?: number | null } = {};
+    if (product.cost_cents !== undefined) {
+      const costResult = validateCostCents(product.cost_cents);
+      if (!costResult.ok) return { error: costResult.error };
+      costUpdate.cost_cents = costResult.value;
+    }
+
     const { error } = await admin
       .from('products')
       .update({
@@ -511,6 +545,7 @@ export async function saveStoreProduct(
         updated_at: new Date().toISOString(),
         ...quantityUpdate,
         ...promoUpdate,
+        ...costUpdate,
       })
       .eq('id', product.id)
       .eq('store_id', store.id);
@@ -541,6 +576,9 @@ export async function saveStoreProduct(
   const promoResult = validatePromoPrice(product.promo_price_cents, product.price_cents);
   if (!promoResult.ok) return { error: promoResult.error };
 
+  const costResult = validateCostCents(product.cost_cents);
+  if (!costResult.ok) return { error: costResult.error };
+
   if (product.price_tiers !== undefined) {
     const tierIssues = validatePriceTiers(product.price_tiers, product.price_cents);
     if (tierIssues.length > 0) return { error: tierIssues[0].message };
@@ -554,6 +592,7 @@ export async function saveStoreProduct(
       description: product.description ?? null,
       price_cents: product.price_cents,
       promo_price_cents: promoResult.value,
+      cost_cents: costResult.value,
       stock: product.stock ?? null,
       section_id: product.section_id ?? null,
       image_urls: product.image_urls,
@@ -691,6 +730,10 @@ type BulkUpdateRow = {
   is_active: boolean;
   // undefined = esta fila no tocó los tramos; [] = "sin tramos".
   price_tiers?: PriceTier[];
+  // Costo de mercadería (add-product-cost-tracking, Pro únicamente). undefined =
+  // esta fila no tocó el costo (la grilla oculta la columna a planes no-Pro);
+  // null = "sin costo cargado"; 0 es un valor válido (Decisión D3). Ver 3.5.
+  cost_cents?: number | null;
 };
 
 export async function bulkUpdateProducts(
@@ -700,13 +743,25 @@ export async function bulkUpdateProducts(
   if (!store) return { error: 'No se encontró la tienda.' };
 
   const storePlan = (store as unknown as { plan: PlanId | null }).plan;
-  const { allowBulkProducts } = getPlanLimits(storePlan);
+  const { allowBulkProducts, allowCostTracking } = getPlanLimits(storePlan);
   if (!allowBulkProducts) {
     return { error: 'Tu plan no incluye edición masiva de productos. Pasate a Pro para habilitarla.' };
   }
 
   if (rows.length === 0) {
     return { error: 'No hay cambios para guardar.' };
+  }
+
+  // El costo es Pro únicamente (mismo gating que saveStoreProduct, D6/D7).
+  // Además, dentro de un mismo lote viaja para TODAS las filas o para NINGUNA:
+  // mandarlo parcial arriesgaría que el upsert en lote complete con NULL las
+  // filas que no lo mandaron, borrando costos ya cargados.
+  const rowsWithCost = rows.filter((r) => r.cost_cents !== undefined).length;
+  if (rowsWithCost > 0 && rowsWithCost !== rows.length) {
+    return { error: 'Error interno: el costo debe enviarse para todos los productos del lote o para ninguno.' };
+  }
+  if (rowsWithCost > 0 && !allowCostTracking) {
+    return { error: 'Tu plan no incluye el costo de mercadería. Pasate a Pro para cargarlo.' };
   }
 
   const admin = createAdminClient();
@@ -729,6 +784,7 @@ export async function bulkUpdateProducts(
       promo_price_cents: row.promo_price_cents,
       stock: row.stock,
       price_tiers: row.price_tiers,
+      cost_cents: row.cost_cents,
     });
     if (issues.length > 0) return { error: issues[0].message };
   }
@@ -745,6 +801,7 @@ export async function bulkUpdateProducts(
     stock: row.stock,
     is_active: row.is_active,
     updated_at: new Date().toISOString(),
+    ...(row.cost_cents !== undefined ? { cost_cents: row.cost_cents } : {}),
   }));
 
   const { error } = await admin.from('products').upsert(updateRows);

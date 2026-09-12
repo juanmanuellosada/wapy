@@ -275,7 +275,10 @@ describe('getOrderStats', () => {
 
   function setup() {
     const admin = makeFakeAdmin({
-      stores: [{ id: 's1', owner_id: 'u1' }],
+      // plan 'pro': estos tests ejercitan el cálculo real de margen (5.5), que
+      // 5b.6 gatea server-side a Pro — sin esto, getOrderStats devolvería el
+      // margen "vacío" sin importar los costos cargados en los fixtures.
+      stores: [{ id: 's1', owner_id: 'u1', plan: 'pro' }],
       orders: [
         // Confirmado con cupón: el ingreso debe descontar el descuento.
         {
@@ -315,10 +318,13 @@ describe('getOrderStats', () => {
         },
       ],
       order_items: [
-        { order_id: 'o1', product_name: 'Remera', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa' },
-        { order_id: 'o2', product_name: 'Remera', unit_price_cents: 100_000, quantity: 3, section_name: 'Calzado' },
-        { order_id: 'o3', product_name: 'Campera', unit_price_cents: 100_000, quantity: 5, section_name: 'Ropa' },
-        { order_id: 'o4', product_name: 'Pantalón', unit_price_cents: 100_000, quantity: 2, section_name: 'Ropa' },
+        // o1 (confirmed): costo cargado — participa de costo/ganancia.
+        { order_id: 'o1', product_name: 'Remera', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa', cost_at_purchase: 60_000 },
+        // o2 (delivered): sin costo cargado — no participa, pero sí de ingresos/top_products.
+        { order_id: 'o2', product_name: 'Remera', unit_price_cents: 100_000, quantity: 3, section_name: 'Calzado', cost_at_purchase: null },
+        // o3 (pending) y o4 (cancelled): tienen costo cargado pero no deben aportar nada.
+        { order_id: 'o3', product_name: 'Campera', unit_price_cents: 100_000, quantity: 5, section_name: 'Ropa', cost_at_purchase: 50_000 },
+        { order_id: 'o4', product_name: 'Pantalón', unit_price_cents: 100_000, quantity: 2, section_name: 'Ropa', cost_at_purchase: 50_000 },
       ],
     });
     mockCreateAdminClient.mockReturnValue(admin);
@@ -366,6 +372,95 @@ describe('getOrderStats', () => {
     );
     expect(sections['Ropa']).toBe(1); // solo el item de o1
     expect(sections['Calzado']).toBe(1); // solo el item de o2
+  });
+
+  // -------------------------------------------------------------------------
+  // Costo, ganancia y margen (add-product-cost-tracking, Decisión D4)
+  // -------------------------------------------------------------------------
+
+  it('la ganancia solo cuenta las líneas con costo congelado, ignorando las que no tienen', async () => {
+    setup();
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+
+    // Solo el item de o1 tiene costo: ingreso 100.000, costo 60.000 → ganancia 40.000.
+    // El item de o2 (sin costo) no participa, aunque sí cuenta para ingresos/top_products.
+    expect(result.margin.costed_revenue_cents).toBe(100_000);
+    expect(result.margin.cost_cents).toBe(60_000);
+    expect(result.margin.profit_cents).toBe(40_000);
+    expect(result.margin.margin_pct).toBeCloseTo(0.4);
+  });
+
+  it('la cobertura es parcial cuando no todas las líneas tienen costo', async () => {
+    setup();
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+
+    // Facturación total confirmada: o1 (100.000) + o2 (300.000) = 400.000.
+    // Con costo: solo o1 (100.000) → cobertura 25%.
+    expect(result.margin.cost_coverage_pct).toBeCloseTo(0.25);
+  });
+
+  it('sin ningún costo cargado en el período, la cobertura es cero y el margen es null', async () => {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1', plan: 'pro' }],
+      orders: [{ id: 'o1', store_id: 's1', status: 'confirmed', total_cents: 100_000, discount_cents: 0, created_at: now }],
+      order_items: [
+        { order_id: 'o1', product_name: 'Remera', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa', cost_at_purchase: null },
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.margin.cost_coverage_pct).toBe(0);
+    expect(result.margin.margin_pct).toBeNull();
+    // El KPI de ingresos no se ve afectado por la ausencia de costo.
+    expect(result.kpis.revenue_cents).toBe(100_000);
+  });
+
+  it('los pedidos pendientes o cancelados no aportan a costo, ganancia ni cobertura aunque tengan costo congelado', async () => {
+    setup();
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+
+    // o3 (pending) y o4 (cancelled) tienen cost_at_purchase cargado en el fixture,
+    // pero si aportaran, cost_cents sería 60.000 + 50.000 + 50.000 = 160.000 en vez de 60.000.
+    expect(result.margin.cost_cents).toBe(60_000);
+  });
+
+  it('una tienda sin allowCostTracking recibe el margen vacío aunque haya costo congelado (5b.6)', async () => {
+    const admin = makeFakeAdmin({
+      // Sin 'plan' → getPlanLimits(undefined) cae a 'inicial' (fail closed).
+      stores: [{ id: 's1', owner_id: 'u1' }],
+      orders: [{ id: 'o1', store_id: 's1', status: 'confirmed', total_cents: 100_000, discount_cents: 0, created_at: now }],
+      order_items: [
+        { order_id: 'o1', product_name: 'Remera', unit_price_cents: 100_000, quantity: 1, section_name: 'Ropa', cost_at_purchase: 60_000 },
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await getOrderStats('30d');
+    if ('error' in result) throw new Error('unexpected error');
+
+    // El gating es server-side, no solo de la UI: aunque el item tiene costo
+    // congelado, una tienda no-Pro no debe recibirlo en la respuesta.
+    expect(result.margin).toEqual({
+      costed_revenue_cents: 0,
+      cost_cents: 0,
+      profit_cents: 0,
+      margin_pct: null,
+      cost_coverage_pct: 0,
+    });
+    // El KPI de ingresos no depende del plan.
+    expect(result.kpis.revenue_cents).toBe(100_000);
   });
 });
 
@@ -682,6 +777,123 @@ describe('exportOrdersCsv', () => {
     // ingenuo por ',' desalinearía las columnas siguientes.
     const rowCols = parseCsvRow(row);
     expect(rowCols[headerCols.indexOf('customer_phone')]).toBe('+5491122334455');
+  });
+
+  // -------------------------------------------------------------------------
+  // Costo, ganancia y margen en el CSV (add-product-cost-tracking, D8)
+  // -------------------------------------------------------------------------
+
+  function csvOrderRow(overrides: Row = {}): Row {
+    return {
+      id: 'o1',
+      store_id: 's1',
+      status: 'confirmed',
+      channel: 'whatsapp',
+      customer_name: 'Juan',
+      customer_phone: null,
+      customer_email: null,
+      delivery_address: null,
+      total_cents: 150000,
+      currency: 'ARS',
+      notes: null,
+      created_at: '2026-08-01T12:00:00Z',
+      confirmed_at: null,
+      cancelled_at: null,
+      delivered_at: null,
+      cancelled_by: null,
+      payment_status: 'pending',
+      store_order_number: 42,
+      order_items: [],
+      ...overrides,
+    };
+  }
+
+  it('tienda Pro con costo congelado: agrega costo/ganancia/margen al final, sin tocar las columnas existentes', async () => {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1', plan: 'pro' }],
+      orders: [
+        csvOrderRow({
+          order_items: [
+            { unit_price_cents: 100000, cost_at_purchase: 60000, quantity: 1, product_name: 'Remera' },
+          ],
+        }),
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await exportOrdersCsv({});
+    if ('error' in result) throw new Error('unexpected error');
+
+    const [header, row] = result.csv.replace(/^﻿/, '').split('\r\n');
+    const headerCols = header.split(',');
+    // Las columnas previas conservan exactamente su orden y contenido.
+    expect(headerCols.slice(0, 11)).toEqual([
+      'id', 'store_order_number', 'created_at', 'status', 'customer_name',
+      'customer_phone', 'total', 'currency', 'items_count', 'items_summary', 'notes',
+    ]);
+    expect(headerCols.slice(11)).toEqual(['cost_total', 'profit_total', 'margin_pct']);
+
+    const rowCols = parseCsvRow(row);
+    expect(rowCols[headerCols.indexOf('cost_total')]).toBe('600,00');
+    expect(rowCols[headerCols.indexOf('profit_total')]).toBe('400,00');
+    expect(rowCols[headerCols.indexOf('margin_pct')]).toContain('40,00');
+  });
+
+  it('pedido Pro sin ningún costo congelado exporta las celdas vacías, no en cero', async () => {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1', plan: 'pro' }],
+      orders: [
+        csvOrderRow({
+          order_items: [
+            { unit_price_cents: 100000, cost_at_purchase: null, quantity: 1, product_name: 'Remera' },
+          ],
+        }),
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await exportOrdersCsv({});
+    if ('error' in result) throw new Error('unexpected error');
+
+    const [header, row] = result.csv.replace(/^﻿/, '').split('\r\n');
+    const headerCols = header.split(',');
+    const rowCols = parseCsvRow(row);
+
+    expect(rowCols[headerCols.indexOf('cost_total')]).toBe('');
+    expect(rowCols[headerCols.indexOf('profit_total')]).toBe('');
+    expect(rowCols[headerCols.indexOf('margin_pct')]).toBe('');
+  });
+
+  it('tienda sin plan Pro no incluye ninguna columna de costo, ganancia ni margen', async () => {
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1', plan: 'medio' }],
+      orders: [
+        csvOrderRow({
+          order_items: [
+            { unit_price_cents: 100000, cost_at_purchase: 60000, quantity: 1, product_name: 'Remera' },
+          ],
+        }),
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await exportOrdersCsv({});
+    if ('error' in result) throw new Error('unexpected error');
+
+    const [header] = result.csv.replace(/^﻿/, '').split('\r\n');
+    const headerCols = header.split(',');
+    expect(headerCols).not.toContain('cost_total');
+    expect(headerCols).not.toContain('profit_total');
+    expect(headerCols).not.toContain('margin_pct');
   });
 });
 

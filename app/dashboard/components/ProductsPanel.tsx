@@ -30,6 +30,7 @@ type Props = {
   maxImagesPerProduct: number;
   allowVariants: boolean;
   allowBulkProducts: boolean;
+  allowCostTracking: boolean;
 };
 
 function formatPrice(cents: number): string {
@@ -40,7 +41,7 @@ function formatPrice(cents: number): string {
   }).format(cents / 100);
 }
 
-export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sections, productsCount, productsLimit, limitIsUnlimited, maxImagesPerProduct, allowVariants, allowBulkProducts }: Props) {
+export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sections, productsCount, productsLimit, limitIsUnlimited, maxImagesPerProduct, allowVariants, allowBulkProducts, allowCostTracking }: Props) {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>(initialProducts);
   // Mantiene la lista sincronizada tras el refresh automático que dispara
@@ -397,6 +398,7 @@ export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sec
           nextPosition={products.length}
           maxImagesPerProduct={maxImagesPerProduct}
           allowVariants={allowVariants}
+          allowCostTracking={allowCostTracking}
           onSaved={handleProductSaved}
           onClose={() => setModalProduct(undefined)}
         />
@@ -423,6 +425,7 @@ export function ProductsPanel({ store, initialProducts, priceTiersByProduct, sec
           sections={sections}
           maxImagesPerProduct={maxImagesPerProduct}
           allowVariants={allowVariants}
+          allowCostTracking={allowCostTracking}
           onClose={closeBulkEdit}
         />
       )}

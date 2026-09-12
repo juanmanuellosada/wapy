@@ -30,6 +30,8 @@ const productFormSchema = z.object({
   section_id: z.string().optional(),
   min_quantity: z.string().optional(),
   qty_step: z.string().optional(),
+  // Costo de mercadería (add-product-cost-tracking, Pro únicamente).
+  cost_display: z.string().optional(),
 }).refine(
   (data) => {
     if (!data.promo_price_display || data.promo_price_display.trim() === '') return true;
@@ -55,6 +57,8 @@ type Props = {
   nextPosition: number;
   maxImagesPerProduct: number;
   allowVariants: boolean;
+  /** Plan Pro únicamente (add-product-cost-tracking, D6). false = no se muestra ningún campo de costo. */
+  allowCostTracking: boolean;
   onSaved: (product: Product, priceTiers: PriceTier[]) => void;
   onClose: () => void;
 };
@@ -70,7 +74,7 @@ function parsePriceCents(display: string): number {
   return Math.round(num * 100);
 }
 
-export function ProductModal({ storeId, sections, product, priceTiers, nextPosition, maxImagesPerProduct, allowVariants, onSaved, onClose }: Props) {
+export function ProductModal({ storeId, sections, product, priceTiers, nextPosition, maxImagesPerProduct, allowVariants, allowCostTracking, onSaved, onClose }: Props) {
   const managesTiers = priceTiers !== undefined;
   const isEdit = !!product;
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
@@ -106,6 +110,7 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
       section_id: product?.section_id ?? '',
       min_quantity: product ? String((product as unknown as { min_quantity?: number }).min_quantity ?? 1) : '1',
       qty_step: product ? String((product as unknown as { qty_step?: number }).qty_step ?? 1) : '1',
+      cost_display: product?.cost_cents != null ? formatPrice(product.cost_cents) : '',
     },
   });
 
@@ -144,6 +149,10 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
         : null;
     const min_quantity = Math.max(1, parseInt(data.min_quantity ?? '1', 10) || 1);
     const qty_step = Math.max(1, parseInt(data.qty_step ?? '1', 10) || 1);
+    // undefined = no tocar el costo (planes sin allowCostTracking no mandan el campo).
+    const cost_cents = allowCostTracking
+      ? (data.cost_display && data.cost_display.trim() !== '' ? parsePriceCents(data.cost_display) : null)
+      : undefined;
 
     // Los tramos se validan contra el precio recién tipeado, no contra el guardado.
     // Si este caller no administra tramos, se manda undefined y el server los preserva.
@@ -172,6 +181,7 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
       min_quantity,
       qty_step,
       price_tiers,
+      cost_cents,
     });
 
     if ('error' in result) {
@@ -195,6 +205,7 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
       is_active: true,
       created_at: product?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      cost_cents: cost_cents !== undefined ? cost_cents : (product?.cost_cents ?? null),
       // New fields (cast needed until types regenerated)
       ...(({ min_quantity, qty_step } as unknown as object)),
     } as unknown as Product;
@@ -338,6 +349,29 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
             )}
           </div>
 
+          {/* Costo de mercadería (opcional, Pro únicamente) */}
+          {allowCostTracking && (
+            <div>
+              <label htmlFor="prod-cost" className="block text-sm font-semibold text-[#FBF7EC] mb-1.5">
+                Costo <span className="text-white/30 font-normal">(opcional)</span>
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-white/40">$</span>
+                <input
+                  id="prod-cost"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="Sin costo cargado"
+                  {...register('cost_display')}
+                  className="w-full rounded-xl bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 pl-7 pr-4 py-2.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors"
+                />
+              </div>
+              <p className="text-xs text-white/40 mt-1">
+                Dato interno para calcular tu ganancia. Nunca se muestra a la compradora.
+              </p>
+            </div>
+          )}
+
           {/* Descuento por cantidad (tramos) */}
           {managesTiers && (
             <PriceTiersEditor
@@ -463,6 +497,14 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
               <VariantsSection
                 productId={product?.id ?? null}
                 productPriceCents={parsePriceCents(watch('price_display') ?? '') ?? product?.price_cents ?? 0}
+                productCostCents={
+                  allowCostTracking
+                    ? (watch('cost_display') && watch('cost_display')!.trim() !== ''
+                        ? parsePriceCents(watch('cost_display')!)
+                        : null)
+                    : null
+                }
+                allowCostTracking={allowCostTracking}
                 onVariantsChange={handleVariantsChange}
               />
             ) : (

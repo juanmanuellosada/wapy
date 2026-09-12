@@ -111,6 +111,7 @@ export function StepProducts({ store, initialProducts, sections }: Props) {
           nextPosition={products.length}
           maxImagesPerProduct={planLimits.maxImagesPerProduct}
           allowVariants={planLimits.allowVariants}
+          allowCostTracking={planLimits.allowCostTracking}
           onSaved={handleProductSaved}
           onClose={() => setModalProduct(undefined)}
         />

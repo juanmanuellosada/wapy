@@ -40,6 +40,30 @@ export function resolveEffectivePrice(
 }
 
 // ---------------------------------------------------------------------------
+// Costo de mercadería (opcional)
+//
+// Regla (ver openspec/changes/add-product-cost-tracking/design.md, Decisión
+// D2): la variante hereda el costo del producto, igual que price_override (a
+// diferencia del promo, que no hereda). NULL en todos los niveles = sin dato,
+// nunca se interpreta como 0 (Decisión D3).
+// ---------------------------------------------------------------------------
+
+export interface CostableProduct {
+  cost_cents: number | null;
+}
+
+export interface CostableVariant {
+  cost_override: number | null;
+}
+
+export function resolveEffectiveCost(
+  product: CostableProduct,
+  variant?: CostableVariant | null
+): number | null {
+  return variant ? variant.cost_override ?? product.cost_cents ?? null : product.cost_cents ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Tramos de precio por cantidad ("llevando 3, te sale más barato por unidad")
 //
 // Reglas (ver openspec/changes/add-quantity-price-tiers/design.md):

@@ -12,6 +12,12 @@ export interface ProductValidationInput {
   stock?: number | null;
   /** undefined = este caller no toca los tramos; [] = sin tramos. */
   price_tiers?: PriceTier[] | null;
+  /**
+   * Costo de mercadería, opcional y sin relación de orden con el precio de
+   * venta (vender a pérdida es legítimo). undefined = no tocar; null = sin
+   * costo cargado; 0 es un valor válido, distinto de ausencia (Decisión D3).
+   */
+  cost_cents?: number | null;
 }
 
 export type ProductValidationField =
@@ -20,7 +26,8 @@ export type ProductValidationField =
   | 'price_cents'
   | 'promo_price_cents'
   | 'stock'
-  | 'price_tiers';
+  | 'price_tiers'
+  | 'cost_cents';
 
 /** Tope defensivo de tramos por producto: no hay un caso real que necesite más. */
 export const MAX_PRICE_TIERS = 20;
@@ -72,6 +79,13 @@ export function validateProductFields(input: ProductValidationInput): ProductVal
 
   if (input.price_tiers != null) {
     issues.push(...validatePriceTiers(input.price_tiers, input.price_cents));
+  }
+
+  if (input.cost_cents != null && (!Number.isInteger(input.cost_cents) || input.cost_cents < 0)) {
+    issues.push({
+      field: 'cost_cents',
+      message: 'El costo debe ser un número entero mayor o igual a 0.',
+    });
   }
 
   return issues;

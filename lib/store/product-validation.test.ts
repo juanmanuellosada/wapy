@@ -47,6 +47,24 @@ describe('validateProductFields', () => {
   it('promo menor al precio regular es válida', () => {
     expect(isValidProductFields({ name: 'Ok', price_cents: 1000, promo_price_cents: 500 })).toBe(true);
   });
+
+  it('costo negativo es inválido', () => {
+    const issues = validateProductFields({ name: 'Ok', price_cents: 1000, cost_cents: -1 });
+    expect(issues.some((i) => i.field === 'cost_cents')).toBe(true);
+  });
+
+  it('costo 0 es válido (distinto de ausente)', () => {
+    expect(isValidProductFields({ name: 'Ok', price_cents: 1000, cost_cents: 0 })).toBe(true);
+  });
+
+  it('costo ausente (undefined o null) es válido', () => {
+    expect(isValidProductFields({ name: 'Ok', price_cents: 1000 })).toBe(true);
+    expect(isValidProductFields({ name: 'Ok', price_cents: 1000, cost_cents: null })).toBe(true);
+  });
+
+  it('costo mayor al precio de venta es válido (vender a pérdida es legítimo)', () => {
+    expect(isValidProductFields({ name: 'Ok', price_cents: 1000, cost_cents: 5000 })).toBe(true);
+  });
 });
 
 describe('checkBatchFits', () => {

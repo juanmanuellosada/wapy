@@ -5,9 +5,12 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
-import { resolveTieredPrice, tierGroupKey, type PriceTier } from '@/lib/store/pricing';
+import { resolveTieredPrice, resolveEffectiveCost, tierGroupKey, type PriceTier } from '@/lib/store/pricing';
+import { computeCostMargin, type CostMarginResult } from './margin';
 import { customerPhoneSchema } from '@/lib/store/whatsapp/customerPhone';
 import { canReactivateOrder, type OrderCancelledBy } from './expiry';
+import { getPlanLimits } from '@/lib/plans/limits';
+import type { PlanId } from '@/lib/plans/limits';
 
 // 3.1 Each cart item may carry an optional variantId.
 type CreateOrderInput = {
@@ -110,6 +113,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     name: string;
     price_cents: number;
     promo_price_cents: number | null;
+    cost_cents: number | null;
     stock: number | null;
     section_id: string | null;
     min_quantity: number;
@@ -118,7 +122,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   };
   const { data: products } = (await admin
     .from('products')
-    .select('id, name, price_cents, promo_price_cents, stock, section_id, min_quantity, qty_step, sections(name)')
+    .select('id, name, price_cents, promo_price_cents, cost_cents, stock, section_id, min_quantity, qty_step, sections(name)')
     .eq('store_id', input.store_id)
     .eq('is_active', true)
     .in('id', productIds)) as { data: ProductRow[] | null };
@@ -153,6 +157,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       stock: number | null; // null = no tracking (infinite stock)
       price_override: number | null;
       promo_price_override: number | null;
+      cost_override: number | null;
       deleted_at: string | null;
       product_variant_option_values: Array<{
         option_value_id: string;
@@ -168,7 +173,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     const { data: variantRows } = await admin
       .from('product_variants')
       .select(
-        'id, product_id, stock, price_override, promo_price_override, deleted_at, product_variant_option_values(option_value_id, product_option_values(value, product_option_types(position, name)))'
+        'id, product_id, stock, price_override, promo_price_override, cost_override, deleted_at, product_variant_option_values(option_value_id, product_option_values(value, product_option_types(position, name)))'
       )
       .in('id', variantIds);
 
@@ -288,6 +293,9 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   type EnrichedItem = typeof validItems[number] & {
     effectivePrice: number;
     variantLabel: string | null;
+    // Costo vigente al momento de la compra (add-product-cost-tracking, D1/D6):
+    // se congela acá y nunca se recalcula contra el costo actual del producto.
+    effectiveCost: number | null;
   };
 
   const enrichedItems: EnrichedItem[] = validItems.map((item) => {
@@ -300,6 +308,7 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     if (item.variant_id) {
       const variant = variantMap.get(item.variant_id)!;
       const { unitCents } = resolveTieredPrice(product, variant, aggregatedQty, tiers);
+      const effectiveCost = resolveEffectiveCost(product, variant);
 
       // Build label: values sorted by option type position, joined with " / "
       const valueEntries = (variant.product_variant_option_values ?? [])
@@ -310,10 +319,11 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
         .sort((a, b) => a.position - b.position);
       const variantLabel = valueEntries.map((e) => e.value).join(' / ') || null;
 
-      return { ...item, effectivePrice: unitCents, variantLabel };
+      return { ...item, effectivePrice: unitCents, variantLabel, effectiveCost };
     } else {
       const { unitCents } = resolveTieredPrice(product, null, aggregatedQty, tiers);
-      return { ...item, effectivePrice: unitCents, variantLabel: null };
+      const effectiveCost = resolveEffectiveCost(product, null);
+      return { ...item, effectivePrice: unitCents, variantLabel: null, effectiveCost };
     }
   });
 
@@ -483,6 +493,9 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       variant_id: i.variant_id ?? null,
       price_at_purchase: i.effectivePrice,
       variant_label: i.variantLabel,
+      // Snapshot del costo (D1/D6): se escribe para cualquier plan, sin
+      // lookup de plan en el camino crítico de creación de pedidos.
+      cost_at_purchase: i.effectiveCost,
     };
   });
 
@@ -872,7 +885,7 @@ async function requireOwnerStore() {
   const admin = createAdminClient();
   const { data: store } = await admin
     .from('stores')
-    .select('id')
+    .select('id, plan')
     .eq('owner_id', user.id)
     .maybeSingle();
   return { user, store };
@@ -924,6 +937,7 @@ export type OrderWithItems = {
     quantity: number;
     section_id: string | null;
     section_name: string | null;
+    cost_at_purchase: number | null;
   }>;
 };
 
@@ -1209,6 +1223,20 @@ export type OrderStatsResult = {
   revenue_by_day: Array<{ date: string; cents: number }>;
   top_products: Array<{ name: string; units: number; revenue_cents: number }>;
   orders_by_section: Array<{ section_name: string; count: number }>;
+  // Costo/ganancia/margen del período, calculados solo sobre las líneas con
+  // costo congelado (add-product-cost-tracking, Decisión D4). No afecta ni
+  // reemplaza kpis.revenue_cents, que sigue saliendo de total_cents.
+  margin: CostMarginResult;
+};
+
+// Margen "vacío" para tiendas sin allowCostTracking (5b.6): mismo shape que
+// una cobertura 0, así el front lo trata igual que "sin costos cargados".
+const EMPTY_COST_MARGIN: CostMarginResult = {
+  costed_revenue_cents: 0,
+  cost_cents: 0,
+  profit_cents: 0,
+  margin_pct: null,
+  cost_coverage_pct: 0,
 };
 
 function getRangeStart(range: OrderStatsRange): Date {
@@ -1270,7 +1298,7 @@ export async function getOrderStats(
   // como venta en los KPIs: items de pedidos confirmados o entregados.
   const { data: items } = await admin
     .from('order_items')
-    .select('order_id, product_name, unit_price_cents, quantity, section_name')
+    .select('order_id, product_name, unit_price_cents, quantity, section_name, cost_at_purchase')
     .in('order_id', confirmedOrders.map((o) => o.id));
 
   const allItems = items ?? [];
@@ -1332,6 +1360,13 @@ export async function getOrderStats(
     count,
   }));
 
+  // Costo/ganancia/margen (D4): se calcula sobre la misma base de ítems que
+  // top_products, ya filtrada a confirmados/entregados y sin pedidos borrados.
+  // 5b.6: el gating de Pro es server-side, no solo de la UI — una tienda que
+  // bajó de plan conserva el dato (D6) pero no debe recibirlo en la respuesta.
+  const allowCost = getPlanLimits((store as unknown as { plan: PlanId | null }).plan).allowCostTracking;
+  const margin = allowCost ? computeCostMargin(allItems) : EMPTY_COST_MARGIN;
+
   return {
     kpis: {
       revenue_cents: revenueCents,
@@ -1342,6 +1377,7 @@ export async function getOrderStats(
     revenue_by_day,
     top_products,
     orders_by_section,
+    margin,
   };
 }
 
@@ -1379,6 +1415,14 @@ function formatCsvTotal(cents: number): string {
   }).format(cents / 100);
 }
 
+function formatCsvPercent(ratio: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    style: 'percent',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(ratio);
+}
+
 export async function exportOrdersCsv(
   filters: ListOrdersFilters
 ): Promise<{ csv: string } | { error: 'unauthorized' | 'empty' }> {
@@ -1401,14 +1445,20 @@ export async function exportOrdersCsv(
   const orders = result.rows.map(mapOrderRow);
   if (orders.length === 0) return { error: 'empty' };
 
-  const header = ['id', 'store_order_number', 'created_at', 'status', 'customer_name', 'customer_phone', 'total', 'currency', 'items_count', 'items_summary', 'notes'].join(',');
+  // Costo/ganancia/margen (D8): Pro únicamente, y siempre al final del CSV
+  // para no romper una planilla que ya lea las columnas existentes por posición.
+  const allowCost = getPlanLimits((store as unknown as { plan: PlanId | null }).plan).allowCostTracking;
+
+  const headerCols = ['id', 'store_order_number', 'created_at', 'status', 'customer_name', 'customer_phone', 'total', 'currency', 'items_count', 'items_summary', 'notes'];
+  if (allowCost) headerCols.push('cost_total', 'profit_total', 'margin_pct');
+  const header = headerCols.join(',');
 
   const rows = orders.map((order) => {
     const itemsSummary = order.items
       .map((i) => `${i.quantity}x ${i.product_name}`)
       .join(' | ');
 
-    return [
+    const cols = [
       csvEscape(order.id),
       csvEscape(order.store_order_number != null ? String(order.store_order_number) : ''),
       csvEscape(formatCsvDate(order.created_at)),
@@ -1420,7 +1470,27 @@ export async function exportOrdersCsv(
       String(order.items.length),
       csvEscape(itemsSummary),
       csvEscape(order.notes),
-    ].join(',');
+    ];
+
+    if (allowCost) {
+      // Sin ninguna línea con costo congelado, las tres celdas quedan vacías
+      // (no en cero — un cero se suma solo en una planilla y miente).
+      const margin = computeCostMargin(
+        order.items.map((i) => ({
+          unit_price_cents: i.unit_price_cents,
+          cost_at_purchase: i.cost_at_purchase,
+          quantity: i.quantity,
+        }))
+      );
+      const hasCost = margin.margin_pct !== null;
+      cols.push(
+        csvEscape(hasCost ? formatCsvTotal(margin.cost_cents) : ''),
+        csvEscape(hasCost ? formatCsvTotal(margin.profit_cents) : ''),
+        csvEscape(hasCost ? formatCsvPercent(margin.margin_pct as number) : '')
+      );
+    }
+
+    return cols.join(',');
   });
 
   // BOM UTF-8 so Excel (es-AR) opens accents correctly
