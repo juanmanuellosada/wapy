@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type { SocialLinks } from "@/lib/store/social-links";
 import { extractSocialHandle } from "@/lib/store/social-links";
-import type { StoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
+import type { PublicStoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
 import { parseBanner } from "@/lib/store/theme";
 import { useCart, cartItemKey } from "./CartContext";
 import ProductCardClient, { VariantSelector, useVariantSelection, PriceTierHint, formatARSCents } from "./ProductCardClient";
@@ -2091,7 +2091,7 @@ export default function StoreClient({
   checkoutMode = "whatsapp",
   mpConnected = false,
 }: {
-  store: StoreRow;
+  store: PublicStoreRow;
   sections: SectionRow[];
   products: ProductRow[];
   variantsByProduct: Record<string, ProductVariantData>;

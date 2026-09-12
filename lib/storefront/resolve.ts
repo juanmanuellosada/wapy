@@ -1,7 +1,7 @@
 import { cache } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/server';
-import type { Database } from '@/lib/supabase/types';
+import type { Database, Json } from '@/lib/supabase/types';
 import type { Tables } from '@/lib/supabase/types';
 import { isPubliclyAvailable } from '@/lib/subscription/state';
 import type { PriceTier } from '@/lib/store/pricing';
@@ -9,6 +9,53 @@ import type { PriceTier } from '@/lib/store/pricing';
 export type StoreRow = Tables<'stores'>;
 export type SectionRow = Tables<'sections'>;
 export type ProductRow = Tables<'products'>;
+
+/**
+ * Lo único de `stores` que puede cruzar al cliente. `StoreRow` trae también
+ * columnas comerciales (plan, order_seq, estado de suscripción/MP, owner_id,
+ * config interna de WhatsApp) que jamás deben viajar en el HTML público — ver
+ * fix-store-public-payload. La garantía vive acá, en el tipo: una columna
+ * nueva en `stores` queda afuera de este objeto por omisión, no adentro por
+ * descuido de un `select('*')`.
+ */
+export interface PublicStoreRow {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  logo_url: string | null;
+  theme: Json;
+  social_links: Json;
+  whatsapp_number: string | null;
+  checkout_mode: string;
+  default_product_sort: string;
+  out_of_stock_last: boolean;
+}
+
+/** Lo mínimo que necesita la pantalla de mantenimiento. */
+export type PublicMaintenanceStore = Pick<PublicStoreRow, 'name' | 'logo_url' | 'theme'>;
+
+function toPublicStore(row: StoreRow): PublicStoreRow {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description,
+    logo_url: row.logo_url,
+    theme: row.theme,
+    social_links: row.social_links,
+    whatsapp_number: row.whatsapp_number,
+    checkout_mode: row.checkout_mode,
+    default_product_sort: row.default_product_sort,
+    out_of_stock_last: row.out_of_stock_last,
+  };
+}
+
+function toPublicMaintenanceStore(
+  row: Pick<StoreRow, 'name' | 'logo_url' | 'theme'>
+): PublicMaintenanceStore {
+  return { name: row.name, logo_url: row.logo_url, theme: row.theme };
+}
 
 /** A serialized option value (leaf node in the selector). */
 export interface StorefrontOptionValue {
@@ -46,7 +93,7 @@ export interface ProductVariantData {
 export type Resolution =
   | {
       kind: 'render';
-      store: StoreRow;
+      store: PublicStoreRow;
       sections: SectionRow[];
       products: ProductRow[];
       variantsByProduct: Record<string, ProductVariantData>;
@@ -54,7 +101,7 @@ export type Resolution =
       priceTiersByProduct: Record<string, PriceTier[]>;
     }
   | { kind: 'redirect'; toSlug: string }
-  | { kind: 'maintenance'; store: Pick<StoreRow, 'name' | 'logo_url' | 'theme'> }
+  | { kind: 'maintenance'; store: PublicMaintenanceStore }
   | { kind: 'not_found' };
 
 function createAnonClient() {
@@ -79,8 +126,11 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
 
   if (pub) {
     // Decision 6: blocked stores show maintenance even when status='published'.
+    // isPubliclyAvailable lee los campos de facturación de `pub` (la fila
+    // completa) acá mismo, en el servidor — lo que cambia es que el objeto
+    // que sigue de acá en adelante hacia el cliente es la proyección pública.
     if (!isPubliclyAvailable(pub, new Date())) {
-      return { kind: 'maintenance', store: pub };
+      return { kind: 'maintenance', store: toPublicMaintenanceStore(pub) };
     }
 
     const [sectionsResult, productsResult] = await Promise.all([
@@ -213,7 +263,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
 
     return {
       kind: 'render',
-      store: pub,
+      store: toPublicStore(pub),
       sections: sectionsResult.data ?? [],
       products,
       variantsByProduct,
@@ -251,7 +301,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
     .maybeSingle();
 
   if (anyStore && anyStore.status === 'paused') {
-    return { kind: 'maintenance', store: anyStore };
+    return { kind: 'maintenance', store: toPublicMaintenanceStore(anyStore) };
   }
 
   // Also check via slug_history → admin → paused
@@ -263,7 +313,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
       .maybeSingle();
 
     if (histStore?.status === 'paused') {
-      return { kind: 'maintenance', store: histStore };
+      return { kind: 'maintenance', store: toPublicMaintenanceStore(histStore) };
     }
   }
 
