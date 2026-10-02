@@ -1237,7 +1237,14 @@ export async function getBacklogPendingCount(): Promise<
 // getOrderStats
 // ---------------------------------------------------------------------------
 
-export type OrderStatsRange = '30d' | '90d' | 'ytd';
+export type OrderStatsPreset = '30d' | '90d' | 'ytd';
+
+export type OrderStatsCustomRange = {
+  date_from: string;
+  date_to: string;
+};
+
+export type OrderStatsRange = OrderStatsPreset | OrderStatsCustomRange;
 
 export type OrderStatsResult = {
   kpis: {
@@ -1266,7 +1273,7 @@ const EMPTY_COST_MARGIN: CostMarginResult = {
   has_estimated_cost: false,
 };
 
-function getRangeStart(range: OrderStatsRange): Date {
+function getRangeStart(range: OrderStatsPreset): Date {
   const now = new Date();
   if (range === '30d') {
     const d = new Date(now);
@@ -1284,6 +1291,87 @@ function getRangeStart(range: OrderStatsRange): Date {
   return new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
 }
 
+const ARGENTINA_TIME_ZONE = 'America/Argentina/Buenos_Aires';
+const argentinaDateTimeFormatter = new Intl.DateTimeFormat('en-US-u-ca-gregory', {
+  timeZone: ARGENTINA_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
+function getArgentinaUtcOffsetMs(date: Date): number {
+  const parts = argentinaDateTimeFormatter.formatToParts(date);
+  const valueFor = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value);
+
+  return Date.UTC(
+    valueFor('year'),
+    valueFor('month') - 1,
+    valueFor('day'),
+    valueFor('hour'),
+    valueFor('minute'),
+    valueFor('second')
+  ) - Math.floor(date.getTime() / 1_000) * 1_000;
+}
+
+function parseArgentinaCalendarDate(value: string, endOfDay: boolean): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month - 1 ||
+    calendarDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  const localTimestamp = Date.UTC(
+    year,
+    month - 1,
+    day,
+    endOfDay ? 23 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 999 : 0
+  );
+  let date = new Date(localTimestamp);
+
+  // Resolve the selected Buenos Aires wall-clock time to a UTC instant without
+  // depending on the timezone configured for the server process.
+  for (let i = 0; i < 2; i += 1) {
+    date = new Date(localTimestamp - getArgentinaUtcOffsetMs(date));
+  }
+  return date;
+}
+
+function isOrderStatsPreset(value: string): value is OrderStatsPreset {
+  return value === '30d' || value === '90d' || value === 'ytd';
+}
+
+function getStatsDateRange(range: OrderStatsRange): { start: Date; end: Date } | null {
+  if (typeof range === 'string') {
+    if (!isOrderStatsPreset(range)) return null;
+
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    return { start: getRangeStart(range), end };
+  }
+
+  const start = parseArgentinaCalendarDate(range.date_from, false);
+  const end = parseArgentinaCalendarDate(range.date_to, true);
+  if (!start || !end || start > end) return null;
+  return { start, end };
+}
+
 function toArgentinaDateStr(isoStr: string): string {
   try {
     return new Intl.DateTimeFormat('en-CA', {
@@ -1299,19 +1387,23 @@ function toArgentinaDateStr(isoStr: string): string {
 
 export async function getOrderStats(
   range: OrderStatsRange
-): Promise<OrderStatsResult | { error: 'unauthorized' }> {
+): Promise<OrderStatsResult | { error: 'unauthorized' | 'invalid_range' }> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'unauthorized' };
 
+  const statsDateRange = getStatsDateRange(range);
+  if (!statsDateRange) return { error: 'invalid_range' };
+
   const admin = createAdminClient();
-  const rangeStart = getRangeStart(range);
+  const { start: rangeStart, end: rangeEnd } = statsDateRange;
 
   const { data: orders } = await admin
     .from('orders')
     .select('id, status, total_cents, discount_cents, sold_at')
     .eq('store_id', store.id)
     .is('deleted_at', null)
-    .gte('sold_at', rangeStart.toISOString());
+    .gte('sold_at', rangeStart.toISOString())
+    .lte('sold_at', rangeEnd.toISOString());
 
   const allOrders = orders ?? [];
 
@@ -1339,19 +1431,12 @@ export async function getOrderStats(
     ? Math.round(revenueCents / confirmedOrders.length)
     : 0;
 
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
-  const msPerDay = 86_400_000;
-  const dayCount = Math.max(
-    1,
-    Math.ceil((today.getTime() - rangeStart.getTime()) / msPerDay)
-  );
   const dayMap = new Map<string, number>();
-  for (let i = dayCount - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const day = new Date(rangeStart);
+  while (day <= rangeEnd) {
+    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
     dayMap.set(key, 0);
+    day.setDate(day.getDate() + 1);
   }
   for (const o of confirmedOrders) {
     const dateKey = toArgentinaDateStr(o.sold_at);

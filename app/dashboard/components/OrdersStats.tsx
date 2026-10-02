@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -15,13 +15,14 @@ import {
   Pie,
   Cell,
 } from 'recharts';
+import { DatePicker } from '@/app/components/DatePicker';
 import { getOrderStats } from '@/lib/store/orders/actions';
-import type { OrderStatsRange, OrderStatsResult } from '@/lib/store/orders/actions';
+import type { OrderStatsPreset, OrderStatsRange, OrderStatsResult } from '@/lib/store/orders/actions';
 
 type Props = {
   accentColor: string;
   initialStats: OrderStatsResult;
-  initialRange: OrderStatsRange;
+  initialRange: OrderStatsPreset;
 };
 
 function formatPrice(cents: number): string {
@@ -108,26 +109,66 @@ function PieTooltip({ active, payload, total }: PieTooltipProps) {
   );
 }
 
-const RANGE_LABELS: Record<OrderStatsRange, string> = {
+const RANGE_LABELS: Record<OrderStatsPreset, string> = {
   '30d': 'Últimos 30 días',
   '90d': 'Últimos 90 días',
   ytd: 'Este año',
 };
 
-export function OrdersStats({ accentColor, initialStats, initialRange }: Props) {
-  const [stats, setStats] = useState<OrderStatsResult>(initialStats);
-  const [range, setRange] = useState<OrderStatsRange>(initialRange);
-  const [isPending, startTransition] = useTransition();
+function toDateInputValue(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
 
-  const handleRangeChange = (newRange: OrderStatsRange) => {
-    setRange(newRange);
+function getPresetDates(range: OrderStatsPreset): { dateFrom: string; dateTo: string } {
+  const end = new Date();
+  const start = new Date(end);
+  if (range === '30d') start.setDate(start.getDate() - 29);
+  if (range === '90d') start.setDate(start.getDate() - 89);
+  if (range === 'ytd') start.setMonth(0, 1);
+  return { dateFrom: toDateInputValue(start), dateTo: toDateInputValue(end) };
+}
+
+export function OrdersStats({ accentColor, initialStats, initialRange }: Props) {
+  const initialDates = getPresetDates(initialRange);
+  const [stats, setStats] = useState<OrderStatsResult>(initialStats);
+  const [range, setRange] = useState<OrderStatsPreset | 'custom'>(initialRange);
+  const [dateFrom, setDateFrom] = useState(initialDates.dateFrom);
+  const [dateTo, setDateTo] = useState(initialDates.dateTo);
+  const [isPending, startTransition] = useTransition();
+  const latestRequest = useRef(0);
+
+  const loadStats = (nextRange: OrderStatsRange) => {
+    const request = ++latestRequest.current;
     startTransition(async () => {
-      const result = await getOrderStats(newRange);
-      if (!('error' in result)) {
+      const result = await getOrderStats(nextRange);
+      if (!('error' in result) && request === latestRequest.current) {
         setStats(result);
       }
     });
   };
+
+  const handleRangeChange = (newRange: OrderStatsPreset) => {
+    const dates = getPresetDates(newRange);
+    setRange(newRange);
+    setDateFrom(dates.dateFrom);
+    setDateTo(dates.dateTo);
+    loadStats(newRange);
+  };
+
+  const handleDateChange = (field: 'from' | 'to', value: string) => {
+    const nextDateFrom = field === 'from' ? value : dateFrom;
+    const nextDateTo = field === 'to' ? value : dateTo;
+    latestRequest.current += 1;
+    setRange('custom');
+    setDateFrom(nextDateFrom);
+    setDateTo(nextDateTo);
+
+    if (nextDateFrom && nextDateTo && nextDateFrom <= nextDateTo) {
+      loadStats({ date_from: nextDateFrom, date_to: nextDateTo });
+    }
+  };
+
+  const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo);
 
   const { kpis, revenue_by_day, top_products, orders_by_section, margin } = stats;
 
@@ -144,28 +185,54 @@ export function OrdersStats({ accentColor, initialStats, initialRange }: Props) 
 
   return (
     <div className="mb-8 space-y-6">
-      {/* Header row with range selector */}
-      <div className="flex items-center justify-between gap-4">
+      {/* Range selector */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider">Métricas</h2>
-        <div className="flex items-center gap-1">
-          {isPending && (
-            <span className="w-3 h-3 rounded-full border-2 border-white/20 border-t-white/60 animate-spin mr-2" />
+        <div className="flex flex-col gap-2 sm:items-end">
+          <div className="flex flex-wrap items-center gap-1">
+            {isPending && (
+              <span className="w-3 h-3 rounded-full border-2 border-white/20 border-t-white/60 animate-spin mr-2" aria-label="Actualizando métricas" />
+            )}
+            {(['30d', '90d', 'ytd'] as OrderStatsPreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                disabled={isPending}
+                onClick={() => handleRangeChange(preset)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 ${
+                  range === preset
+                    ? 'bg-white/15 text-[#FBF7EC] border border-white/20'
+                    : 'text-white/40 hover:text-white/70 hover:bg-white/8 border border-transparent'
+                }`}
+              >
+                {RANGE_LABELS[preset]}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-white/40">Desde</span>
+            <DatePicker
+              value={dateFrom}
+              onChange={(value) => handleDateChange('from', value)}
+              placeholder="Fecha inicio"
+              max={toDateInputValue(new Date())}
+              ariaLabel="Fecha de inicio"
+            />
+            <span className="text-xs text-white/40">Hasta</span>
+            <DatePicker
+              value={dateTo}
+              onChange={(value) => handleDateChange('to', value)}
+              placeholder="Fecha fin"
+              min={dateFrom || undefined}
+              max={toDateInputValue(new Date())}
+              ariaLabel="Fecha de fin"
+            />
+          </div>
+          {hasInvalidDateRange && (
+            <p role="alert" className="text-xs text-amber-300/90 sm:text-right">
+              La fecha de inicio debe ser anterior o igual a la fecha de fin.
+            </p>
           )}
-          {(['30d', '90d', 'ytd'] as OrderStatsRange[]).map((r) => (
-            <button
-              key={r}
-              type="button"
-              disabled={isPending}
-              onClick={() => handleRangeChange(r)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 ${
-                range === r
-                  ? 'bg-white/15 text-[#FBF7EC] border border-white/20'
-                  : 'text-white/40 hover:text-white/70 hover:bg-white/8 border border-transparent'
-              }`}
-            >
-              {RANGE_LABELS[r]}
-            </button>
-          ))}
         </div>
       </div>
 

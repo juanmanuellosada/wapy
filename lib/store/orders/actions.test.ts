@@ -424,6 +424,88 @@ describe('getOrderStats', () => {
     expect(sections['Calzado']).toBe(1); // solo el item de o2
   });
 
+  it('filtra rangos personalizados de forma inclusiva y excluye pedidos posteriores al fin', async () => {
+    const start = '2024-01-01T03:00:00.000Z'; // 2024-01-01 00:00:00 ART
+    const end = '2024-02-01T02:59:59.999Z'; // 2024-01-31 23:59:59.999 ART
+    const afterEnd = '2024-02-01T03:00:00.000Z'; // 2024-02-01 00:00:00 ART
+
+    const admin = makeFakeAdmin({
+      stores: [{ id: 's1', owner_id: 'u1', plan: 'pro' }],
+      orders: [
+        { id: 'before', store_id: 's1', status: 'confirmed', total_cents: 100, discount_cents: 0, sold_at: '2024-01-01T02:59:59.999Z' },
+        { id: 'start', store_id: 's1', status: 'confirmed', total_cents: 200, discount_cents: 0, sold_at: start },
+        { id: 'end', store_id: 's1', status: 'delivered', total_cents: 300, discount_cents: 0, sold_at: end },
+        { id: 'after', store_id: 's1', status: 'confirmed', total_cents: 400, discount_cents: 0, sold_at: afterEnd },
+      ],
+      order_items: [
+        { order_id: 'start', product_name: 'Dentro', unit_price_cents: 200, quantity: 1, section_name: 'Enero', cost_at_purchase: 100 },
+        { order_id: 'end', product_name: 'Fin inclusivo', unit_price_cents: 300, quantity: 1, section_name: 'Enero', cost_at_purchase: 150 },
+        { order_id: 'after', product_name: 'Fuera de rango', unit_price_cents: 400, quantity: 1, section_name: 'Febrero', cost_at_purchase: 200 },
+      ],
+    });
+    mockCreateAdminClient.mockReturnValue(admin);
+    mockCreateServerClient.mockReturnValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    });
+
+    const result = await getOrderStats({ date_from: '2024-01-01', date_to: '2024-01-31' });
+    if ('error' in result) throw new Error('unexpected error');
+
+    expect(result.kpis.order_count).toBe(2);
+    expect(result.kpis.revenue_cents).toBe(500);
+    expect(result.top_products.map((product) => product.name)).not.toContain('Fuera de rango');
+    expect(result.orders_by_section).toEqual([{ section_name: 'Enero', count: 2 }]);
+    expect(result.margin.profit_cents).toBe(250);
+  });
+
+  it('interpreta el fin de un rango personalizado como el final del día en Argentina', async () => {
+    const originalTimeZone = process.env.TZ;
+    process.env.TZ = 'UTC'; // Reproduce the deployment timezone that exposed the regression.
+
+    try {
+      const admin = makeFakeAdmin({
+        stores: [{ id: 's1', owner_id: 'u1', plan: 'pro' }],
+        orders: [
+          {
+            id: 'argentina-end',
+            store_id: 's1',
+            status: 'confirmed',
+            total_cents: 200,
+            discount_cents: 0,
+            sold_at: '2024-02-01T02:59:59.999Z', // 2024-01-31 23:59:59.999 ART
+          },
+          {
+            id: 'after-argentina-end',
+            store_id: 's1',
+            status: 'confirmed',
+            total_cents: 400,
+            discount_cents: 0,
+            sold_at: '2024-02-01T03:00:00.000Z', // 2024-02-01 00:00:00 ART
+          },
+        ],
+      });
+      mockCreateAdminClient.mockReturnValue(admin);
+      mockCreateServerClient.mockReturnValue({
+        auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+      });
+
+      const result = await getOrderStats({ date_from: '2024-01-31', date_to: '2024-01-31' });
+      if ('error' in result) throw new Error('unexpected error');
+
+      expect(result.kpis.order_count).toBe(1);
+      expect(result.kpis.revenue_cents).toBe(200);
+    } finally {
+      if (originalTimeZone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimeZone;
+    }
+  });
+
+  it('rechaza presets de string fuera del contrato público', async () => {
+    setup();
+
+    await expect(getOrderStats('invalid-preset' as any)).resolves.toEqual({ error: 'invalid_range' });
+  });
+
   // -------------------------------------------------------------------------
   // Costo, ganancia y margen (add-product-cost-tracking, Decisión D4)
   // -------------------------------------------------------------------------
