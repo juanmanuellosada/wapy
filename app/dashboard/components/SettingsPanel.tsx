@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
-import { renameSlug, toggleStoreStatus, deleteStore, saveWaLifecycleConfig } from '@/lib/dashboard/actions';
+import { renameSlug, toggleStoreStatus, deleteStore, saveWaLifecycleConfig, saveUnderConstruction } from '@/lib/dashboard/actions';
 import { checkSlugAvailable } from '@/lib/onboarding/actions';
 import { RenameSlugModal } from './RenameSlugModal';
 import { DeleteStoreModal } from './DeleteStoreModal';
@@ -147,6 +147,23 @@ export function SettingsPanel({ store, mpStatus, checkoutMode, mpConnectResult, 
     }
     setSortSuccess(true);
     setTimeout(() => setSortSuccess(false), 4000);
+  };
+
+  const [underConstruction, setUnderConstruction] = useState(store.under_construction ?? false);
+  const [ucSaving, setUcSaving] = useState(false);
+  const [ucError, setUcError] = useState<string | null>(null);
+
+  const handleToggleUnderConstruction = async () => {
+    const next = !underConstruction;
+    setUcSaving(true);
+    setUcError(null);
+    const result = await saveUnderConstruction(next);
+    setUcSaving(false);
+    if ('error' in result) {
+      setUcError(result.error);
+      return;
+    }
+    setUnderConstruction(next);
   };
 
   const [waTtlDays, setWaTtlDays] = useState(store.wa_pending_ttl_days ?? 7);
@@ -435,6 +452,51 @@ export function SettingsPanel({ store, mpStatus, checkoutMode, mpConnectResult, 
           {sortSaving && <Loader2 size={14} className="animate-spin" />}
           Guardar
         </button>
+      </section>
+
+      <hr className="border-white/10" />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Cartel "En construcción" */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="space-y-4">
+        <h2 className="text-base font-semibold text-[#FBF7EC]">Tienda en construcción</h2>
+
+        {ucError && (
+          <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-300">
+            {ucError}
+          </div>
+        )}
+
+        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-[#FBF7EC]">Mostrar el cartel &quot;En construcción&quot;</p>
+            <p className="text-xs text-white/50 mt-1">
+              Tus clientes ven la tienda desenfocada detrás de un aviso de que está en construcción, y mientras
+              esté activo no pueden navegar ni comprar. Apagalo cuando esté lista.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleUnderConstruction}
+            disabled={ucSaving}
+            role="switch"
+            aria-checked={underConstruction}
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-60 ${
+              underConstruction ? 'bg-[#F5C84B]' : 'bg-white/20'
+            }`}
+          >
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ease-in-out ${
+                underConstruction ? 'translate-x-[22px]' : 'translate-x-0.5'
+              }`}
+            />
+            <span className="sr-only">
+              {underConstruction ? 'Ocultar el cartel En construcción' : 'Mostrar el cartel En construcción'}
+            </span>
+          </button>
+        </div>
       </section>
 
       <hr className="border-white/10" />

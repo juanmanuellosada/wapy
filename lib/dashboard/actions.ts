@@ -154,6 +154,31 @@ export async function saveWaLifecycleConfig(formData: {
 }
 
 // ---------------------------------------------------------------------------
+// saveUnderConstruction — UPDATE stores.under_construction (cartel "En construcción").
+// ---------------------------------------------------------------------------
+
+export async function saveUnderConstruction(
+  underConstruction: boolean
+): Promise<{ ok: true } | { error: string }> {
+  const { store } = await requireOwnerStore();
+  if (!store) return { error: 'No se encontró la tienda.' };
+
+  if (typeof underConstruction !== 'boolean') return { error: 'El valor no es válido.' };
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from('stores')
+    .update({ under_construction: underConstruction, updated_at: new Date().toISOString() })
+    .eq('id', store.id);
+
+  if (error) return { error: 'No se pudo guardar el cambio. Intentá de nuevo.' };
+
+  revalidatePath('/dashboard', 'layout');
+  if (store.slug) revalidatePath(`/${store.slug}`);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // deleteStore — delete all storage files + DELETE the store row (cascades).
 // ---------------------------------------------------------------------------
 

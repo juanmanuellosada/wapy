@@ -35,6 +35,7 @@ export interface PublicStoreRow {
   checkout_mode: string;
   default_product_sort: string;
   out_of_stock_last: boolean;
+  under_construction: boolean;
 }
 
 /** Lo mínimo que necesita la pantalla de mantenimiento. */
@@ -53,6 +54,7 @@ function toPublicStore(row: StoreRow): PublicStoreRow {
     checkout_mode: row.checkout_mode,
     default_product_sort: row.default_product_sort,
     out_of_stock_last: row.out_of_stock_last,
+    under_construction: row.under_construction,
   };
 }
 

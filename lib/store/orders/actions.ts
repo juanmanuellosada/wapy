@@ -52,7 +52,7 @@ export type StockInsufficientDetail = {
 
 type CreateOrderResult =
   | { order_id: string; mp_items: MpOrderItem[]; store_order_number: number | null }
-  | { error: 'store_unavailable' | 'no_valid_items' | 'insert_failed' }
+  | { error: 'store_unavailable' | 'store_under_construction' | 'no_valid_items' | 'insert_failed' }
   | { error: 'invalid_phone' }
   | { error: 'stock_insufficient'; details: StockInsufficientDetail[] }
   | { error: 'qty_violation'; productId: string; productName: string; min: number; step: number }
@@ -86,13 +86,18 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   // 1. Validate store exists and is published
   const { data: store } = await admin
     .from('stores')
-    .select('id')
+    .select('id, under_construction')
     .eq('id', input.store_id)
     .eq('status', 'published')
     .maybeSingle();
 
   if (!store) {
     return { error: 'store_unavailable' };
+  }
+
+  // La tienda en construcción está deshabilitada: no recibe pedidos por ningún canal público.
+  if (store.under_construction) {
+    return { error: 'store_under_construction' };
   }
 
   // 2. Basic input validation

@@ -756,6 +756,7 @@ export type Database = {
           subscription_status_changed_at: string | null
           theme: Json
           trial_ends_at: string | null
+          under_construction: boolean
           updated_at: string
           wa_auto_confirm: boolean
           wa_lifecycle_effective_from: string
@@ -787,6 +788,7 @@ export type Database = {
           subscription_status_changed_at?: string | null
           theme?: Json
           trial_ends_at?: string | null
+          under_construction?: boolean
           updated_at?: string
           wa_auto_confirm?: boolean
           wa_lifecycle_effective_from?: string
@@ -818,6 +820,7 @@ export type Database = {
           subscription_status_changed_at?: string | null
           theme?: Json
           trial_ends_at?: string | null
+          under_construction?: boolean
           updated_at?: string
           wa_auto_confirm?: boolean
           wa_lifecycle_effective_from?: string

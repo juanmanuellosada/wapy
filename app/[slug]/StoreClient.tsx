@@ -1203,6 +1203,9 @@ function CartDrawer({
       } else if ('error' in result && result.error === 'invalid_phone') {
         toast.error("Ingresá tu WhatsApp para continuar.");
         return;
+      } else if ('error' in result && result.error === 'store_under_construction') {
+        toast.error("Esta tienda está en construcción y no está recibiendo pedidos.");
+        return;
       } else if ('error' in result && result.error === 'stock_insufficient') {
         toast.error("Algunos productos ya no tienen stock suficiente. Revisá tu carrito.");
         return;
@@ -2354,9 +2357,25 @@ export default function StoreClient({
 
   const accentForeground = "#ffffff";
 
+  // Con el cartel "En construcción" activo la tienda queda bloqueada detrás:
+  // se frena el scroll del body mientras dure.
+  useEffect(() => {
+    if (!store.under_construction) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [store.under_construction]);
+
   return (
-    // Inject accent CSS variable so child components can use var(--accent)
-    <div style={{ "--accent": accentColor } as React.CSSProperties}>
+    <>
+    {/* Inject accent CSS variable so child components can use var(--accent) */}
+    <div
+      style={{ "--accent": accentColor } as React.CSSProperties}
+      inert={store.under_construction}
+      aria-hidden={store.under_construction || undefined}
+    >
       <StoreHeader
         storeName={store.name}
         storeSlug={store.slug}
@@ -2531,5 +2550,24 @@ export default function StoreClient({
         />
       )}
     </div>
+    {store.under_construction && (
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center px-4 bg-white/40 backdrop-blur-md">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="under-construction-title"
+          className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl border-t-4"
+          style={{ borderTopColor: accentColor }}
+        >
+          <p id="under-construction-title" className="text-lg font-bold text-gray-900">
+            🚧 Esta tienda está en construcción
+          </p>
+          <p className="mt-2 text-sm text-gray-600">
+            Estamos preparando todo. Volvé pronto.
+          </p>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

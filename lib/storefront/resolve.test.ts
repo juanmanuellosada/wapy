@@ -117,6 +117,7 @@ describe('resolveStoreSlug — payload público de stores', () => {
       checkout_mode: 'whatsapp',
       default_product_sort: 'manual',
       out_of_stock_last: true,
+      under_construction: false,
       status: 'published',
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
@@ -186,6 +187,7 @@ describe('resolveStoreSlug — payload público de stores', () => {
         'checkout_mode',
         'default_product_sort',
         'out_of_stock_last',
+        'under_construction',
       ])
     );
   });

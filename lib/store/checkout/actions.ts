@@ -115,7 +115,7 @@ export async function startCheckout({
     const { data: store, error: storeError } = await admin
       .from('stores')
       .select(
-        'id, slug, checkout_mode, status, blocked_at, mp_subscription_status, subscription_status_changed_at, trial_ends_at, payment_exempt, mp_preapproval_id'
+        'id, slug, checkout_mode, status, blocked_at, mp_subscription_status, subscription_status_changed_at, trial_ends_at, payment_exempt, mp_preapproval_id, under_construction'
       )
       .eq('slug', slug)
       .eq('status', 'published')
@@ -130,6 +130,11 @@ export async function startCheckout({
     // direct call or a race with the billing cron. (#5)
     if (!isPubliclyAvailable(store, new Date())) {
       return { error: 'Esta tienda no está disponible en este momento.' };
+    }
+
+    // 3.2 Guard: store en construcción = deshabilitada, no genera pedidos ni preferencias de pago.
+    if (store.under_construction) {
+      return { error: 'Esta tienda está en construcción y no está recibiendo pedidos.' };
     }
 
     // 4. Validate checkout_mode (task 5.3)
@@ -180,6 +185,8 @@ export async function startCheckout({
           return { error: 'El carrito contiene productos inválidos o sin publicar.' };
         case 'store_unavailable':
           return { error: 'Tienda no disponible.' };
+        case 'store_under_construction':
+          return { error: 'Esta tienda está en construcción y no está recibiendo pedidos.' };
         case 'stock_insufficient':
           return { error: 'Algunos productos no tienen stock suficiente.' };
         case 'qty_violation':
