@@ -22,7 +22,7 @@ import { extractSocialHandle } from "@/lib/store/social-links";
 import type { PublicStoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
 import { parseBanner } from "@/lib/store/theme";
 import { useCart, cartItemKey } from "./CartContext";
-import ProductCardClient, { VariantSelector, useVariantSelection, PriceTierHint, MultibuyBadge, formatARSCents } from "./ProductCardClient";
+import ProductCardClient, { VariantSelector, useVariantSelection, PriceTierHint, MultibuyBadge, PromoPercentBadge, formatARSCents } from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
 import { buildOrderWhatsappMessage } from "@/lib/store/whatsapp/buildMessage";
@@ -943,6 +943,7 @@ function ProductModal({
               <p className="text-2xl font-bold" style={{ color: accentColor }}>
                 {formatARS(effectivePrice)}
               </p>
+              <PromoPercentBadge regularCents={regularPriceCents} effectiveCents={effectivePriceCents} onPromo={onPromo} />
               <MultibuyBadge offer={product.multibuy} accentColor={accentColor} />
             </div>
           </div>

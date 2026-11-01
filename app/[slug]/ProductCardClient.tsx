@@ -182,6 +182,32 @@ export function MultibuyBadge({
   );
 }
 
+// ─── Promo percent badge ("50% OFF") ─────────────────────────────────────────
+
+export function PromoPercentBadge({
+  regularCents,
+  effectiveCents,
+  onPromo,
+  className = "",
+}: {
+  regularCents: number;
+  effectiveCents: number;
+  onPromo: boolean;
+  className?: string;
+}) {
+  if (!onPromo) return null;
+  const percent = tierSavingsPercent(effectiveCents, regularCents);
+  if (percent <= 0) return null;
+  return (
+    <span
+      className={`inline-block text-xs font-bold px-2 py-1 rounded-full ${className}`}
+      style={{ background: "#dc2626", color: "#ffffff" }}
+    >
+      {percent}% OFF
+    </span>
+  );
+}
+
 // ─── Variant selection hook ───────────────────────────────────────────────────
 
 export interface VariantSelectionState {
@@ -419,11 +445,10 @@ function SimpleProductCard<T extends SimpleProduct>({
           className="store-card-image object-cover"
           unoptimized={product.image.startsWith("data:")}
         />
-        <MultibuyBadge
-          offer={product.multibuy}
-          accentColor={accentColor}
-          className="absolute top-2 left-2 pointer-events-none"
-        />
+        <div className="absolute top-2 left-2 flex flex-wrap gap-1 pointer-events-none">
+          <PromoPercentBadge regularCents={regularCents} effectiveCents={effectiveCents} onPromo={onPromo} />
+          <MultibuyBadge offer={product.multibuy} accentColor={accentColor} />
+        </div>
         {isOutOfStock && (
           <div className="absolute inset-0 flex items-end justify-start p-2 pointer-events-none">
             <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-600/90 text-white">
@@ -801,11 +826,14 @@ function VariantProductCard<T extends SimpleProduct>({
           className="store-card-image object-cover"
           unoptimized={displayImage.startsWith("data:")}
         />
-        <MultibuyBadge
-          offer={product.multibuy}
-          accentColor={accentColor}
-          className="absolute top-2 left-2 pointer-events-none"
-        />
+        <div className="absolute top-2 left-2 flex flex-wrap gap-1 pointer-events-none">
+          <PromoPercentBadge
+            regularCents={selectionState.regularPriceCents}
+            effectiveCents={selectionState.effectivePriceCents}
+            onPromo={selectionState.onPromo}
+          />
+          <MultibuyBadge offer={product.multibuy} accentColor={accentColor} />
+        </div>
         {isOutOfStock && (
           <div className="absolute inset-0 flex items-end justify-start p-2 pointer-events-none">
             <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-600/90 text-white">
