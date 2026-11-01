@@ -2421,6 +2421,21 @@ export default function StoreClient({
     };
   }, [store.under_construction]);
 
+  // "Lo más pedido" se intercala entre las secciones de primer nivel: la dueña
+  // elige cuántas van antes (stores.top_sellers_position); se recorta al total.
+  const topLevelSections = sections.filter((s) => s.parentId === null);
+  const topSellersAt = Math.min(store.top_sellers_position ?? 0, topLevelSections.length);
+  const topSellersBlock =
+    topSellerProducts.length >= 3 ? (
+      <TopSellers
+        key="top-sellers"
+        products={topSellerProducts}
+        accentColor={accentColor}
+        variantsByProduct={variantsByProduct}
+        onOpenModal={openModal}
+      />
+    ) : null;
+
   return (
     <>
     {/* Inject accent CSS variable so child components can use var(--accent) */}
@@ -2488,16 +2503,6 @@ export default function StoreClient({
           accentColor={accentColor}
         />
 
-        {/* Top sellers — only visible when no active filters */}
-        {!hasActiveFilters && topSellerProducts.length >= 3 && (
-          <TopSellers
-            products={topSellerProducts}
-            accentColor={accentColor}
-            variantsByProduct={variantsByProduct}
-            onOpenModal={openModal}
-          />
-        )}
-
         {/* Product grid area */}
         {hasActiveFilters ? (
           visibleProducts.length === 0 ? (
@@ -2555,13 +2560,16 @@ export default function StoreClient({
           )
         ) : (
           /* Default: show by section (level-1 only), keep gap for visual separation */
+          <>
+          {/* Top sellers en posición 0: arriba de todo, con el espaciado de <main> */}
+          {topSellersAt === 0 && topSellersBlock}
           <div className="flex flex-col gap-6 sm:gap-8">
-            {sections
-              .filter((s) => s.parentId === null)
-              .map((s) => {
+            {topLevelSections.map((s, idx) => {
                 const children = subsectionMap.get(s.id) ?? [];
                 const subsections = sections.filter((sub) => children.includes(sub.id));
                 return (
+                  <React.Fragment key={s.id}>
+                  {topSellersAt > 0 && idx === topSellersAt && topSellersBlock}
                   <SectionBlock
                     key={s.id}
                     section={s}
@@ -2575,9 +2583,12 @@ export default function StoreClient({
                     openIds={openSectionIds}
                     onToggle={toggleSection}
                   />
+                  </React.Fragment>
                 );
               })}
+            {topSellersAt > 0 && topSellersAt >= topLevelSections.length && topSellersBlock}
           </div>
+          </>
         )}
       </main>
 

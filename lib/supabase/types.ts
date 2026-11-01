@@ -767,6 +767,7 @@ export type Database = {
           status: string
           subscription_status_changed_at: string | null
           theme: Json
+          top_sellers_position: number
           trial_ends_at: string | null
           under_construction: boolean
           updated_at: string
@@ -799,6 +800,7 @@ export type Database = {
           status?: string
           subscription_status_changed_at?: string | null
           theme?: Json
+          top_sellers_position?: number
           trial_ends_at?: string | null
           under_construction?: boolean
           updated_at?: string
@@ -831,6 +833,7 @@ export type Database = {
           status?: string
           subscription_status_changed_at?: string | null
           theme?: Json
+          top_sellers_position?: number
           trial_ends_at?: string | null
           under_construction?: boolean
           updated_at?: string

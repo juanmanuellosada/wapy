@@ -19,7 +19,7 @@ import {
 } from '@dnd-kit/sortable';
 import { useDroppable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, X, Loader2, CheckCircle, Pencil, GripVertical, ChevronRight } from 'lucide-react';
+import { Plus, X, Loader2, CheckCircle, Pencil, GripVertical, ChevronRight, Flame } from 'lucide-react';
 import { saveStoreSections } from '@/lib/store/actions';
 import {
   SORT_MODES,
@@ -48,6 +48,10 @@ type SectionDraft = {
   sort_mode: SortMode | null;
   isNew?: boolean;
 };
+
+// Id del ítem sintético que representa el bloque "Lo más pedido" en la lista.
+// No es una sección: nunca se envía a saveStoreSections ni cuenta para el límite.
+const TOP_SELLERS_ID = '__top_sellers__';
 
 function slugifySection(name: string): string {
   return name
@@ -258,6 +262,48 @@ function SortableSectionItem({
 }
 
 // ---------------------------------------------------------------------------
+// TopSellersItem — ítem sintético y arrastrable: sin edición, sin borrado y
+// sin subsecciones. Sólo marca dónde se muestra "Lo más pedido".
+// ---------------------------------------------------------------------------
+
+function TopSellersItem() {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: TOP_SELLERS_ID,
+    data: { type: 'item', parentId: null },
+  });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <div className="flex items-center gap-2 border border-dashed border-[#F5C84B]/30 bg-[#F5C84B]/5 rounded-xl px-3 py-2.5">
+        <div className="flex-shrink-0 w-5" />
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing text-white/30 hover:text-white/60 p-1 touch-none flex-shrink-0"
+          aria-label="Mover Lo más pedido"
+        >
+          <GripVertical size={16} />
+        </button>
+        <Flame size={14} className="flex-shrink-0 text-[#F5C84B]" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-[#FBF7EC] truncate">Lo más pedido</p>
+          <p className="text-xs text-white/40">
+            Se muestra solo cuando hay al menos 3 productos con ventas. Arrastralo para elegir dónde aparece.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SubsectionDropZone — droppable wrapper that wraps the children list.
 // We make it droppable so a subsection dragged from another parent can land here.
 // ---------------------------------------------------------------------------
@@ -319,6 +365,9 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
     setSections((prev) => prev.map((s) => (s.id === id ? { ...s, sort_mode: mode } : s)));
   };
 
+  // Cantidad de secciones de primer nivel que van antes de "Lo más pedido".
+  const [topSellersPos, setTopSellersPos] = useState<number>(store.top_sellers_position ?? 0);
+
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingNewParentId, setAddingNewParentId] = useState<string | null>(null); // null = top-level, string = subsection of that id
@@ -336,6 +385,14 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
   const topLevelCount = topLevel.length;
   const atSectionsLimit = !limitIsUnlimited && topLevelCount >= sectionsLimit;
   const activeSection = activeId ? sections.find((s) => s.id === activeId) : null;
+  // Posición efectiva del bloque (recortada si se borraron secciones).
+  const topSellersAt = Math.min(topSellersPos, topLevelCount);
+  // Lista que se ve y se ordena: secciones + el ítem sintético en su lugar.
+  const sortableTopLevel: Array<SectionDraft | typeof TOP_SELLERS_ID> = [
+    ...topLevel.slice(0, topSellersAt),
+    TOP_SELLERS_ID,
+    ...topLevel.slice(topSellersAt),
+  ];
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -477,6 +534,28 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
 
     if (activeIdStr === overIdStr) return;
 
+    // Reorden de primer nivel (secciones y el ítem "Lo más pedido"). El ítem
+    // sintético sólo se mueve entre secciones de primer nivel.
+    const isTop = (id: string) =>
+      id === TOP_SELLERS_ID || sections.find((s) => s.id === id)?.parent_id === null;
+    if (isTop(activeIdStr) && isTop(overIdStr)) {
+      const ids: string[] = sortableTopLevel.map((x) => (x === TOP_SELLERS_ID ? x : x.id));
+      const oldIdx = ids.indexOf(activeIdStr);
+      const newIdx = ids.indexOf(overIdStr);
+      if (oldIdx === -1 || newIdx === -1) return;
+      const reordered = arrayMove(ids, oldIdx, newIdx);
+      const realOrder = reordered.filter((id) => id !== TOP_SELLERS_ID);
+      setTopSellersPos(reordered.indexOf(TOP_SELLERS_ID));
+      setSections((prev) => {
+        const positionById = new Map(realOrder.map((id, i) => [id, i]));
+        return prev.map((s) =>
+          positionById.has(s.id) ? { ...s, position: positionById.get(s.id)! } : s
+        );
+      });
+      return;
+    }
+    if (activeIdStr === TOP_SELLERS_ID || overIdStr === TOP_SELLERS_ID) return;
+
     const activeSec = sections.find((s) => s.id === activeIdStr);
     if (!activeSec) return;
 
@@ -507,20 +586,6 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
 
     const overSec = sections.find((s) => s.id === overIdStr);
     if (!overSec) return;
-
-    // Case 2: both are top-level → reorder top-level
-    if (activeSec.parent_id === null && overSec.parent_id === null) {
-      setSections((prev) => {
-        const topLevelItems = prev.filter((s) => s.parent_id === null).sort((a, b) => a.position - b.position);
-        const oldIdx = topLevelItems.findIndex((s) => s.id === activeIdStr);
-        const newIdx = topLevelItems.findIndex((s) => s.id === overIdStr);
-        if (oldIdx === -1 || newIdx === -1) return prev;
-        const reordered = arrayMove(topLevelItems, oldIdx, newIdx).map((s, i) => ({ ...s, position: i }));
-        const others = prev.filter((s) => s.parent_id !== null);
-        return [...reordered, ...others];
-      });
-      return;
-    }
 
     // Case 3: both are subsections under the same parent → reorder within parent
     if (
@@ -580,6 +645,7 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
     setServerError(null);
 
     const result = await saveStoreSections({
+      topSellersPosition: topSellersAt,
       sections: sections.map((s) => ({
         id: s.isNew ? undefined : s.id,
         name: s.name,
@@ -644,11 +710,12 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
           onDragEnd={handleDragEnd}
         >
           <SortableContext
-            items={topLevel.map((s) => s.id)}
+            items={sortableTopLevel.map((x) => (x === TOP_SELLERS_ID ? x : x.id))}
             strategy={verticalListSortingStrategy}
           >
             <div className="flex flex-col gap-2">
-              {topLevel.map((section) => {
+              {sortableTopLevel.map((section) => {
+                if (section === TOP_SELLERS_ID) return <TopSellersItem key={TOP_SELLERS_ID} />;
                 const children = childrenOf(section.id);
                 const isExpanded = expandedIds.has(section.id);
 
@@ -752,7 +819,9 @@ export function SectionsPanel({ store, initialSections, sectionsLimit, limitIsUn
           </SortableContext>
 
           <DragOverlay>
-            {activeSection ? (
+            {activeId === TOP_SELLERS_ID ? (
+              <DragPreview name="Lo más pedido" isSubsection={false} />
+            ) : activeSection ? (
               <DragPreview
                 name={activeSection.name}
                 isSubsection={activeSection.parent_id !== null}

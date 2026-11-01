@@ -237,6 +237,8 @@ type SectionInput = {
 
 export async function saveStoreSections(formData: {
   sections: SectionInput[];
+  /** Secciones de primer nivel que van antes del bloque "Lo más pedido". Omitido = no tocar. */
+  topSellersPosition?: number;
 }): Promise<SaveResult> {
   const { store } = await requireOwnerStore();
   if (!store) return { error: 'No se encontró la tienda.' };
@@ -247,6 +249,14 @@ export async function saveStoreSections(formData: {
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const sections = parsed.data;
+
+  const topSellersPosition = formData.topSellersPosition;
+  if (
+    topSellersPosition !== undefined &&
+    (!Number.isInteger(topSellersPosition) || topSellersPosition < 0)
+  ) {
+    return { error: 'La posición de "Lo más pedido" no es válida.' };
+  }
 
   // Plan limit: only top-level sections (parent_id == null) count against the limit.
   // Subsections are free — they don't consume slots.
@@ -301,7 +311,10 @@ export async function saveStoreSections(formData: {
 
   await admin
     .from('stores')
-    .update({ updated_at: new Date().toISOString() })
+    .update({
+      ...(topSellersPosition !== undefined ? { top_sellers_position: topSellersPosition } : {}),
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', store.id);
 
   revalidatePath('/dashboard', 'layout');
