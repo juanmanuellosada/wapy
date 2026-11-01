@@ -44,7 +44,7 @@ export default async function CheckoutSuccessPage({ params, searchParams }: Prop
           .maybeSingle(),
         admin
           .from('order_items')
-          .select('product_name, quantity, unit_price_cents, variant_label')
+          .select('product_name, quantity, unit_price_cents, discount_cents, variant_label')
           .eq('order_id', order.id),
       ]);
 
@@ -54,7 +54,7 @@ export default async function CheckoutSuccessPage({ params, searchParams }: Prop
       if (store?.whatsapp_number) {
         const lines = orderItems.map((item) => {
           const label = item.variant_label ? ` (${item.variant_label})` : '';
-          const lineTotal = (item.unit_price_cents * item.quantity) / 100;
+          const lineTotal = (item.unit_price_cents * item.quantity - item.discount_cents) / 100;
           return `• ${item.quantity}x ${item.product_name}${label} — ${formatARS(lineTotal)}`;
         });
 

@@ -18,6 +18,9 @@ export interface ProductValidationInput {
    * costo cargado; 0 es un valor válido, distinto de ausencia (Decisión D3).
    */
   cost_cents?: number | null;
+  /** Oferta NxM. undefined = no tocar; ambos null = sin oferta. */
+  multibuy_buy?: number | null;
+  multibuy_pay?: number | null;
 }
 
 export type ProductValidationField =
@@ -27,7 +30,8 @@ export type ProductValidationField =
   | 'promo_price_cents'
   | 'stock'
   | 'price_tiers'
-  | 'cost_cents';
+  | 'cost_cents'
+  | 'multibuy';
 
 /** Tope defensivo de tramos por producto: no hay un caso real que necesite más. */
 export const MAX_PRICE_TIERS = 20;
@@ -88,7 +92,29 @@ export function validateProductFields(input: ProductValidationInput): ProductVal
     });
   }
 
+  issues.push(...validateMultibuy(input.multibuy_buy, input.multibuy_pay));
+
   return issues;
+}
+
+/**
+ * Valida una oferta NxM: ambos null/ausentes (sin oferta) o N entero >= 2 y
+ * M entero con 1 <= M < N. Espeja el CHECK de la migración 046.
+ */
+export function validateMultibuy(
+  buy: number | null | undefined,
+  pay: number | null | undefined
+): ProductValidationIssue[] {
+  if (buy == null && pay == null) return [];
+  const message =
+    buy == null || pay == null || !Number.isInteger(buy) || !Number.isInteger(pay)
+      ? 'La oferta lleva la cantidad que se lleva y la que se paga, ambas números enteros.'
+      : buy < 2
+        ? 'En una oferta NxM tenés que llevar al menos 2 unidades.'
+        : pay < 1 || pay >= buy
+          ? 'La cantidad que se paga tiene que ser al menos 1 y menor a la que se lleva.'
+          : null;
+  return message ? [{ field: 'multibuy', message }] : [];
 }
 
 /**

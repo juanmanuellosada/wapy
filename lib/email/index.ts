@@ -81,6 +81,8 @@ interface OrderEmailItemInput {
   quantity: number;
   variantLabel: string | null;
   unitPriceCents: number;
+  /** Descuento NxM de la línea (add-multibuy-offers). Ausente = 0. */
+  discountCents?: number;
 }
 
 function formatOrderItems(items: OrderEmailItemInput[]) {
@@ -88,7 +90,7 @@ function formatOrderItems(items: OrderEmailItemInput[]) {
     productName: item.productName,
     quantity: item.quantity,
     variantLabel: item.variantLabel,
-    lineTotalFormatted: formatARS((item.unitPriceCents * item.quantity) / 100),
+    lineTotalFormatted: formatARS((item.unitPriceCents * item.quantity - (item.discountCents ?? 0)) / 100),
   }));
 }
 

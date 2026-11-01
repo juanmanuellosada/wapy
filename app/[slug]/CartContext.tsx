@@ -12,6 +12,9 @@ import {
   resolveTieredPrice,
   tierGroupKey,
   nextTier,
+  resolveProductLinePrices,
+  multibuyLabel,
+  type MultibuyOffer,
   type PriceTier,
 } from "@/lib/store/pricing";
 
@@ -37,6 +40,11 @@ export interface CartItem {
   regularPriceCents?: number;
   /** Precio efectivo (ya con promo) de esta línea en centavos, sin tramo. */
   effectivePriceCents?: number;
+  /**
+   * Oferta NxM del producto (add-multibuy-offers). Viaja en el item por la misma
+   * razón que los tramos; puede quedar stale, el servidor recalcula todo.
+   */
+  multibuy?: MultibuyOffer | null;
 }
 
 /**
@@ -106,6 +114,17 @@ export interface CartLinePrice {
   basePrice: number;
   /** true cuando el tramo por cantidad abarató esta línea. */
   onTier: boolean;
+  /** Descuento NxM de la línea en ARS (0 si no aplica). Se resta de unitPrice x cantidad. */
+  discount: number;
+  /** "2x1" si el NxM ganó en esta línea, o null. */
+  offerLabel: string | null;
+}
+
+/** Aviso del carrito: a este producto le falta 1 unidad para activar su NxM. */
+export interface MultibuyHint {
+  productId: string;
+  name: string;
+  label: string;
 }
 
 /**
@@ -119,9 +138,61 @@ export function computeCartLinePrices(items: CartItem[]): Map<string, CartLinePr
     const key = cartItemKey(i.productId, i.variantId);
     const unitPrice = cartLineUnitCents(i, tierQtyForItem(i, byGroup)) / 100;
     const basePrice = i.variantPrice ?? i.price;
-    prices.set(key, { unitPrice, basePrice, onTier: unitPrice < basePrice });
+    prices.set(key, { unitPrice, basePrice, onTier: unitPrice < basePrice, discount: 0, offerLabel: null });
+  }
+
+  // Oferta NxM: por producto, con el mismo helper que usa el servidor.
+  const byProduct = new Map<string, CartItem[]>();
+  for (const i of items) {
+    if (!i.multibuy) continue;
+    byProduct.set(i.productId, [...(byProduct.get(i.productId) ?? []), i]);
+  }
+  for (const lines of byProduct.values()) {
+    const results = resolveProductLinePrices(
+      lines.map((l) => ({
+        key: cartItemKey(l.productId, l.variantId),
+        regularCents: l.regularPriceCents ?? Math.round((l.variantPrice ?? l.price) * 100),
+        tieredUnitCents: Math.round(
+          (prices.get(cartItemKey(l.productId, l.variantId))?.unitPrice ?? l.price) * 100
+        ),
+        quantity: l.quantity,
+      })),
+      lines[0].multibuy ?? null
+    );
+    // Si el NxM ganó, TODAS las líneas del producto pasan a precio regular (aunque
+    // alguna no lleve unidades bonificadas); si no, se mantiene promo/tramo.
+    if (!results.some((r) => r.offerLabel)) continue;
+    for (const r of results) {
+      const prev = prices.get(r.key);
+      if (!prev) continue;
+      prices.set(r.key, {
+        unitPrice: r.unitCents / 100,
+        basePrice: prev.basePrice,
+        onTier: false,
+        discount: r.discountCents / 100,
+        offerLabel: r.offerLabel,
+      });
+    }
   }
   return prices;
+}
+
+/** Productos del carrito a los que les falta exactamente 1 unidad para el próximo grupo NxM. */
+export function computeMultibuyHints(items: CartItem[]): MultibuyHint[] {
+  const qtyByProduct = new Map<string, { item: CartItem; qty: number }>();
+  for (const i of items) {
+    if (!i.multibuy) continue;
+    const prev = qtyByProduct.get(i.productId);
+    qtyByProduct.set(i.productId, { item: prev?.item ?? i, qty: (prev?.qty ?? 0) + i.quantity });
+  }
+  const hints: MultibuyHint[] = [];
+  for (const { item, qty } of qtyByProduct.values()) {
+    const offer = item.multibuy!;
+    if (qty % offer.buy === offer.buy - 1) {
+      hints.push({ productId: item.productId, name: item.name, label: multibuyLabel(offer) });
+    }
+  }
+  return hints;
 }
 
 /** Un aviso por grupo de tramos que todavía tiene un escalón por encima. */
@@ -241,6 +312,8 @@ interface CartContextValue {
   linePrices: Map<string, CartLinePrice>;
   /** Grupos de tramos a los que les falta poco para el próximo escalón. */
   tierProgress: TierProgress[];
+  /** Avisos "sumá 1 más y llevás 2x1". */
+  multibuyHints: MultibuyHint[];
   appliedCoupon: AppliedCoupon | null;
   discountAmount: number;
   finalTotal: number;
@@ -338,10 +411,11 @@ export function CartProvider({
   // cálculo server-side en createPendingOrder.
   const linePrices = useMemo(() => computeCartLinePrices(state.items), [state.items]);
   const tierProgress = useMemo(() => computeTierProgress(state.items), [state.items]);
+  const multibuyHints = useMemo(() => computeMultibuyHints(state.items), [state.items]);
 
   const totalPrice = state.items.reduce((s, i) => {
     const line = linePrices.get(cartItemKey(i.productId, i.variantId));
-    return s + (line?.unitPrice ?? i.variantPrice ?? i.price) * i.quantity;
+    return s + (line?.unitPrice ?? i.variantPrice ?? i.price) * i.quantity - (line?.discount ?? 0);
   }, 0);
 
   // Derive discount and finalTotal from appliedCoupon + totalPrice
@@ -364,6 +438,7 @@ export function CartProvider({
         totalPrice,
         linePrices,
         tierProgress,
+        multibuyHints,
         appliedCoupon: state.appliedCoupon,
         discountAmount,
         finalTotal,

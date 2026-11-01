@@ -285,3 +285,114 @@ describe('createPendingOrder — snapshot del costo (cost_at_purchase)', () => {
     expect((getInsertedRows() as Array<Record<string, unknown>>)[0].cost_at_purchase).toBe(500);
   });
 });
+
+describe('createPendingOrder — oferta NxM (add-multibuy-offers)', () => {
+  function multibuyTables(buy: number | null, pay: number | null, promo: number | null = null) {
+    return baseTables({
+      products: {
+        data: [
+          {
+            id: PRODUCT_ID,
+            name: 'Producto test',
+            price_cents: 100000,
+            promo_price_cents: promo,
+            cost_cents: null,
+            stock: null,
+            section_id: null,
+            min_quantity: 1,
+            qty_step: 1,
+            multibuy_buy: buy,
+            multibuy_pay: pay,
+            sections: null,
+          },
+        ],
+        error: null,
+      },
+    });
+  }
+
+  function captureInserts(tables: Record<string, TableResponse>) {
+    const admin = makeFakeAdmin(tables);
+    const captured: { orders: Record<string, unknown> | null; items: Array<Record<string, unknown>> | null } = {
+      orders: null,
+      items: null,
+    };
+    const originalFrom = admin.from as ReturnType<typeof vi.fn>;
+    admin.from = vi.fn((table: string) => {
+      if (table === 'order_items' || table === 'orders') {
+        const builder = makeChainable(
+          table === 'orders' ? { data: { id: 'order-1', store_order_number: 1 }, error: null } : { data: null, error: null }
+        );
+        const originalInsert = builder.insert as (payload: unknown) => typeof builder;
+        builder.insert = (payload: never) => {
+          if (table === 'orders') captured.orders = payload;
+          else captured.items = payload;
+          return originalInsert(payload);
+        };
+        return builder;
+      }
+      return originalFrom(table);
+    });
+    return { admin, captured };
+  }
+
+  const mpTotalCents = (items: Array<{ quantity: number; unit_price: number }>) =>
+    items.reduce((s, i) => s + Math.round(i.unit_price * 100) * i.quantity, 0);
+
+  it('2x1 llevando 2: cobra una, congela descuento y etiqueta, y MP suma el neto', async () => {
+    const { admin, captured } = captureInserts(multibuyTables(2, 1));
+    mockCreateAdminClient.mockReturnValue(admin);
+
+    const result = await createPendingOrder({
+      store_id: STORE_ID,
+      items: [{ product_id: PRODUCT_ID, quantity: 2 }],
+      customer_phone: '11 1234-5678',
+    });
+
+    expect(captured.orders?.total_cents).toBe(100000);
+    expect(captured.items?.[0]).toMatchObject({ discount_cents: 100000, offer_label: '2x1', unit_price_cents: 100000 });
+    expect('mp_items' in result && mpTotalCents(result.mp_items)).toBe(100000);
+  });
+
+  it('3 unidades pagando 2 se reparte en items de MP con suma exacta', async () => {
+    const { admin, captured } = captureInserts(multibuyTables(3, 2));
+    mockCreateAdminClient.mockReturnValue(admin);
+
+    const result = await createPendingOrder({
+      store_id: STORE_ID,
+      items: [{ product_id: PRODUCT_ID, quantity: 3 }],
+      customer_phone: '11 1234-5678',
+    });
+
+    expect(captured.orders?.total_cents).toBe(200000);
+    expect('mp_items' in result && mpTotalCents(result.mp_items)).toBe(200000);
+  });
+
+  it('si la promo es más barata que el NxM no se congela etiqueta ni descuento', async () => {
+    const { admin, captured } = captureInserts(multibuyTables(2, 1, 40000));
+    mockCreateAdminClient.mockReturnValue(admin);
+
+    await createPendingOrder({
+      store_id: STORE_ID,
+      items: [{ product_id: PRODUCT_ID, quantity: 2 }],
+      customer_phone: '11 1234-5678',
+    });
+
+    expect(captured.orders?.total_cents).toBe(80000);
+    expect(captured.items?.[0]).toMatchObject({ discount_cents: 0, offer_label: null, unit_price_cents: 40000 });
+  });
+
+  it('sin oferta se comporta como siempre', async () => {
+    const { admin, captured } = captureInserts(multibuyTables(null, null));
+    mockCreateAdminClient.mockReturnValue(admin);
+
+    await createPendingOrder({
+      store_id: STORE_ID,
+      items: [{ product_id: PRODUCT_ID, quantity: 2 }],
+      customer_phone: '11 1234-5678',
+    });
+
+    expect(captured.orders?.total_cents).toBe(200000);
+    expect(captured.items?.[0]).toMatchObject({ discount_cents: 0, offer_label: null });
+  });
+});

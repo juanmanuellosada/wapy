@@ -5,7 +5,15 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createServerClient, createAdminClient } from '@/lib/supabase/server';
 import { validateCoupon } from '@/lib/store/coupons/actions';
-import { resolveTieredPrice, resolveEffectivePrice, resolveEffectiveCost, tierGroupKey, type PriceTier } from '@/lib/store/pricing';
+import {
+  resolveTieredPrice,
+  resolveEffectivePrice,
+  resolveEffectiveCost,
+  resolveProductLinePrices,
+  toMultibuyOffer,
+  tierGroupKey,
+  type PriceTier,
+} from '@/lib/store/pricing';
 import { computeCostMargin, type CostMarginResult } from './margin';
 import { customerPhoneSchema } from '@/lib/store/whatsapp/customerPhone';
 import { canReactivateOrder, type OrderCancelledBy } from './expiry';
@@ -124,11 +132,13 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     section_id: string | null;
     min_quantity: number;
     qty_step: number;
+    multibuy_buy: number | null;
+    multibuy_pay: number | null;
     sections: { name: string } | null;
   };
   const { data: products } = (await admin
     .from('products')
-    .select('id, name, price_cents, promo_price_cents, cost_cents, stock, section_id, min_quantity, qty_step, sections(name)')
+    .select('id, name, price_cents, promo_price_cents, cost_cents, stock, section_id, min_quantity, qty_step, multibuy_buy, multibuy_pay, sections(name)')
     .eq('store_id', input.store_id)
     .eq('is_active', true)
     .in('id', productIds)) as { data: ProductRow[] | null };
@@ -302,6 +312,11 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     // Costo vigente al momento de la compra (add-product-cost-tracking, D1/D6):
     // se congela acá y nunca se recalcula contra el costo actual del producto.
     effectiveCost: number | null;
+    // Oferta NxM (add-multibuy-offers): regular unitario, descuento de la línea
+    // y etiqueta congelada. effectivePrice se pisa abajo si gana el NxM.
+    regularPrice: number;
+    lineDiscountCents: number;
+    offerLabel: string | null;
   };
 
   const enrichedItems: EnrichedItem[] = validItems.map((item) => {
@@ -325,13 +340,43 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
         .sort((a, b) => a.position - b.position);
       const variantLabel = valueEntries.map((e) => e.value).join(' / ') || null;
 
-      return { ...item, effectivePrice: unitCents, variantLabel, effectiveCost };
+      const { regularCents } = resolveEffectivePrice(product, variant);
+      return { ...item, effectivePrice: unitCents, variantLabel, effectiveCost, regularPrice: regularCents, lineDiscountCents: 0, offerLabel: null };
     } else {
-      const { unitCents } = resolveTieredPrice(product, null, aggregatedQty, tiers);
+      const { unitCents, regularCents } = resolveTieredPrice(product, null, aggregatedQty, tiers);
       const effectiveCost = resolveEffectiveCost(product, null);
-      return { ...item, effectivePrice: unitCents, variantLabel: null, effectiveCost };
+      return { ...item, effectivePrice: unitCents, variantLabel: null, effectiveCost, regularPrice: regularCents, lineDiscountCents: 0, offerLabel: null };
     }
   });
+
+  // Oferta NxM: por producto (sumando variantes) gana el más barato entre
+  // promo/tramos y NxM sobre el precio regular. Nunca se acumulan.
+  const lineIdxByProduct = new Map<string, number[]>();
+  enrichedItems.forEach((item, idx) => {
+    const list = lineIdxByProduct.get(item.product_id) ?? [];
+    list.push(idx);
+    lineIdxByProduct.set(item.product_id, list);
+  });
+  for (const [productId, idxs] of lineIdxByProduct.entries()) {
+    const p = productMap.get(productId)!;
+    const offer = toMultibuyOffer(p.multibuy_buy, p.multibuy_pay);
+    if (!offer) continue;
+    const results = resolveProductLinePrices(
+      idxs.map((idx) => ({
+        key: String(idx),
+        regularCents: enrichedItems[idx].regularPrice,
+        tieredUnitCents: enrichedItems[idx].effectivePrice,
+        quantity: enrichedItems[idx].quantity,
+      })),
+      offer
+    );
+    for (const r of results) {
+      const item = enrichedItems[Number(r.key)];
+      item.effectivePrice = r.unitCents;
+      item.lineDiscountCents = r.discountCents;
+      item.offerLabel = r.offerLabel;
+    }
+  }
 
   // 3.5 MP guard: a $0 item cannot be charged through Mercado Pago (still fine
   // for WhatsApp/catalog browsing, where $0 remains a valid "consult price" case).
@@ -343,8 +388,11 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     }
   }
 
-  // 4. Recalculate total server-side using effective prices
-  const totalCents = enrichedItems.reduce((sum, i) => sum + i.effectivePrice * i.quantity, 0);
+  // 4. Recalculate total server-side using effective prices. `grossCents` es la
+  // suma de unitario x cantidad; `totalCents` es el neto, ya sin el descuento NxM
+  // (antes del cupón). El cupón se valida contra el neto.
+  const grossCents = enrichedItems.reduce((sum, i) => sum + i.effectivePrice * i.quantity, 0);
+  const totalCents = grossCents - enrichedItems.reduce((sum, i) => sum + i.lineDiscountCents, 0);
 
   // 5. Coupon validation + discount computation
   //
@@ -382,16 +430,17 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
   // 5.1 Build MP-ready items (unit_price in ARS) BEFORE writing anything to the DB,
   // so a rounding failure aborts cleanly with no order/stock side effects.
   //
-  // When a coupon was validated server-side (mpFinalTotalCents < totalCents), distribute the
-  // discount proportionally across items so the MP preference charges exactly mpFinalTotalCents.
-  // Each non-last item's unit price is the proportional price rounded to the nearest centavo;
-  // the LAST item absorbs whatever is left so the sum matches mpFinalTotalCents EXACTLY.
-  // If the remainder can't be expressed as a clean per-unit centavo price (degenerate case,
-  // e.g. very small amounts split across many units), we abort instead of sending MP an
-  // inconsistent total.
+  // When the MP total is below the gross sum of the lines (NxM discount and/or a coupon
+  // validated server-side, mpFinalTotalCents < grossCents), distribute it proportionally
+  // across items so the MP preference charges exactly mpFinalTotalCents. Each non-last
+  // line gets its proportional share rounded to the nearest centavo; the LAST line absorbs
+  // whatever is left so the sum matches mpFinalTotalCents EXACTLY. A line whose share is
+  // not divisible by its quantity (e.g. 3 units paying for 2) is split in two MP items
+  // whose unit prices differ by one centavo. If a unit would fall under one centavo
+  // (degenerate case) we abort instead of sending MP an inconsistent total.
   let mp_items: MpOrderItem[];
-  if (mpFinalTotalCents < totalCents && totalCents > 0) {
-    const ratio = mpFinalTotalCents / totalCents;
+  if (mpFinalTotalCents < grossCents && grossCents > 0) {
+    const ratio = mpFinalTotalCents / grossCents;
     const items: MpOrderItem[] = [];
     let allocatedCents = 0;
     let degenerate = false;
@@ -399,34 +448,23 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
     enrichedItems.forEach((item, idx) => {
       const title = productMap.get(item.product_id)!.name;
       const isLast = idx === enrichedItems.length - 1;
+      const targetCents = isLast
+        ? mpFinalTotalCents - allocatedCents
+        : Math.round(item.effectivePrice * item.quantity * ratio);
 
-      if (!isLast) {
-        const centsPerUnit = Math.round((item.effectivePrice / 100) * ratio * 100);
-        if (centsPerUnit < 1) {
-          degenerate = true;
-          return;
-        }
-        allocatedCents += centsPerUnit * item.quantity;
-        items.push({ title, quantity: item.quantity, unit_price: centsPerUnit / 100, currency_id: 'ARS' });
-      } else {
-        const remainingCents = mpFinalTotalCents - allocatedCents;
-        if (remainingCents < item.quantity || remainingCents % item.quantity !== 0) {
-          degenerate = true;
-          return;
-        }
-        items.push({
-          title,
-          quantity: item.quantity,
-          unit_price: remainingCents / item.quantity / 100,
-          currency_id: 'ARS',
-        });
+      const lineItems = buildMpLineItems(title, item.quantity, targetCents);
+      if (!lineItems) {
+        degenerate = true;
+        return;
       }
+      allocatedCents += targetCents;
+      items.push(...lineItems);
     });
 
     if (degenerate) {
       Sentry.captureMessage('createPendingOrder: mp_items rounding could not be reconciled exactly', {
         tags: { feature: 'checkout-mp-rounding' },
-        extra: { storeId: input.store_id, totalCents, mpFinalTotalCents },
+        extra: { storeId: input.store_id, totalCents, grossCents, mpFinalTotalCents },
       });
       return { error: 'rounding_error' };
     }
@@ -502,6 +540,9 @@ export async function createPendingOrder(input: CreateOrderInput): Promise<Creat
       // Snapshot del costo (D1/D6): se escribe para cualquier plan, sin
       // lookup de plan en el camino crítico de creación de pedidos.
       cost_at_purchase: i.effectiveCost,
+      // Snapshot del descuento NxM de la línea (add-multibuy-offers).
+      discount_cents: i.lineDiscountCents,
+      offer_label: i.offerLabel,
     };
   });
 
@@ -620,7 +661,7 @@ async function findOrderByIdempotencyKey(
 ): Promise<CreateOrderResult | null> {
   const { data } = await admin
     .from('orders')
-    .select('id, store_order_number, order_items(product_name, unit_price_cents, quantity)')
+    .select('id, store_order_number, order_items(product_name, unit_price_cents, discount_cents, quantity)')
     .eq('idempotency_key', idempotencyKey)
     .maybeSingle();
 
@@ -629,13 +670,32 @@ async function findOrderByIdempotencyKey(
   return {
     order_id: data.id,
     store_order_number: data.store_order_number,
-    mp_items: (data.order_items ?? []).map((i) => ({
-      title: i.product_name,
-      quantity: i.quantity,
-      unit_price: i.unit_price_cents / 100,
-      currency_id: 'ARS' as const,
-    })),
+    // Neto de cada línea (con el descuento NxM ya restado). Cae a un item por
+    // unitario cuando la línea no tiene descuento, como siempre.
+    mp_items: (data.order_items ?? []).flatMap(
+      (i) =>
+        buildMpLineItems(i.product_name, i.quantity, i.unit_price_cents * i.quantity - i.discount_cents) ?? []
+    ),
   };
+}
+
+/**
+ * Items de Mercado Pago para una línea cuyo total es `targetCents`. Si el total
+ * no se reparte en unitarios enteros (3 unidades pagando 2 de $1000), se parte
+ * en dos items cuyos unitarios difieren en un centavo; la suma es exacta.
+ * Devuelve null si el unitario quedaría por debajo de un centavo.
+ */
+function buildMpLineItems(title: string, quantity: number, targetCents: number): MpOrderItem[] | null {
+  const baseUnitCents = Math.floor(targetCents / quantity);
+  if (baseUnitCents < 1) return null;
+  const remainder = targetCents - baseUnitCents * quantity;
+  if (remainder === 0) {
+    return [{ title, quantity, unit_price: baseUnitCents / 100, currency_id: 'ARS' }];
+  }
+  return [
+    { title, quantity: quantity - remainder, unit_price: baseUnitCents / 100, currency_id: 'ARS' },
+    { title, quantity: remainder, unit_price: (baseUnitCents + 1) / 100, currency_id: 'ARS' },
+  ];
 }
 
 /** Adds `quantity` back to product/variant stock for each item. No-op for infinite-stock (null) items. */
@@ -956,6 +1016,9 @@ export type OrderWithItems = {
     product_name: string;
     unit_price_cents: number;
     price_at_purchase: number;
+    // Descuento NxM congelado de la línea y su etiqueta (add-multibuy-offers).
+    discount_cents: number;
+    offer_label: string | null;
     variant_label: string | null;
     quantity: number;
     section_id: string | null;
@@ -1422,7 +1485,7 @@ export async function getOrderStats(
   // como venta en los KPIs: items de pedidos confirmados o entregados.
   const { data: items } = await admin
     .from('order_items')
-    .select('order_id, product_name, unit_price_cents, quantity, section_name, cost_at_purchase, cost_is_estimated')
+    .select('order_id, product_name, unit_price_cents, discount_cents, quantity, section_name, cost_at_purchase, cost_is_estimated')
     .in('order_id', confirmedOrders.map((o) => o.id));
 
   const allItems = items ?? [];
@@ -1458,7 +1521,7 @@ export async function getOrderStats(
     const existing = productMap.get(name) ?? { units: 0, revenue_cents: 0 };
     productMap.set(name, {
       units: existing.units + item.quantity,
-      revenue_cents: existing.revenue_cents + item.unit_price_cents * item.quantity,
+      revenue_cents: existing.revenue_cents + item.unit_price_cents * item.quantity - item.discount_cents,
     });
   }
   const top_products = Array.from(productMap.entries())
@@ -2016,6 +2079,7 @@ export async function exportOrdersCsv(
       const margin = computeCostMargin(
         order.items.map((i) => ({
           unit_price_cents: i.unit_price_cents,
+          discount_cents: i.discount_cents,
           cost_at_purchase: i.cost_at_purchase,
           quantity: i.quantity,
         }))

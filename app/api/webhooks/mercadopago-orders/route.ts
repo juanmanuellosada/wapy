@@ -238,7 +238,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               admin.from('stores').select('name, owner_id').eq('id', orderDetails.store_id).maybeSingle(),
               admin
                 .from('order_items')
-                .select('product_name, quantity, unit_price_cents, variant_label')
+                .select('product_name, quantity, unit_price_cents, discount_cents, variant_label')
                 .eq('order_id', orderId),
             ]);
 
@@ -249,6 +249,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               quantity: item.quantity,
               variantLabel: item.variant_label,
               unitPriceCents: item.unit_price_cents,
+              discountCents: item.discount_cents,
             }));
 
             let ownerEmail: string | null = null;

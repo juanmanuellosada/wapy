@@ -15,7 +15,7 @@ import { getPlanLimits, isUnlimited } from '@/lib/plans/limits';
 import type { PlanId } from '@/lib/plans/limits';
 import { getStoreMpConnectionStatus } from '@/lib/store/checkout/oauth';
 import { getSubscriptionState } from '@/lib/subscription/state';
-import { validateProductFields, checkBatchFits, validatePriceTiers } from '@/lib/store/product-validation';
+import { validateProductFields, checkBatchFits, validatePriceTiers, validateMultibuy } from '@/lib/store/product-validation';
 import { resolveEffectiveCost, type PriceTier } from '@/lib/store/pricing';
 import { MAX_PHOTOS_PER_ZIP } from '@/lib/store/bulk-import/zip';
 import { SORT_MODE_IDS, type SortMode } from '@/lib/storefront/sorting';
@@ -392,6 +392,10 @@ type ProductInput = {
   // undefined = not touched by this call (preserves the existing cost on update);
   // null = explicitly "sin costo cargado"; 0 es un valor válido (Decisión D3).
   cost_cents?: number | null;
+  // Oferta NxM (add-multibuy-offers). undefined = not touched by this call
+  // (preserves the existing offer on update); ambos null = explicitly "sin oferta".
+  multibuy_buy?: number | null;
+  multibuy_pay?: number | null;
 };
 
 /** Validates a product-level promo price against its regular price. Server is the source of truth (design Decisión 4). */
@@ -531,6 +535,15 @@ export async function saveStoreProduct(
       costUpdate.cost_cents = costResult.value;
     }
 
+    // La oferta NxM sigue el mismo patrón: undefined = no tocar.
+    const multibuyUpdate: { multibuy_buy?: number | null; multibuy_pay?: number | null } = {};
+    if (product.multibuy_buy !== undefined || product.multibuy_pay !== undefined) {
+      const mbIssues = validateMultibuy(product.multibuy_buy, product.multibuy_pay);
+      if (mbIssues.length > 0) return { error: mbIssues[0].message };
+      multibuyUpdate.multibuy_buy = product.multibuy_buy ?? null;
+      multibuyUpdate.multibuy_pay = product.multibuy_pay ?? null;
+    }
+
     const { error } = await admin
       .from('products')
       .update({
@@ -546,6 +559,7 @@ export async function saveStoreProduct(
         ...quantityUpdate,
         ...promoUpdate,
         ...costUpdate,
+        ...multibuyUpdate,
       })
       .eq('id', product.id)
       .eq('store_id', store.id);
@@ -584,6 +598,9 @@ export async function saveStoreProduct(
     if (tierIssues.length > 0) return { error: tierIssues[0].message };
   }
 
+  const mbIssues = validateMultibuy(product.multibuy_buy, product.multibuy_pay);
+  if (mbIssues.length > 0) return { error: mbIssues[0].message };
+
   const { data: newProduct, error: insertError } = await admin
     .from('products')
     .insert({
@@ -593,6 +610,8 @@ export async function saveStoreProduct(
       price_cents: product.price_cents,
       promo_price_cents: promoResult.value,
       cost_cents: costResult.value,
+      multibuy_buy: product.multibuy_buy ?? null,
+      multibuy_pay: product.multibuy_pay ?? null,
       stock: product.stock ?? null,
       section_id: product.section_id ?? null,
       image_urls: product.image_urls,
@@ -845,6 +864,10 @@ type BulkUpdateRow = {
   // esta fila no tocó el costo (la grilla oculta la columna a planes no-Pro);
   // null = "sin costo cargado"; 0 es un valor válido (Decisión D3). Ver 3.5.
   cost_cents?: number | null;
+  // Oferta NxM (add-multibuy-offers). undefined = esta fila no la tocó; ambos
+  // null = "sin oferta". Igual que el costo, viaja para todas las filas o ninguna.
+  multibuy_buy?: number | null;
+  multibuy_pay?: number | null;
 };
 
 export async function bulkUpdateProducts(
@@ -875,6 +898,14 @@ export async function bulkUpdateProducts(
     return { error: 'Tu plan no incluye el costo de mercadería. Pasate a Pro para cargarlo.' };
   }
 
+  // La oferta NxM sigue la misma regla de todo-o-nada por el upsert en lote.
+  const rowsWithMultibuy = rows.filter(
+    (r) => r.multibuy_buy !== undefined || r.multibuy_pay !== undefined
+  ).length;
+  if (rowsWithMultibuy > 0 && rowsWithMultibuy !== rows.length) {
+    return { error: 'Error interno: la oferta NxM debe enviarse para todos los productos del lote o para ninguno.' };
+  }
+
   const admin = createAdminClient();
 
   // Todos los ids recibidos deben pertenecer a la tienda del usuario, o se
@@ -896,6 +927,8 @@ export async function bulkUpdateProducts(
       stock: row.stock,
       price_tiers: row.price_tiers,
       cost_cents: row.cost_cents,
+      multibuy_buy: row.multibuy_buy,
+      multibuy_pay: row.multibuy_pay,
     });
     if (issues.length > 0) return { error: issues[0].message };
   }
@@ -913,6 +946,9 @@ export async function bulkUpdateProducts(
     is_active: row.is_active,
     updated_at: new Date().toISOString(),
     ...(row.cost_cents !== undefined ? { cost_cents: row.cost_cents } : {}),
+    ...(rowsWithMultibuy > 0
+      ? { multibuy_buy: row.multibuy_buy ?? null, multibuy_pay: row.multibuy_pay ?? null }
+      : {}),
   }));
 
   const { error } = await admin.from('products').upsert(updateRows);
@@ -1209,6 +1245,8 @@ export async function duplicateProduct(
       currency: original.currency ?? 'ARS',
       min_quantity: original.min_quantity ?? 1,
       qty_step: original.qty_step ?? 1,
+      multibuy_buy: original.multibuy_buy,
+      multibuy_pay: original.multibuy_pay,
     })
     .select('*')
     .single();

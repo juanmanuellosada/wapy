@@ -13,7 +13,7 @@ import { ConfirmModal } from '@/app/components/ConfirmModal';
 import { ProductModal } from '@/app/components/store/ProductModal';
 import { bulkUpdateProducts, bulkDeleteProducts } from '@/lib/store/actions';
 import { validateProductFields, type ProductValidationIssue } from '@/lib/store/product-validation';
-import { sortTiers, type PriceTier } from '@/lib/store/pricing';
+import { sortTiers, multibuyLabel, type PriceTier } from '@/lib/store/pricing';
 import type { Product, Section } from '@/lib/onboarding/state';
 import { toast } from '@/lib/toast';
 
@@ -47,7 +47,24 @@ type EditableFields = {
   is_active: boolean;
   price_tiers: PriceTier[]; // tramos por cantidad; [] = sin tramos
   cost_display: string; // '' = sin costo cargado (solo se usa si allowCostTracking)
+  multibuy_buy: number | null; // oferta NxM; ambos null = sin oferta
+  multibuy_pay: number | null;
 };
+
+/** Resumen corto de la oferta NxM para la celda de la grilla. */
+function multibuySummary(f: Pick<EditableFields, 'multibuy_buy' | 'multibuy_pay'>): string {
+  return f.multibuy_buy != null && f.multibuy_pay != null
+    ? multibuyLabel({ buy: f.multibuy_buy, pay: f.multibuy_pay })
+    : 'Sin oferta';
+}
+
+/** Ofertas que se pueden aplicar en lote; las personalizadas se editan por producto. */
+const BULK_MULTIBUY_OPTIONS: SelectOption[] = [
+  { value: '2x1', label: '2x1' },
+  { value: '3x2', label: '3x2' },
+  { value: '3x1', label: '3x1' },
+  { value: '4x3', label: '4x3' },
+];
 
 /** Clave estable de un set de tramos, para comparar filas sin deep-equal. */
 function tiersKey(tiers: PriceTier[]): string {
@@ -108,6 +125,8 @@ function buildEditableFields(p: Product, tiers: PriceTier[] = []): EditableField
     is_active: p.is_active,
     price_tiers: sortTiers(tiers),
     cost_display: p.cost_cents != null ? formatPriceDisplay(p.cost_cents) : '',
+    multibuy_buy: p.multibuy_buy ?? null,
+    multibuy_pay: p.multibuy_pay ?? null,
   };
 }
 
@@ -124,6 +143,8 @@ function normalizeFields(f: EditableFields) {
     is_active: f.is_active,
     price_tiers: sortTiers(f.price_tiers),
     cost_cents: f.cost_display.trim() === '' ? null : parsePriceDisplay(f.cost_display),
+    multibuy_buy: f.multibuy_buy,
+    multibuy_pay: f.multibuy_pay,
   };
 }
 
@@ -139,7 +160,9 @@ function isRowDirty(current: EditableFields, baseline: EditableFields): boolean 
     a.stock !== b.stock ||
     a.is_active !== b.is_active ||
     tiersKey(a.price_tiers) !== tiersKey(b.price_tiers) ||
-    a.cost_cents !== b.cost_cents
+    a.cost_cents !== b.cost_cents ||
+    a.multibuy_buy !== b.multibuy_buy ||
+    a.multibuy_pay !== b.multibuy_pay
   );
 }
 
@@ -162,6 +185,8 @@ function computeRowValidation(fields: EditableFields): ProductValidationIssue[] 
       stock: stockIsGarbage ? null : n.stock,
       price_tiers: n.price_tiers,
       cost_cents: n.cost_cents,
+      multibuy_buy: n.multibuy_buy,
+      multibuy_pay: n.multibuy_pay,
     })
   );
   return issues;
@@ -185,6 +210,9 @@ function toBulkUpdateRow(row: RowState, includeCost: boolean) {
     is_active: n.is_active,
     price_tiers: n.price_tiers,
     ...(includeCost ? { cost_cents: n.cost_cents } : {}),
+    // La oferta NxM viaja para todo el lote, como el costo (ver bulkUpdateProducts).
+    multibuy_buy: n.multibuy_buy,
+    multibuy_pay: n.multibuy_pay,
   };
 }
 
@@ -206,9 +234,9 @@ function buildSectionOptions(sections: Section[]): SelectOption[] {
 // ---------------------------------------------------------------------------
 
 const GRID_COLS_WITHOUT_COST =
-  'md:grid-cols-[minmax(190px,1.6fr)_minmax(130px,1.1fr)_96px_96px_110px_140px_84px_92px_44px]';
+  'md:grid-cols-[minmax(190px,1.6fr)_minmax(130px,1.1fr)_96px_96px_110px_84px_140px_84px_92px_44px]';
 const GRID_COLS_WITH_COST =
-  'md:grid-cols-[minmax(190px,1.6fr)_minmax(130px,1.1fr)_96px_96px_96px_110px_140px_84px_92px_44px]';
+  'md:grid-cols-[minmax(190px,1.6fr)_minmax(130px,1.1fr)_96px_96px_96px_110px_84px_140px_84px_92px_44px]';
 
 const inputClass =
   'w-full min-w-0 rounded-lg bg-white/8 border border-white/15 text-[#FBF7EC] placeholder-white/30 px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#F5C84B]/70 transition-colors';
@@ -366,6 +394,21 @@ const ProductGridRow = memo(function ProductGridRow({
         </button>
       </Field>
 
+      <Field label="NxM">
+        <button
+          type="button"
+          onClick={() => onOpenModal(row.id)}
+          className={`w-full h-9 rounded-lg flex items-center justify-center px-2 text-xs font-medium transition-colors cursor-pointer ${
+            row.multibuy_buy != null
+              ? 'text-[#F5C84B] bg-[#F5C84B]/10 hover:bg-[#F5C84B]/20'
+              : 'text-white/40 bg-white/5 hover:text-white hover:bg-white/10'
+          }`}
+          aria-label={`Editar la oferta NxM de ${row.name || 'este producto'} (${multibuySummary(row)})`}
+        >
+          <span className="truncate">{multibuySummary(row)}</span>
+        </button>
+      </Field>
+
       <Field label="Sección">
         <Select
           value={row.section_id || null}
@@ -487,6 +530,7 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
   // null = el dueño todavía no eligió nada (el botón queda deshabilitado).
   // '' = eligió "Sin sección" explícitamente, que es destructivo y pide confirmación.
   const [bulkSectionId, setBulkSectionId] = useState<string | null>(null);
+  const [bulkMultibuy, setBulkMultibuy] = useState<string>('2x1');
   const [bulkTierQty, setBulkTierQty] = useState('3');
   const [bulkTierMode, setBulkTierMode] = useState<BulkTierMode>('percent');
   const [bulkTierValue, setBulkTierValue] = useState('');
@@ -678,6 +722,8 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
           is_active: r.is_active,
           price_tiers: r.price_tiers,
           cost_display: r.cost_display,
+          multibuy_buy: r.multibuy_buy,
+          multibuy_pay: r.multibuy_pay,
         };
         baselineRef.current[r.id] = savedFields;
         next[r.id] = { ...next[r.id], dirty: false };
@@ -750,6 +796,8 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
           })(),
           is_active: modalRow.is_active,
           cost_cents: allowCostTracking ? normalizeFields(modalRow).cost_cents : modalOriginal.cost_cents,
+          multibuy_buy: modalRow.multibuy_buy,
+          multibuy_pay: modalRow.multibuy_pay,
         }
       : null;
 
@@ -989,6 +1037,38 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
           </div>
 
           <div className="flex items-end gap-1.5">
+            <div className="w-24">
+              <label htmlFor="bulk-multibuy" className="block text-[10px] font-semibold uppercase tracking-wide text-white/40 mb-1">
+                Oferta
+              </label>
+              <Select
+                id="bulk-multibuy"
+                value={bulkMultibuy}
+                onChange={(v) => setBulkMultibuy(v)}
+                options={BULK_MULTIBUY_OPTIONS}
+                ariaLabel="Oferta NxM para aplicar en lote"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const [buy, pay] = bulkMultibuy.split('x').map((n) => parseInt(n, 10));
+                applyToSelected({ multibuy_buy: buy, multibuy_pay: pay });
+              }}
+              className="h-9 px-3 rounded-lg text-xs font-semibold text-[#16222E] bg-[#F5C84B] hover:bg-[#FAE08A] transition-colors cursor-pointer"
+            >
+              Aplicar oferta
+            </button>
+            <button
+              type="button"
+              onClick={() => applyToSelected({ multibuy_buy: null, multibuy_pay: null })}
+              className="h-9 px-3 rounded-lg text-xs font-semibold text-white/60 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+            >
+              Quitar oferta
+            </button>
+          </div>
+
+          <div className="flex items-end gap-1.5">
             <button
               type="button"
               onClick={() => applyToSelected({ is_active: true })}
@@ -1026,6 +1106,7 @@ export function BulkEditGrid({ storeId, products, priceTiersByProduct, sections,
         <span>Promo</span>
         {allowCostTracking && <span>Costo</span>}
         <span>Tramos</span>
+        <span>NxM</span>
         <span>Sección</span>
         <span>Stock</span>
         <span>Activo</span>

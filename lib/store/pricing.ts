@@ -218,3 +218,106 @@ export function nextTier(
   }
   return best;
 }
+
+// ---------------------------------------------------------------------------
+// Ofertas NxM por producto ("llevás N, pagás M": 2x1, 3x2, 3x1...)
+//
+// Reglas (ver openspec/changes/add-multibuy-offers/design.md):
+//  1. La cantidad se agrega POR PRODUCTO sumando variantes. Con Q unidades se
+//     bonifican floor(Q / N) * (N - M); las sobrantes pagan precio normal.
+//  2. Las unidades bonificadas son las de menor precio regular.
+//  3. Gana el más barato, sin acumular: por producto se compara el total con
+//     promo/tramos contra el total con NxM (sobre precio REGULAR) y se cobra el
+//     menor. En empate gana el cálculo con promo/tramos.
+// ---------------------------------------------------------------------------
+
+export interface MultibuyOffer {
+  buy: number;
+  pay: number;
+}
+
+export interface ProductLineInput {
+  key: string;
+  /** Precio regular unitario de la línea (sin promo ni tramo). */
+  regularCents: number;
+  /** Precio unitario ya resuelto con promo y/o tramo (resolveTieredPrice.unitCents). */
+  tieredUnitCents: number;
+  quantity: number;
+}
+
+export interface ProductLineResult {
+  key: string;
+  /** Unitario que se snapshotea en order_items. */
+  unitCents: number;
+  /** Descuento NxM de la línea (0 si no ganó el NxM). */
+  discountCents: number;
+  /** "2x1" si ganó el NxM, o null. */
+  offerLabel: string | null;
+}
+
+export function multibuyLabel(offer: MultibuyOffer): string {
+  return `${offer.buy}x${offer.pay}`;
+}
+
+/** Arma la oferta desde las columnas de products; null si no hay oferta válida. */
+export function toMultibuyOffer(
+  buy: number | null | undefined,
+  pay: number | null | undefined
+): MultibuyOffer | null {
+  if (buy == null || pay == null) return null;
+  return { buy, pay };
+}
+
+/**
+ * Resuelve las líneas de UN producto (todas sus variantes) aplicando la regla
+ * "gana el más barato" entre promo/tramos y NxM.
+ */
+export function resolveProductLinePrices(
+  lines: readonly ProductLineInput[],
+  offer: MultibuyOffer | null
+): ProductLineResult[] {
+  const tiered = (l: ProductLineInput): ProductLineResult => ({
+    key: l.key,
+    unitCents: l.tieredUnitCents,
+    discountCents: 0,
+    offerLabel: null,
+  });
+
+  if (!offer) return lines.map(tiered);
+
+  const totalQty = lines.reduce((sum, l) => sum + l.quantity, 0);
+  let freeUnits = Math.floor(totalQty / offer.buy) * (offer.buy - offer.pay);
+  if (freeUnits <= 0) return lines.map(tiered);
+
+  // Bonifica primero las unidades de menor precio regular (orden estable).
+  const discountByKey = new Map<string, number>();
+  const byPrice = lines
+    .map((l, idx) => ({ l, idx }))
+    .sort((a, b) => a.l.regularCents - b.l.regularCents || a.idx - b.idx);
+  let totalDiscount = 0;
+  for (const { l } of byPrice) {
+    if (freeUnits <= 0) break;
+    const units = Math.min(l.quantity, freeUnits);
+    const d = units * l.regularCents;
+    discountByKey.set(l.key, (discountByKey.get(l.key) ?? 0) + d);
+    totalDiscount += d;
+    freeUnits -= units;
+  }
+
+  const tieredTotal = lines.reduce((sum, l) => sum + l.tieredUnitCents * l.quantity, 0);
+  const regularTotal = lines.reduce((sum, l) => sum + l.regularCents * l.quantity, 0);
+  const multibuyTotal = regularTotal - totalDiscount;
+
+  if (multibuyTotal >= tieredTotal) return lines.map(tiered);
+
+  const label = multibuyLabel(offer);
+  return lines.map((l) => {
+    const discountCents = discountByKey.get(l.key) ?? 0;
+    return {
+      key: l.key,
+      unitCents: l.regularCents,
+      discountCents,
+      offerLabel: discountCents > 0 ? label : null,
+    };
+  });
+}

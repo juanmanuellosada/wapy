@@ -7,7 +7,7 @@ import { parseFiltersFromSearchParams } from "./filters";
 import { getTopSellers, getRelatedProductIds } from "@/lib/storefront/insights";
 import type { UIProduct } from "./types";
 import { getStoreMpConnectionStatus } from "@/lib/store/checkout/oauth";
-import { buildTierGroupSizes } from "@/lib/store/pricing";
+import { buildTierGroupSizes, toMultibuyOffer } from "@/lib/store/pricing";
 import { sortCatalog, needsTopSellers } from "@/lib/storefront/sorting";
 
 interface Props {
@@ -104,6 +104,7 @@ export default async function SlugPage({ params, searchParams }: Props) {
             qty_step: p.qty_step ?? 1,
             priceTiers: resolution.priceTiersByProduct[p.id] ?? [],
             tiersCombinable: (tierGroupSizes.get(p.id) ?? 0) > 1,
+            multibuy: toMultibuyOffer(p.multibuy_buy, p.multibuy_pay),
           },
         ])
       );

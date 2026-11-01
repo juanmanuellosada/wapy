@@ -22,7 +22,7 @@ import { extractSocialHandle } from "@/lib/store/social-links";
 import type { PublicStoreRow, SectionRow, ProductRow, ProductVariantData } from "@/lib/storefront/resolve";
 import { parseBanner } from "@/lib/store/theme";
 import { useCart, cartItemKey } from "./CartContext";
-import ProductCardClient, { VariantSelector, useVariantSelection, PriceTierHint, formatARSCents } from "./ProductCardClient";
+import ProductCardClient, { VariantSelector, useVariantSelection, PriceTierHint, MultibuyBadge, formatARSCents } from "./ProductCardClient";
 import WapyFooter from "@/app/components/WapyFooter";
 import { createPendingOrder } from "@/lib/store/orders/actions";
 import { buildOrderWhatsappMessage } from "@/lib/store/whatsapp/buildMessage";
@@ -40,7 +40,7 @@ import {
   applyFilters,
 } from "./filters";
 import type { UIProduct } from "./types";
-import { buildTierGroupSizes, type PriceTier } from "@/lib/store/pricing";
+import { buildTierGroupSizes, toMultibuyOffer, multibuyLabel, type PriceTier } from "@/lib/store/pricing";
 import TopSellers from "./TopSellers";
 import RelatedProducts from "./RelatedProducts";
 import ShareCartButton from "./ShareCartButton";
@@ -864,6 +864,7 @@ function ProductModal({
         price: effectivePrice,
         image: product.image,
         priceTiers: product.priceTiers,
+        multibuy: product.multibuy,
         productPriceCents: product.priceCents,
         regularPriceCents,
         effectivePriceCents,
@@ -942,6 +943,7 @@ function ProductModal({
               <p className="text-2xl font-bold" style={{ color: accentColor }}>
                 {formatARS(effectivePrice)}
               </p>
+              <MultibuyBadge offer={product.multibuy} accentColor={accentColor} />
             </div>
           </div>
 
@@ -1035,6 +1037,7 @@ function ProductModal({
                 min_quantity: product.min_quantity ?? 1,
                 qty_step: product.qty_step ?? 1,
                 priceTiers: product.priceTiers,
+                multibuy: product.multibuy,
                 tiersCombinable: product.tiersCombinable,
               }}
               accentColor={accentColor}
@@ -1102,7 +1105,7 @@ function CartDrawer({
   checkoutMode: "whatsapp" | "mercadopago";
   mpConnected: boolean;
 }) {
-  const { items, open, totalPrice, linePrices, tierProgress, appliedCoupon, discountAmount, finalTotal, removeItem, setQty, closeCart, applyCoupon, removeCoupon } = useCart();
+  const { items, open, totalPrice, linePrices, tierProgress, multibuyHints, appliedCoupon, discountAmount, finalTotal, removeItem, setQty, closeCart, applyCoupon, removeCoupon } = useCart();
   const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
@@ -1181,7 +1184,11 @@ function CartDrawer({
       // Con tramo por cantidad se explicita el unitario, si no el mensaje no cierra
       // contra el precio de lista que el comprador vio en la ficha.
       const tierNote = line?.onTier ? ` (${formatARSCents(Math.round(unitPrice * 100))} c/u)` : "";
-      return `• ${i.quantity}x ${i.name}${label}${tierNote} — ${formatARS(unitPrice * i.quantity)}`;
+      // Con NxM se explicita el descuento aplicado, así el detalle cierra con el total.
+      const lineDiscount = line?.discount ?? 0;
+      const offerNote =
+        line?.offerLabel && lineDiscount > 0 ? ` (${line.offerLabel}: −${formatARS(lineDiscount)})` : "";
+      return `• ${i.quantity}x ${i.name}${label}${tierNote}${offerNote} — ${formatARS(unitPrice * i.quantity - lineDiscount)}`;
     });
 
     let orderId: string | null = null;
@@ -1480,6 +1487,11 @@ function CartDrawer({
                         </span>{" "}
                         / u
                       </p>
+                      {linePrice && linePrice.offerLabel && linePrice.discount > 0 && (
+                        <p className="text-xs font-semibold" style={{ color: accentColor }}>
+                          {linePrice.offerLabel} · −{formatARS(linePrice.discount)}
+                        </p>
+                      )}
                       {isOverStock && (
                         <p className="text-xs font-medium text-red-400">
                           Solo quedan {itemStock} unidades
@@ -1544,7 +1556,7 @@ function CartDrawer({
                       className="text-sm font-bold shrink-0"
                       style={{ color: "var(--store-ink)" }}
                     >
-                      {formatARS(displayPrice * item.quantity)}
+                      {formatARS(displayPrice * item.quantity - (linePrice?.discount ?? 0))}
                     </p>
                   </li>
                 );
@@ -1555,6 +1567,24 @@ function CartDrawer({
           {/* Contador de tramos: cuánto falta para el próximo escalón de cada promo.
               Se muestra uno por grupo de escalera, no por línea, para no repetir el
               mismo aviso en cada sabor de la misma promo. */}
+          {multibuyHints.length > 0 && (
+            <div className="flex flex-col gap-2 mt-4">
+              {multibuyHints.map((h) => (
+                <p
+                  key={h.productId}
+                  className="rounded-xl px-3 py-2 text-xs font-medium"
+                  style={{
+                    color: accentColor,
+                    background: `color-mix(in srgb, ${accentColor} 10%, transparent)`,
+                    border: `1px solid color-mix(in srgb, ${accentColor} 25%, transparent)`,
+                  }}
+                >
+                  Sumá 1 unidad más de {h.name} y llevás {h.label}.
+                </p>
+              ))}
+            </div>
+          )}
+
           {tierProgress.length > 0 && (
             <div className="flex flex-col gap-2 mt-4">
               {tierProgress.map((p) => (
@@ -2081,6 +2111,12 @@ function FloatingCartButton({ accentColor }: { accentColor: string }) {
 
 // ─── Root Client Component ────────────────────────────────────────────────────
 
+/** "2x1", "2x1 y 3x2", "2x1, 3x2 y 4x3" */
+function formatOfferLabels(labels: string[]): string {
+  if (labels.length <= 1) return labels.join("");
+  return `${labels.slice(0, -1).join(", ")} y ${labels[labels.length - 1]}`;
+}
+
 export default function StoreClient({
   store,
   sections: sectionRows,
@@ -2165,6 +2201,7 @@ export default function StoreClient({
         qty_step: (p as unknown as { qty_step?: number }).qty_step ?? 1,
         priceTiers: priceTiersByProduct[p.id] ?? [],
         tiersCombinable: (tierGroupSizes.get(p.id) ?? 0) > 1,
+        multibuy: toMultibuyOffer(p.multibuy_buy, p.multibuy_pay),
       })),
     [productRows, priceTiersByProduct, tierGroupSizes]
   );
@@ -2329,10 +2366,25 @@ export default function StoreClient({
 
   // ─── Filtered products for the grid ─────────────────────────────────────────
 
-  const visibleProducts = useMemo(
-    () => applyFilters(products, variantsByProduct, filters, subsectionMap),
-    [products, variantsByProduct, filters, subsectionMap]
-  );
+  // Filtro de cliente del banner de ofertas ("Ver promos"): deja solo los
+  // productos con oferta NxM, sin ruta ni parámetro de URL nuevos.
+  const [promosOnly, setPromosOnly] = useState(false);
+
+  const visibleProducts = useMemo(() => {
+    const filtered = applyFilters(products, variantsByProduct, filters, subsectionMap);
+    return promosOnly ? filtered.filter((p) => p.multibuy) : filtered;
+  }, [products, variantsByProduct, filters, subsectionMap, promosOnly]);
+
+  // Ofertas NxM distintas del catálogo, para el texto del banner ("2x1 y 3x2").
+  const offerLabels = useMemo(() => {
+    const byLabel = new Map<string, { buy: number; pay: number }>();
+    for (const p of products) {
+      if (p.multibuy) byLabel.set(multibuyLabel(p.multibuy), p.multibuy);
+    }
+    return [...byLabel.entries()]
+      .sort(([, a], [, b]) => a.buy - b.buy || a.pay - b.pay)
+      .map(([label]) => label);
+  }, [products]);
 
   const visibleProductsBySection = useMemo(() => {
     const map = new Map<string, UIProduct[]>();
@@ -2351,9 +2403,10 @@ export default function StoreClient({
       filters.priceMin !== null ||
       filters.priceMax !== null ||
       filters.sectionIds.length > 0 ||
-      filters.inStockOnly
+      filters.inStockOnly ||
+      promosOnly
     );
-  }, [filters]);
+  }, [filters, promosOnly]);
 
   const accentForeground = "#ffffff";
 
@@ -2400,6 +2453,33 @@ export default function StoreClient({
         className="mx-auto w-full max-w-6xl px-4 sm:px-6 md:px-8 py-10 sm:py-14 flex flex-col gap-8 sm:gap-12"
         id="main-content"
       >
+        {/* Banner de ofertas NxM: no se muestra con la tienda en construcción */}
+        {!store.under_construction && offerLabels.length > 0 && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl px-4 py-3"
+            style={{
+              color: accentColor,
+              background: `color-mix(in srgb, ${accentColor} 10%, transparent)`,
+              border: `1px solid color-mix(in srgb, ${accentColor} 25%, transparent)`,
+            }}
+            role="region"
+            aria-label="Ofertas"
+          >
+            <p className="text-sm font-semibold">
+              {formatOfferLabels(offerLabels)} en productos seleccionados
+            </p>
+            <button
+              type="button"
+              onClick={() => setPromosOnly((v) => !v)}
+              aria-pressed={promosOnly}
+              className="rounded-full px-4 py-1.5 text-xs font-semibold cursor-pointer transition-opacity hover:opacity-80"
+              style={{ background: accentColor, color: accentForeground }}
+            >
+              {promosOnly ? "Ver todo" : "Ver promos"}
+            </button>
+          </div>
+        )}
+
         {/* Catalog filters */}
         <CatalogFiltersUI
           filters={filters}
@@ -2438,7 +2518,10 @@ export default function StoreClient({
                 </p>
               </div>
               <button
-                onClick={() => setFilters(DEFAULT_FILTERS)}
+                onClick={() => {
+                  setFilters(DEFAULT_FILTERS);
+                  setPromosOnly(false);
+                }}
                 className="mt-2 rounded-full px-5 py-2.5 text-sm font-semibold cursor-pointer transition-opacity hover:opacity-80"
                 style={{ background: accentColor, color: accentForeground }}
               >

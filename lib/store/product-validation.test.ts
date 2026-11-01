@@ -1,7 +1,7 @@
 // Ejecutar con: npx vitest run lib/store/product-validation.test.ts
 
 import { describe, it, expect } from 'vitest';
-import { validateProductFields, isValidProductFields, checkBatchFits } from './product-validation';
+import { validateProductFields, isValidProductFields, checkBatchFits, validateMultibuy } from './product-validation';
 
 describe('validateProductFields', () => {
   it('producto válido no reporta problemas', () => {
@@ -80,5 +80,26 @@ describe('checkBatchFits', () => {
 
   it('un plan ilimitado (Infinity) siempre entra', () => {
     expect(checkBatchFits(1000, 60, Infinity)).toEqual({ ok: true });
+  });
+});
+
+describe('validateMultibuy', () => {
+  it('sin oferta (ambos null/undefined) es válido', () => {
+    expect(validateMultibuy(null, null)).toEqual([]);
+    expect(validateMultibuy(undefined, undefined)).toEqual([]);
+  });
+
+  it('acepta 2x1, 3x2 y 4x3', () => {
+    expect(validateMultibuy(2, 1)).toEqual([]);
+    expect(validateMultibuy(3, 2)).toEqual([]);
+    expect(validateMultibuy(4, 3)).toEqual([]);
+  });
+
+  it('rechaza N < 2, M >= N, M < 1, no enteros y valores a medias', () => {
+    expect(validateMultibuy(1, 1)).toHaveLength(1);
+    expect(validateMultibuy(2, 2)).toHaveLength(1);
+    expect(validateMultibuy(3, 0)).toHaveLength(1);
+    expect(validateMultibuy(2.5, 1)).toHaveLength(1);
+    expect(validateMultibuy(2, null)).toHaveLength(1);
   });
 });

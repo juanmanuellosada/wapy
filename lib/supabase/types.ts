@@ -166,7 +166,9 @@ export type Database = {
         Row: {
           cost_at_purchase: number | null
           cost_is_estimated: boolean
+          discount_cents: number
           id: string
+          offer_label: string | null
           order_id: string
           price_at_purchase: number
           product_id: string | null
@@ -181,7 +183,9 @@ export type Database = {
         Insert: {
           cost_at_purchase?: number | null
           cost_is_estimated?: boolean
+          discount_cents?: number
           id?: string
+          offer_label?: string | null
           order_id: string
           price_at_purchase?: number
           product_id?: string | null
@@ -196,7 +200,9 @@ export type Database = {
         Update: {
           cost_at_purchase?: number | null
           cost_is_estimated?: boolean
+          discount_cents?: number
           id?: string
+          offer_label?: string | null
           order_id?: string
           price_at_purchase?: number
           product_id?: string | null
@@ -523,6 +529,8 @@ export type Database = {
           image_urls: string[]
           is_active: boolean
           min_quantity: number
+          multibuy_buy: number | null
+          multibuy_pay: number | null
           name: string
           position: number
           price_cents: number
@@ -542,6 +550,8 @@ export type Database = {
           image_urls?: string[]
           is_active?: boolean
           min_quantity?: number
+          multibuy_buy?: number | null
+          multibuy_pay?: number | null
           name: string
           position?: number
           price_cents: number
@@ -561,6 +571,8 @@ export type Database = {
           image_urls?: string[]
           is_active?: boolean
           min_quantity?: number
+          multibuy_buy?: number | null
+          multibuy_pay?: number | null
           name?: string
           position?: number
           price_cents?: number

@@ -284,6 +284,7 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
   const orderMargin = computeCostMargin(
     order.items.map((i) => ({
       unit_price_cents: i.unit_price_cents,
+      discount_cents: i.discount_cents,
       cost_at_purchase: i.cost_at_purchase,
       quantity: i.quantity,
       cost_is_estimated: i.cost_is_estimated,
@@ -441,8 +442,13 @@ function OrderDetailModal({ order, allowCostTracking, onClose, onStatusChange, o
                     <p className="text-xs text-white/50">
                       {item.quantity} × {formatPrice(snapshotPrice)}
                     </p>
+                    {item.discount_cents > 0 && (
+                      <p className="text-xs text-[#F5C84B]">
+                        {item.offer_label ? `${item.offer_label} · ` : ''}−{formatPrice(item.discount_cents)}
+                      </p>
+                    )}
                     <p className="text-sm text-[#FBF7EC] font-medium">
-                      {formatPrice(snapshotPrice * item.quantity)}
+                      {formatPrice(snapshotPrice * item.quantity - item.discount_cents)}
                     </p>
                   </div>
                 </div>

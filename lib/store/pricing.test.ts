@@ -11,6 +11,9 @@ import {
   tierGroupKey,
   buildTierGroupSizes,
   nextTier,
+  multibuyLabel,
+  resolveProductLinePrices,
+  type ProductLineInput,
   type PriceableProduct,
   type PriceableVariant,
   type PriceTier,
@@ -333,5 +336,77 @@ describe('combinación de productos con la misma escalera', () => {
     const result = resolveTieredPrice(product(), null, 1, TIERS);
     expect(result.unitCents).toBe(10000);
     expect(result.onTier).toBe(false);
+  });
+});
+
+describe('resolveProductLinePrices (NxM)', () => {
+  const line = (key: string, regular: number, qty: number, tiered = regular): ProductLineInput => ({
+    key,
+    regularCents: regular,
+    tieredUnitCents: tiered,
+    quantity: qty,
+  });
+  const net = (r: ReturnType<typeof resolveProductLinePrices>, qtys: number[]) =>
+    r.reduce((sum, l, i) => sum + l.unitCents * qtys[i] - l.discountCents, 0);
+
+  it('sin oferta devuelve el unitario escalonado', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 2, 900)], null);
+    expect(r).toEqual([{ key: 'a', unitCents: 900, discountCents: 0, offerLabel: null }]);
+  });
+
+  it('2x1 exacto: paga una', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 2)], { buy: 2, pay: 1 });
+    expect(r[0]).toEqual({ key: 'a', unitCents: 1000, discountCents: 1000, offerLabel: '2x1' });
+    expect(net(r, [2])).toBe(1000);
+  });
+
+  it('2x1 llevando 3: las sobrantes pagan normal', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 3)], { buy: 2, pay: 1 });
+    expect(net(r, [3])).toBe(2000);
+  });
+
+  it('3x2 con Q=7: dos grupos, dos bonificadas', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 7)], { buy: 3, pay: 2 });
+    expect(net(r, [7])).toBe(5000);
+  });
+
+  it('cantidad insuficiente: no aplica', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 2)], { buy: 3, pay: 2 });
+    expect(r[0].discountCents).toBe(0);
+    expect(r[0].offerLabel).toBeNull();
+  });
+
+  it('variantes de precio distinto: bonifica la más barata', () => {
+    const r = resolveProductLinePrices([line('s', 1000, 1), line('xl', 1200, 1)], { buy: 2, pay: 1 });
+    expect(r[0].discountCents).toBe(1000);
+    expect(r[1].discountCents).toBe(0);
+    expect(net(r, [1, 1])).toBe(1200);
+  });
+
+  it('NxM gana a la promo (se calcula sobre el regular)', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 2, 900)], { buy: 2, pay: 1 });
+    expect(r[0].offerLabel).toBe('2x1');
+    expect(net(r, [2])).toBe(1000);
+  });
+
+  it('la promo gana al NxM y la línea no lleva etiqueta', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 2, 400)], { buy: 2, pay: 1 });
+    expect(r[0]).toEqual({ key: 'a', unitCents: 400, discountCents: 0, offerLabel: null });
+  });
+
+  it('empate: gana el escalonado', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 2, 500)], { buy: 2, pay: 1 });
+    expect(r[0].offerLabel).toBeNull();
+    expect(r[0].unitCents).toBe(500);
+  });
+
+  it('el tramo gana al NxM', () => {
+    const r = resolveProductLinePrices([line('a', 1000, 3, 600)], { buy: 3, pay: 2 });
+    expect(r[0].offerLabel).toBeNull();
+    expect(net(r, [3])).toBe(1800);
+  });
+
+  it('multibuyLabel', () => {
+    expect(multibuyLabel({ buy: 3, pay: 2 })).toBe('3x2');
   });
 });

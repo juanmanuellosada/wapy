@@ -154,7 +154,7 @@ async function _resolveStoreSlug(slug: string): Promise<Resolution> {
       anon
         .from('products')
         .select(
-          'id, store_id, section_id, name, description, price_cents, promo_price_cents, currency, image_urls, stock, is_active, position, min_quantity, qty_step, created_at, updated_at'
+          'id, store_id, section_id, name, description, price_cents, promo_price_cents, currency, image_urls, stock, is_active, position, min_quantity, qty_step, multibuy_buy, multibuy_pay, created_at, updated_at'
         )
         .eq('store_id', pub.id)
         .eq('is_active', true)

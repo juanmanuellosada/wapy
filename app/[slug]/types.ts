@@ -1,7 +1,7 @@
 // Shared UI types for the public storefront.
 // These are local-only representations derived from the Supabase row types.
 
-import type { PriceTier } from "@/lib/store/pricing";
+import type { MultibuyOffer, PriceTier } from "@/lib/store/pricing";
 
 export interface UIProduct {
   id: string;
@@ -18,4 +18,5 @@ export interface UIProduct {
   qty_step: number; // increment step (default 1)
   priceTiers: PriceTier[]; // tramos por cantidad, ordenados asc; [] = sin tramos
   tiersCombinable: boolean; // hay otro producto activo con la misma escalera
+  multibuy: MultibuyOffer | null; // oferta NxM (2x1, 3x2...); null = sin oferta
 }

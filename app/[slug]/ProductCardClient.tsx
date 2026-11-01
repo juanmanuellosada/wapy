@@ -9,6 +9,8 @@ import {
   sortTiers,
   tierUnitCentsFor,
   tierSavingsPercent,
+  multibuyLabel,
+  type MultibuyOffer,
   type PriceTier,
   type PriceableProduct,
   type PriceableVariant,
@@ -158,6 +160,28 @@ export function PriceTierHint({
   );
 }
 
+// ─── Multibuy badge ("2x1") ──────────────────────────────────────────────────
+
+export function MultibuyBadge({
+  offer,
+  accentColor,
+  className = "",
+}: {
+  offer: MultibuyOffer | null | undefined;
+  accentColor: string;
+  className?: string;
+}) {
+  if (!offer) return null;
+  return (
+    <span
+      className={`inline-block text-xs font-bold px-2 py-1 rounded-full ${className}`}
+      style={{ background: accentColor, color: "#ffffff" }}
+    >
+      {multibuyLabel(offer)}
+    </span>
+  );
+}
+
 // ─── Variant selection hook ───────────────────────────────────────────────────
 
 export interface VariantSelectionState {
@@ -274,6 +298,7 @@ export interface SimpleProduct {
   qty_step: number; // default 1
   priceTiers?: PriceTier[]; // tramos por cantidad; vacío/ausente = sin tramos
   tiersCombinable?: boolean; // hay otros productos con la misma escalera
+  multibuy?: MultibuyOffer | null; // oferta NxM; null/ausente = sin oferta
 }
 
 interface Props<T extends SimpleProduct> {
@@ -342,6 +367,7 @@ function SimpleProductCard<T extends SimpleProduct>({
         price: effectivePrice,
         image: product.image,
         priceTiers: product.priceTiers,
+        multibuy: product.multibuy,
         productPriceCents: priceCents,
         regularPriceCents: regularCents,
         effectivePriceCents: effectiveCents,
@@ -392,6 +418,11 @@ function SimpleProductCard<T extends SimpleProduct>({
           sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
           className="store-card-image object-cover"
           unoptimized={product.image.startsWith("data:")}
+        />
+        <MultibuyBadge
+          offer={product.multibuy}
+          accentColor={accentColor}
+          className="absolute top-2 left-2 pointer-events-none"
         />
         {isOutOfStock && (
           <div className="absolute inset-0 flex items-end justify-start p-2 pointer-events-none">
@@ -468,6 +499,7 @@ export interface VariantSelectorProduct {
   qty_step: number;
   priceTiers?: PriceTier[];
   tiersCombinable?: boolean;
+  multibuy?: MultibuyOffer | null;
 }
 
 /**
@@ -549,6 +581,7 @@ export function VariantSelector({
         variantPrice: effectivePrice,
         variantImageUrl: activeVariant.image_url,
         priceTiers: product.priceTiers,
+        multibuy: product.multibuy,
         productPriceCents: priceCents,
         regularPriceCents: regularPriceCents,
         effectivePriceCents: effectivePriceCents,
@@ -767,6 +800,11 @@ function VariantProductCard<T extends SimpleProduct>({
           sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
           className="store-card-image object-cover"
           unoptimized={displayImage.startsWith("data:")}
+        />
+        <MultibuyBadge
+          offer={product.multibuy}
+          accentColor={accentColor}
+          className="absolute top-2 left-2 pointer-events-none"
         />
         {isOutOfStock && (
           <div className="absolute inset-0 flex items-end justify-start p-2 pointer-events-none">

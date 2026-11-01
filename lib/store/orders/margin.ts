@@ -16,6 +16,9 @@
 
 export interface CostableLine {
   unit_price_cents: number;
+  // Descuento NxM de la línea (add-multibuy-offers): el ingreso neto es
+  // unit_price_cents * quantity - discount_cents. Ausente = 0.
+  discount_cents?: number;
   cost_at_purchase: number | null;
   quantity: number;
   // Completado después de la venta vía backfillProductCost, en vez de
@@ -44,7 +47,7 @@ export function computeCostMargin(lines: readonly CostableLine[]): CostMarginRes
   let hasEstimatedCost = false;
 
   for (const line of lines) {
-    const lineRevenue = line.unit_price_cents * line.quantity;
+    const lineRevenue = line.unit_price_cents * line.quantity - (line.discount_cents ?? 0);
     totalRevenueCents += lineRevenue;
     if (line.cost_at_purchase == null) continue;
     costedRevenueCents += lineRevenue;

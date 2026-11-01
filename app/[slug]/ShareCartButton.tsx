@@ -27,10 +27,14 @@ function buildShareText(
   const linePrices = computeCartLinePrices(items);
 
   const lines = items.map((i) => {
-    const displayPrice =
-      linePrices.get(cartItemKey(i.productId, i.variantId))?.unitPrice ?? i.variantPrice ?? i.price;
+    const line = linePrices.get(cartItemKey(i.productId, i.variantId));
+    const displayPrice = line?.unitPrice ?? i.variantPrice ?? i.price;
     const label = i.variantLabel ? ` (${i.variantLabel})` : "";
-    return `• ${i.quantity}x ${i.name}${label} — ${formatARS(displayPrice * i.quantity)}`;
+    const offer =
+      line && line.offerLabel && line.discount > 0
+        ? ` (${line.offerLabel}: −${formatARS(line.discount)})`
+        : "";
+    return `• ${i.quantity}x ${i.name}${label} — ${formatARS(displayPrice * i.quantity - (line?.discount ?? 0))}${offer}`;
   });
 
   return [

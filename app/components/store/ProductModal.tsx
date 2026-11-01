@@ -22,6 +22,13 @@ import {
   firstTierIssue,
   type TierDraft,
 } from './PriceTiersEditor';
+import {
+  MultibuyEditor,
+  multibuyToDraft,
+  draftToMultibuy,
+  firstMultibuyIssue,
+  type MultibuyDraft,
+} from './MultibuyEditor';
 
 const productFormSchema = z.object({
   name: z.string().min(1, 'El nombre es requerido').max(120, 'Máximo 120 caracteres'),
@@ -86,6 +93,9 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
   const [hasVariants, setHasVariants] = useState(false);
   const [variantsTotalStock, setVariantsTotalStock] = useState(0);
   const [tierDrafts, setTierDrafts] = useState<TierDraft[]>(() => tiersToDrafts(priceTiers ?? []));
+  const [multibuyDraft, setMultibuyDraft] = useState<MultibuyDraft>(() =>
+    multibuyToDraft(product?.multibuy_buy, product?.multibuy_pay)
+  );
   // Ofrecimiento de completar pedidos anteriores (add-cost-backfill-on-save,
   // D2): se muestra DESPUÉS de guardar el costo, y el guardado ya quedó firme
   // para cuando este estado se llena — aceptar o rechazar es una decisión aparte.
@@ -178,6 +188,20 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
       price_tiers = draftsToTiers(tierDrafts);
     }
 
+    // La oferta NxM se administra desde el mismo contexto que los tramos (el
+    // wizard de onboarding no la muestra): si este caller no la administra, se
+    // manda undefined y el server conserva la existente.
+    let multibuy: { buy: number | null; pay: number | null } | undefined;
+    if (managesTiers) {
+      const multibuyIssue = firstMultibuyIssue(multibuyDraft);
+      if (multibuyIssue) {
+        setServerError(multibuyIssue);
+        setSaving(false);
+        return;
+      }
+      multibuy = draftToMultibuy(multibuyDraft);
+    }
+
     const result = await saveStoreProduct({
       id: product?.id,
       name: data.name,
@@ -193,6 +217,8 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
       qty_step,
       price_tiers,
       cost_cents,
+      multibuy_buy: multibuy?.buy,
+      multibuy_pay: multibuy?.pay,
     });
 
     if ('error' in result) {
@@ -217,6 +243,8 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
       created_at: product?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
       cost_cents: cost_cents !== undefined ? cost_cents : (product?.cost_cents ?? null),
+      multibuy_buy: multibuy ? multibuy.buy : (product?.multibuy_buy ?? null),
+      multibuy_pay: multibuy ? multibuy.pay : (product?.multibuy_pay ?? null),
       // New fields (cast needed until types regenerated)
       ...(({ min_quantity, qty_step } as unknown as object)),
     } as unknown as Product;
@@ -420,6 +448,15 @@ export function ProductModal({ storeId, sections, product, priceTiers, nextPosit
             <PriceTiersEditor
               drafts={tierDrafts}
               onChange={setTierDrafts}
+              priceCents={parsePriceCents(watch('price_display') ?? '')}
+            />
+          )}
+
+          {/* Oferta NxM (2x1, 3x2...) */}
+          {managesTiers && (
+            <MultibuyEditor
+              draft={multibuyDraft}
+              onChange={setMultibuyDraft}
               priceCents={parsePriceCents(watch('price_display') ?? '')}
             />
           )}
